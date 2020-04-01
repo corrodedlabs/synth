@@ -9,18 +9,32 @@
 (require racket/serialize)
 
 (define (recv/print c)
-  (ws-recv c))
+  (displayln (format "got message ~a " (ws-recv c))))
+
+(define send-ws-message
+  (λ (connection data)
+    (ws-send! connection (with-output-to-string (λ () (write data))))))
 
 (define (do-connection protocol)
   (printf "Connecting using protocol ~a...\n" protocol)
   (define c (ws-connect (string->url "ws://localhost:8081/test")
                         #:protocol protocol))
-  (ws-send! c (with-output-to-string
-                (λ () (write '(make-room ashakdwipeea@gmail.com my-room)))))
+
+  (send-ws-message c '(connect-user akash my-room))
   (recv/print c)
-  (ws-send! c (with-output-to-string
-                (λ () (write '(get-room-details ashakdwipeea@gmail.com)))))
+  
+  (send-ws-message c '(connect-user raghav my-room))
   (recv/print c)
+
+  (send-ws-message c '(make-room akash my-room))
+  (recv/print c)
+
+  (send-ws-message c '(join-room my-room raghav))
+  (recv/print c)
+
+  (send-ws-message c '(get-room-details akash))
+  (recv/print c)
+
   (ws-close! c))
 
 (do-connection 'rfc6455)

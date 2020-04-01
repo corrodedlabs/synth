@@ -15,7 +15,7 @@
   (define idle-timeout #f)
   (command-line #:once-each
                 ["--timeout" SECONDS "Set per-connection idle timeout"
-                 (set! idle-timeout (string->number SECONDS))]
+                             (set! idle-timeout (string->number SECONDS))]
                 ["--port" PORT "Set service port"
                           (set! port (string->number PORT))])
 
@@ -36,52 +36,88 @@
 
   ;; Users
 
-  ;; represents a connected user
-  ;; connection => connection corres to the user connected
-  ;; email => email of the users
-  (struct user (connection email))
+  (module user racket
+    (provide connect-new-user get-connected-users-email)
 
-  (define *connected-users* (make-hash))
+    ;; represents a connected user
+    ;; connection => connection corres to the user connected
+    ;; email => email of the users
+    (struct user (connection email))
 
-  (define (connect-new-user connection email)
-    (hash-set! *connected-users* email (user connection email)))
+    (define *connected-users* (make-hash))
+
+    (define (connect-new-user connection email)
+      (hash-set! *connected-users* email (user connection email)))
+    
+    (define get-connected-users-email
+      (λ () (hash-keys *connected-users*))))
 
   
   ;; Game rooms
 
-  ;; game room is always public
-  ;; name => is the game romm name
-  ;; members => list of members who have joined the game room and are online
-  (serializable-struct game-room (host name members))
+  (module room racket
+    (require racket/serialize)
+    (require (submod ".." user))
+    
+    (provide add-game-room
+             get-room-details
+             find-room-by-name
+             add-user-to-game-room)
+    
+    ;; game room is always public
+    ;; name => is the game romm name
+    ;; members => list of members who have joined the game room and are online
+    (serializable-struct game-room (host name members))
 
-  ;; hash from host email to game-room struct
-  (define *game-rooms* (make-hash))
+    ;; hash from host email to game-room struct
+    (define *game-rooms* (make-hash))
 
-  (define (add-game-room host-email room-name)
-    (hash-set! *game-rooms* host-email (game-room host-email room-name #f))
-    '(room-created))
+    (define (add-game-room host-email room-name)
+      (hash-set! *game-rooms* host-email (game-room host-email room-name #f))
+      '(room-created))
 
-  (define (get-room-details host-email)
-    (serialize (hash-ref *game-rooms* host-email)))
+    (define (get-room-details host-email)
+      (serialize (hash-ref *game-rooms* host-email)))
+
+    (define find-room-by-name
+      (λ (room-name)
+        (findf (lambda (room)
+                 (equal? room-name (game-room-name room)))
+               (hash-values *game-rooms*))))
+
+    ;; adds user to room's member controlled by host
+    (define add-user-to-game-room
+      (λ (room user)
+        (match room
+          [(game-room host name members)
+           (hash-update! *game-rooms*
+                         host
+                         (lambda (room-details)
+                           (game-room host name (cons user members))))]))))
+ 
+
+  ;; Game
+
+  (define start-game
+    (λ (game-room)
+      #f))
+
+  (require 'user)
+  (require 'room)
 
   (define (join-room message)
     (match message
       ((list _ room-name email)
-       (match (findf (lambda (room)
-                       (equal? room-name (game-room-name room)))
-                     (hash-values *game-rooms*))
-         ((game-room host name members)
-          (cond
-            ((member email (hash-keys *connected-users*))
-             (hash-update! *game-rooms*
-                           host
-                           (lambda (room-details)
-                             (game-room host name (cons email members)))))
-            (else (error "user not connected"))))
-         (_ (error "room not found"))))
+       (let ([room (find-room-by-name room-name)])
+         (cond
+           ((member email (get-connected-users-email))
+            (add-user-to-game-room room email))
+           (else (error "user not connected")))))
       (_ (error "message is invalid"))))
 
   ;; accepted messages:
+  ;;
+  ;; User messages:
   ;; 
   ;; (connect-user <email>) => connect a new user to the system
   ;;
@@ -94,31 +130,32 @@
   ;; (get-active-rooms) => list of active rooms
   ;; returns: (listof <room-name>)
   ;;
+  ;; Games messages:
+  ;;
+  ;; (start-game <room-name>)
   ;; 
   (define (dispatch connection message)
     (let ((message (read (open-input-string message))))
       (case (car message)
+        ;; user messages
         ((connect-user) (connect-new-user connection (cadr message)))
+
+        ;; room messages
         ((make-room) (add-game-room (cadr message) (caddr message)))
         ((join-room) (join-room message))
         ((get-room-details) (get-room-details (cadr message)))
+
+        ;; game messages
+        ((start-game) (start-game (cadr message)))
+
+        ;; catch all
         (else 'invalid-request))))
 
   (when idle-timeout
     (ws-idle-timeout idle-timeout))
-  ;; (define stop-service
-  ;;   (ws-serve connection-handler #:port port))
+  (define stop-service
+    (ws-serve connection-handler #:port port))
 
-  ;; (printf "Server running. Hit enter to stop service.\n")
-  ;; (void (read-line))
-  ;; (stop-service)
-  )
-
-(dispatch #f "(connect-user ashakdwipeea@gmail.com)")
-(dispatch #f "(make-room ashakdwipeea@gmail.com MyRoom)")
-
-(dispatch #f "(connect-user raghav@gmail.com)")
-(dispatch #f "(join-room MyRoom raghav@gmail.com)")
-(dispatch #f "(get-room-details ashakdwipeea@gmail.com)")
-(game-room-members (hash-ref *game-rooms* 'ashakdwipeea@gmail.com))
-
+  (printf "Server running. Hit enter to stop service.\n")
+  (void (read-line))
+  (stop-service))
