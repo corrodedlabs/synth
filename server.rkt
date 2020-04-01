@@ -37,7 +37,11 @@
   ;; Users
 
   (module user racket
-    (provide connect-new-user get-connected-users-email)
+    (provide connect-new-user
+             get-connected-users-email
+             user
+             user-connection
+             get-user-by-email)
 
     ;; represents a connected user
     ;; connection => connection corres to the user connected
@@ -48,6 +52,9 @@
 
     (define (connect-new-user connection email)
       (hash-set! *connected-users* email (user connection email)))
+
+    (define (get-user-by-email email)
+      (hash-ref *connected-users* email #f))
     
     (define get-connected-users-email
       (λ () (hash-keys *connected-users*))))
@@ -62,7 +69,8 @@
     (provide add-game-room
              get-room-details
              find-room-by-name
-             add-user-to-game-room)
+             add-user-to-game-room
+             game-room)
     
     ;; game room is always public
     ;; name => is the game romm name
@@ -73,8 +81,8 @@
     (define *game-rooms* (make-hash))
 
     (define (add-game-room host-email room-name)
-      (hash-set! *game-rooms* host-email (game-room host-email room-name #f))
-      '(room-created))
+      (hash-set! *game-rooms* host-email (game-room host-email room-name '()))
+      'room-created)
 
     (define (get-room-details host-email)
       (serialize (hash-ref *game-rooms* host-email)))
@@ -92,18 +100,50 @@
           [(game-room host name members)
            (hash-update! *game-rooms*
                          host
-                         (lambda (room-details)
+                         (λ (room-details)
                            (game-room host name (cons user members))))]))))
  
 
   ;; Game
 
-  (define start-game
-    (λ (game-room)
-      #f))
+  (module game racket
+    (provide start-game)
+
+    (require net/rfc6455)
+    (require (submod ".." user))
+    (require (submod ".." room))
+
+    (struct game-data (players deck game-state))
+
+    ;; contains running games keyed against room name
+    (define *running-games* (make-hash))
+
+    (define +max-players+ 4)
+    
+    (define start-game
+      (λ (room-name)
+        (match (find-room-by-name room-name)
+          [(game-room host name members)
+           (cond
+             [(hash-ref *running-games* name #f)
+              'game-already-started]
+            
+             [(and (equal? (length members)
+                           ;; host should always be there
+                           (- +max-players+ 1))
+                   (not (ormap (λ (member)
+                                 (ws-conn-closed? (user-connection (get-user-by-email member))))
+                               members)))
+              (hash-set! *running-games*
+                         name
+                         (game-data members #f 'init))
+              'game-started]
+            
+             [else 'room-not-ready])]))))
 
   (require 'user)
   (require 'room)
+  (require 'game)
 
   (define (join-room message)
     (match message
