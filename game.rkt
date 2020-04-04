@@ -3,6 +3,7 @@
 (provide deck)
 
 (require racket/struct)
+(require racket/control)
 
 ;; 28 is usually played by four players in fixed partnerships, partners facing each other.
 ;; 
@@ -109,13 +110,49 @@
 (define-values (dealt-cards deck1) (distribute-cards deck 4))
 (check-for-redeal dealt-cards)
 
+(define (player-rebid-func k pnum bid) (+ 1 bid))
+
 ;;
 ;; After the first player has bid, subsequent players, in counter-clockwise order, may either bid
 ;; *higher* or *pass*. The auction continues for as many rounds as necessary until three players pass
 ;; in succession.
 ;;
+;; bidding starts at 16 and can go upto 28
+;;
 (define start-bidding
-  (λ () #f))
+  (λ (player-bid-func error-func)
+    (let loop ([current-bid-value 16]
+               [prev-bid-values '()]
+               [player-num 0])
+      (cond
+        [(ormap (λ (bid-value) (equal? bid-value 'pass))
+                (if (> 3 (length prev-bid-values))
+                    prev-bid-values
+                    (take prev-bid-values 3)))
+         (values current-bid-value player-num)]
+
+        [else
+         (let ([bid-value (reset (player-bid-func player-num current-bid-value))])
+           (displayln (format "bid value is ~a" bid-value))
+           (cond
+             [(or (equal? bid-value 28))
+              (values current-bid-value player-num)]
+         
+             [(or (> bid-value 28)
+                  (< bid-value current-bid-value))
+              (begin (error-func player-num 'invalid-bid bid-value)
+                     (loop current-bid-value prev-bid-values player-num))]
+         
+             [else (loop bid-value
+                         (append prev-bid-values (list bid-value))
+                         (remainder (+ 1 player-num) +num-players+))]))]))))
+
+(start-bidding
+ (λ (player-number current-bid-value)
+   (displayln (format "player number ~a current bid value ~a " player-number current-bid-value))
+   (+ 1 current-bid-value))
+ (λ (player-number error arg)
+   (displayln (format "pnum ~a error ~a arg ~a" player-number error arg))))
 
 ;; The final bidder chooses a trump suit on the basis of his or her four cards,
 ;; and places a card of this suit from the set of non-playable cards(2-5) ace down.
