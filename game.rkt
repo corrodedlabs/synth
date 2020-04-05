@@ -133,7 +133,6 @@
 
         [else
          (let ([bid-value (reset (player-bid-func player-num current-bid-value))])
-           (displayln (format "bid value is ~a" bid-value))
            (cond
              [(or (equal? bid-value 28))
               (values current-bid-value player-num)]
@@ -159,4 +158,75 @@
 ;; The trump indicator card is not shown to the other players,
 ;; who therefore will not know at first what suit is trumps: it remains face down in front of the
 ;; bidder until at some point during the play someone calls for the trump suit to be exposed.
-;; 
+(define choose-trump-suit
+  (λ (player-func player-num)
+    (player-func player-num 'choose-trump)))
+
+
+;;
+;; The Play
+;; ==================================================================================================
+;;
+;; The play can be divided into two phases: before and after the bidder's face down trump card is
+;; exposed.
+;;
+;; First phase
+;; --------------------------------------------------------------------------------------------------
+;; The player to the dealer's right leads to the first trick; players must follow suit if possible,
+;; the highest card of the suit led wins the trick, and the winner of each trick leads to the next.
+;; If you have no card of the suit led you have two options:
+;;
+;; You may discard any card. This card cannot win the trick.
+;; Before playing a card, you may call for the bidder's face down trump to be exposed.
+;; In this case, the bidder must turn this trump card face up for all to see.
+;; Having called for the trump to be exposed, you must play a trump to this trick if you have one;
+;; if you have no trump you may discard any card. From the moment when the trump is exposed,
+;; the play enters the second phase -see below.
+;;
+;; During the first phase, cards of the (concealed) trump suit have no special effect: each trick is
+;; won by the highest card of the suit led, even if it also contains cards of the suit that is
+;; subsequently revealed as trumps.
+;;
+;;     Second phase:
+;;---------------------------------------------------------------------------------------------------
+;; At the moment when the bidder's face down card is exposed, this suit becomes trumps.
+;; Each trick is now won by the highest trump in it. Tricks that contain no trumps are won by the
+;; highest card of the suit led. Players must follow suit if possible: if unable to follow,
+;; they may play a trump or discard a card of another suit, as they like.
+;; As before, the winner of each trick leads to the next.
+;;     
+;; ##  Notes:
+;;
+;; Cards of the trump suit only become trumps from the moment that the trump card is exposed.
+;; Any cards of that suit that were previously played to the trick do not count as trumps.
+;;
+;; Example: In phase 1 South leads the heart8. Having no hearts, East discards the clubA without
+;; asking for trumps, hoping that West will win the trick. North also has no hearts and asks for
+;; trumps: the bidder exposes a club and North trumps with the clubQ. West follows suit with the
+;; heartA. This trick is won by North.
+;; The Queen of clubs is a trump but the Ace of clubs does not count as a trump because it was
+;; played before the trump was exposed.
+;;
+;;
+;;
+;; player-cards => list of length +num-players+ whose element represents the cards in hand
+;; selected-trump-suit => suit selected to be trump
+;;
+;; returns => list of length +num-players+ whose element represent the points won after all the cards
+;; have been played
+(define play-game
+  (λ (player-cards selected-trump-suit bid-value bid-player)
+    #f))
+
+;; Scoring
+;; ==================================================================================================
+;;     
+;; When all eight tricks have been played, each side counts the card points in the tricks it has won.
+;; The bidding team needs at least as many card points as the bid to win; otherwise they lose.
+;;
+;; game-points => list of length +num-players+ whose element represent the points won
+;; bid-value => bid points
+;; bid-player => player number who set the bid
+(define score-game
+  (λ (game-points bid-value bid-player)
+    #f))
