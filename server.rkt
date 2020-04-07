@@ -41,6 +41,7 @@
              get-connected-users-email
              user
              user-connection
+             user-email
              get-user-by-email)
 
     ;; represents a connected user
@@ -81,11 +82,13 @@
     (define *game-rooms* (make-hash))
 
     (define (add-game-room host-email room-name)
-      (hash-set! *game-rooms* host-email (game-room host-email room-name '()))
+      (hash-set! *game-rooms*
+                 host-email
+                 (game-room (get-user-by-email host-email) room-name '()))
       'room-created)
 
     (define (get-room-details host-email)
-      (serialize (hash-ref *game-rooms* host-email)))
+      (serialize (game-room-members (hash-ref *game-rooms* host-email))))
 
     (define find-room-by-name
       (λ (room-name)
@@ -99,7 +102,7 @@
         (match room
           [(game-room host name members)
            (hash-update! *game-rooms*
-                         host
+                         (user-email host)
                          (λ (room-details)
                            (game-room host name (cons user members))))]))))
  
@@ -112,6 +115,7 @@
     (require net/rfc6455)
     (require (submod ".." user))
     (require (submod ".." room))
+    (require "./game.rkt")
 
     (struct game-data (players deck game-state))
 
@@ -119,6 +123,21 @@
     (define *running-games* (make-hash))
 
     (define +max-players+ 4)
+
+    (define distribute-cards-to-players
+      (λ (players)
+        (match/values (distribute-cards deck 4)
+          [(player-hands remaining-deck)
+           (map (λ (player-hand player)
+                  (let ([conn (user-connection player)])
+                    (cond
+                      [(ws-conn-closed? conn) (error "connection closed for player" player)]
+                      [else (ws-send! conn
+                                      (with-output-to-string (λ () (write `(hand ,player-hand)))))])))
+                player-hands
+                players)
+           remaining-deck])))
+
     
     (define start-game
       (λ (room-name)
@@ -134,10 +153,11 @@
                    (not (ormap (λ (member)
                                  (ws-conn-closed? (user-connection (get-user-by-email member))))
                                members)))
-              (hash-set! *running-games*
-                         name
-                         (game-data members #f 'init))
-              'game-started]
+              (let ([deck (distribute-cards-to-players (cons host members))])
+                (hash-set! *running-games*
+                           name
+                           (game-data members deck 'init))
+                'game-started)]
             
              [else 'room-not-ready])]))))
 

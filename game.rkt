@@ -1,6 +1,7 @@
 #lang racket
 
-(provide deck)
+(provide deck
+         distribute-cards)
 
 (require racket/struct)
 (require racket/control)
