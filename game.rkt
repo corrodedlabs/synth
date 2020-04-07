@@ -207,16 +207,79 @@
 ;; The Queen of clubs is a trump but the Ace of clubs does not count as a trump because it was
 ;; played before the trump was exposed.
 ;;
-;;
-;;
 ;; player-cards => list of length +num-players+ whose element represents the cards in hand
 ;; selected-trump-suit => suit selected to be trump
+;; player-func => this function will be called with the player number and the state of the game
+;; the return value of this function will represent the card played by the player
 ;;
 ;; returns => list of length +num-players+ whose element represent the points won after all the cards
 ;; have been played
 (define play-game
-  (λ (player-cards selected-trump-suit bid-value bid-player)
-    #f))
+  (λ (player-cards selected-trump-suit player-func)
+
+    ;; returns a cons cell [index-with-max-points . total-points-earned]
+    (define calculate-points
+      (λ (trump cards)
+        (let ([leading-suit (or trump (card-suit (car cards)))]
+              [total-points (foldl + 0 (map card-point cards))])
+          (let loop ([cards cards]
+                     [leading-hand (cons 0 (card-point (car cards)))]
+                     [index 0])
+            (cond
+              [(null? cards) (cons (car leading-hand) total-points)]
+
+              [(< (cdr leading-hand) (card-point (car cards)))
+               (loop (cdr cards)
+                     (cons index (card-point (car cards)))
+                     (+ 1 index))]
+
+              [else (loop (cdr cards) leading-hand (+ 1 index))])))))
+          
+    
+    (let loop ([trump-suit #f] ;; contains the trump suit when exposed
+               [rounds-to-be-played (length (car player-cards))]
+               [active-player 0]
+               [cards-played-in-round '()]
+               [points-earned (make-hash (map (λ (i) (cons i 0))
+                                              (range (length player-cards))))])
+      (cond
+        [(equal? rounds-to-be-played 0) points-earned]
+
+        [(equal? cards-played-in-round +num-players+)
+         (match (calculate-points cards-played-in-round)
+           [(cons winning-player-index points-won)
+            (loop trump-suit
+                  (- rounds-to-be-played 1)
+                  0
+                  '()
+                  (hash-update points-earned
+                               winning-player-index
+                               (λ (current-points)
+                                 (+ current-points points-won))))])]
+
+        [else
+         (let ([card-played (player-func active-player cards-played-in-round trump-suit)])
+           (cond
+             [(equal? card-played 'expose-trump)
+              (loop selected-trump-suit
+                    rounds-to-be-played
+                    active-player
+                    cards-played-in-round
+                    points-earned)]
+             
+             [(member card-played (list-ref player-cards active-player))
+              (loop trump-suit
+                    rounds-to-be-played
+                    (+ 1 active-player)
+                    (cons card-played cards-played-in-round)
+                    points-earned)]
+
+             [else (begin (player-func active-player 'invalid-card)
+                          (loop trump-suit
+                                rounds-to-be-played
+                                active-player
+                                cards-played-in-round
+                                points-earned))]))]))))
 
 ;; Scoring
 ;; ==================================================================================================
