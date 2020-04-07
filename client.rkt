@@ -45,6 +45,7 @@
 
   (send-ws-message c '(start-game my-room))
   (recv/print c)
+  (recv/print c)
   
   (ws-close! c))
 
