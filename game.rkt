@@ -1,7 +1,8 @@
 #lang racket
 
 (provide deck
-         distribute-cards)
+         distribute-cards
+         start-bidding)
 
 (require racket/struct)
 (require racket/control)
@@ -9,7 +10,8 @@
 ;; 28 is usually played by four players in fixed partnerships, partners facing each other.
 ;; 
 ;; 32 cards from a standard 52-card pack are used for play.
-;; There are eight cards in each of the usual "French" suits: hearts, diamonds, clubs and spades.
+;; There are eight cards in each of the usual "French" suits: hearts, diamonds, clubs and
+;; spades.
 ;; The cards in every suit rank from high to low: J-9-A-10-K-Q-8-7. The aim of the game is to win
 ;; tricks containing valuable cards. The values of the cards are:
 ;;
@@ -130,13 +132,14 @@
                 (if (> 3 (length prev-bid-values))
                     prev-bid-values
                     (take prev-bid-values 3)))
-         (values current-bid-value player-num)]
+         (cons current-bid-value player-num)]
 
         [else
          (let ([bid-value (reset (player-bid-func player-num current-bid-value))])
+           (displayln (format "received bid value of ~a from player ~a " bid-value player-num))
            (cond
              [(or (equal? bid-value 28))
-              (values current-bid-value player-num)]
+              (cons bid-value player-num)]
          
              [(or (> bid-value 28)
                   (< bid-value current-bid-value))

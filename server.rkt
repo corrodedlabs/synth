@@ -112,6 +112,8 @@
   (provide start-game)
 
   (require net/rfc6455)
+  (require racket/control)
+  
   (require (submod ".." user))
   (require (submod ".." room))
   (require "./game.rkt")
@@ -123,6 +125,12 @@
 
   (define +max-players+ 4)
 
+  ;; send data over connection
+  (define send-data
+    (λ (connection data)
+      (ws-send! connection
+                (with-output-to-string (λ () (write data))))))
+
   (define distribute-cards-to-players
     (λ (players)
       (match/values (distribute-cards deck 4)
@@ -131,13 +139,24 @@
                 (let ([conn (user-connection player)])
                   (cond
                     [(ws-conn-closed? conn) (error "connection closed for player" player)]
-                    [else
-                     (ws-send! conn
-                               (with-output-to-string (λ () (write `(hand ,player-hand)))))])))
+                    [else (send-data conn `(hand ,player-hand))])))
               player-hands
               players)
          remaining-deck])))
 
+  (define read-string-data (compose1 read open-input-string))
+
+  ;; performs the bidding process and returns the final bid value
+  (define perform-bidding
+    (λ (players)
+      (start-bidding (λ (player-index current-bid-value)
+                       (let* ((player (list-ref players player-index))
+                              (connection (user-connection player)))
+                         (send-data connection `(request-bid ,current-bid-value))
+                         (cadr (read-string-data (ws-recv connection)))))
+                     (λ (player-index error-msg)
+                       (send-data (user-connection (list-ref players player-index))
+                                  `(error ,error-msg))))))
   
   (define start-game
     (λ (room-name)
@@ -153,11 +172,17 @@
                  (not (ormap (λ (member)
                                (ws-conn-closed? (user-connection member)))
                              members)))
-            (let ([deck (distribute-cards-to-players (cons host members))])
-              (hash-set! *running-games*
-                         name
-                         (game-data members deck 'init))
-              'game-started)]
+            (let* ((players (cons host members))
+                   (deck (distribute-cards-to-players (cons host members)))
+                   (bid-result (perform-bidding players)))
+              (begin (hash-set! *running-games*
+                                name
+                                (game-data members deck 'init))
+                     (for-each (λ (player)
+                                 (send-data (user-connection player)
+                                            `(bid-result ,bid-result)))
+                               players)
+                     'game-started))]
            
            [else 'room-not-ready])]))))
 
@@ -193,6 +218,8 @@
 ;; Games messages:
 ;;
 ;; (start-game <room-name>)
+;;
+;; (put-bid <user-email> <bid-value>) => make a bid 
 ;; 
 (define (dispatch connection message)
   (let ((message (read (open-input-string message))))

@@ -53,7 +53,9 @@
     (let ((connections (connect-users)))
       (setup-game-room connections 'my-room)
       (send-ws-message (car connections) '(start-game my-room))
-      (for-each recv/print connections)      
+      (begin (for-each recv/print connections))
+      (send-ws-message (car connections) '(put-bid 28))
+      (for-each recv/print connections)
       (for-each ws-close! connections))))
 
 (define stop-service (start-service))
