@@ -247,7 +247,7 @@
         [(equal? rounds-to-be-played 0) points-earned]
 
         [(equal? cards-played-in-round +num-players+)
-         (match (calculate-points cards-played-in-round)
+         (match (calculate-points trump-suit cards-played-in-round)
            [(cons winning-player-index points-won)
             (loop trump-suit
                   (- rounds-to-be-played 1)
