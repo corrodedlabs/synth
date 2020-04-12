@@ -2,7 +2,14 @@
 
 (provide initial-deck
          distribute-cards
-         start-bidding)
+         start-bidding
+         play-game
+         card
+         card-name
+         card-rank
+         card-suit
+         card-point
+         print-card)
 
 (require racket/struct)
 (require racket/control)
@@ -25,12 +32,20 @@
 
 ;; struct to represent a card
 (struct card (name rank suit point)
-  #:methods gen:custom-write
-  ((define write-proc
-     (make-constructor-style-printer
-      (λ (obj) 'card)
-      (λ (obj) (match obj
-                 [(card name rank suit point) (list name rank suit point)]))))))
+  #:prefab
+  ;; #:methods gen:custom-write
+  ;; ((define write-proc
+  ;;    (make-constructor-style-printer
+  ;;     (λ (obj) 'card)
+  ;;     (λ (obj) (match obj
+  ;;                [(card name rank suit point) (list name rank suit point)])))))
+  )
+
+(define print-card
+  (lambda (obj)
+    (match obj
+      [(card name rank suit point)
+       (displayln (format "card details: ~a" (list name rank suit point)))])))
 
 (define suits '(club diamond heart spade))
 
@@ -214,8 +229,9 @@
 ;;
 ;; player-cards => list of length +num-players+ whose element represents the cards in hand
 ;; selected-trump-suit => suit selected to be trump
-;; player-func => this function will be called with the player number and the state of the game
-;; the return value of this function will represent the card played by the player
+;; player-func => this function will be called with the player number,
+;;      list of cards played in the current turn and the state of the game
+;;      the return value of this function will represent the card played by the player
 ;;
 ;; returns => list of length +num-players+ whose element represent the points won after all the cards
 ;; have been played

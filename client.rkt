@@ -6,6 +6,7 @@
 (require racket/port)
 (require racket/serialize)
 
+(require "./game.rkt")
 (require "./server.rkt")
 
 (define +ws-url+ "ws://localhost:8081/test")
@@ -27,6 +28,72 @@
 
 (define users '(akash raghav bade malla))
 
+(struct user (id connection comm))
+(struct state (user hand bid-value selected-trump))
+
+(define print-state
+  (lambda (obj)
+    (match obj
+      ((state _ hand bid-value selected-trump)
+       (displayln (format "state is ~a" (list hand bid-value selected-trump)))))))
+
+(define default-state
+  (λ (user) (state user '() #f #f)))
+
+(define receive-data
+  (lambda (user)
+    (let ((data (ws-recv (user-connection user))))
+      (displayln (format "received data is ~a" data))
+      (if (eof-object? data)
+          #f
+          (read (open-input-string data))))))
+
+(define send-data
+  (lambda (user data)
+    (send-ws-message (user-connection user)
+                     (append (list (car data) (user-id user))
+                             (cdr data)))))
+
+(define client-lambda
+  (λ (user)
+    (let loop ((client-state (default-state user))
+               (server-msg (receive-data user)))
+      (print-state client-state)
+      (if server-msg
+          (case (car server-msg)
+            ((hand)
+             (let ((new-cards (caddr server-msg)))
+               (loop (struct-copy state client-state
+                                  (hand (append (state-hand client-state) new-cards)))
+                     (receive-data user))))
+            ((request-bid)
+             (let ((current-bid (cadr server-msg)))
+               (send-data (state-user client-state)
+                          (list 'put-bid
+                                (if (< current-bid 27) (+ current-bid 1) 'pass)))
+               (loop client-state (receive-data user))))
+            ((bid-result)
+             (match (cadr server-msg)
+               ((cons set-bid-value player-index)
+                (loop (struct-copy state client-state
+                                   (bid-value set-bid-value))
+                      (receive-data user)))))
+            ((choose-trump)
+             (begin (send-data (state-user client-state) `(selected-trump diamond))
+                    (loop (struct-copy state client-state
+                                       (selected-trump 'diamond))
+                          (receive-data user))))
+            ((play-card)
+             (let ((cards-played (cdar server-msg))
+                   (game-state (cddr server-msg)))
+               (send-data (state-user client-state)
+                          `(card-played ,(car (state-hand client-state))))
+               (loop client-state (receive-data user))))
+            (else
+             (begin (displayln (format "unhandled message ~a" server-msg))
+                    (loop client-state (receive-data user)))))
+          #f))))
+
 ;; we create a new connection for each user
 (define connect-users
   (λ ()
@@ -41,30 +108,26 @@
   ;; the first user is the host
   (send-ws-message (car connections) `(make-room ,(car users) ,room-name))
   (recv/print (car connections))
-  (for-each (λ (user connection)
-              (send-ws-message connection `(join-room ,room-name ,user))
-              (recv/print connection))
-            (cdr users)
-            (cdr connections)))
+  (map (λ (id connection)
+         (send-ws-message connection `(join-room ,room-name ,id))
+         (recv/print connection)
+         (user id connection (make-channel)))
+       (cdr users)
+       (cdr connections)))
 
 (define simulate-game
   (λ ()
     (displayln "now simulating game")
-    (let ((connections (connect-users)))
-      (setup-game-room connections 'my-room)
+    (let* ((connections (connect-users))
+           (users (setup-game-room connections 'my-room)))
       (send-ws-message (car connections) '(start-game my-room))
-      (begin (for-each recv/print connections))
-      (send-ws-message (car connections) `(put-bid ,(car users) 28))
       (recv/print (car connections))
-      (for-each recv/print connections)
-      (send-ws-message (car connections) `(selected-trump ,(car users) club))
-      (recv/print (car connections))
-
-      (for-each recv/print connections)
-      (for-each recv/print connections)
-      (for-each recv/print connections)
-       (recv/print (car connections))
-      (for-each ws-close! connections))))
+      (for-each (lambda (user)
+                  (thread (lambda ()
+                            (client-lambda user))))
+                users)
+      ;; (for-each ws-close! connections)
+      )))
 
 (define stop-service (start-service))
 (sleep 3)
