@@ -43,10 +43,10 @@
 (define receive-data
   (lambda (user)
     (let ((data (ws-recv (user-connection user))))
-      (displayln (format "received data is ~a" data))
-      (if (eof-object? data)
+      (if (or (eof-object? data) (equal? "#<void>" data))
           #f
-          (read (open-input-string data))))))
+          (begin (displayln (format "received data is ~a" data))
+                 (read (open-input-string data)))))))
 
 (define send-data
   (lambda (user data)
@@ -58,7 +58,6 @@
   (λ (user)
     (let loop ((client-state (default-state user))
                (server-msg (receive-data user)))
-      (print-state client-state)
       (if server-msg
           (case (car server-msg)
             ((hand)
@@ -84,15 +83,15 @@
                                        (selected-trump 'diamond))
                           (receive-data user))))
             ((play-card)
-             (let ((cards-played (cdar server-msg))
-                   (game-state (cddr server-msg)))
+             (let ((cards-played (cdadr server-msg))
+                   (game-state (cdddr server-msg)))
                (send-data (state-user client-state)
                           `(card-played ,(car (state-hand client-state))))
                (loop client-state (receive-data user))))
             (else
              (begin (displayln (format "unhandled message ~a" server-msg))
                     (loop client-state (receive-data user)))))
-          #f))))
+          (loop client-state (receive-data user))))))
 
 ;; we create a new connection for each user
 (define connect-users
@@ -106,14 +105,17 @@
 
 (define (setup-game-room connections room-name)
   ;; the first user is the host
-  (send-ws-message (car connections) `(make-room ,(car users) ,room-name))
-  (recv/print (car connections))
-  (map (λ (id connection)
-         (send-ws-message connection `(join-room ,room-name ,id))
-         (recv/print connection)
-         (user id connection (make-channel)))
-       (cdr users)
-       (cdr connections)))
+  (let ([host-connection (car connections)]
+        [host-id (car users)])
+    (send-ws-message host-connection `(make-room ,host-id ,room-name))
+    (recv/print (car connections))
+    (cons (user host-id host-connection (make-channel))
+          (map (λ (id connection)
+                 (send-ws-message connection `(join-room ,room-name ,id))
+                 (recv/print connection)
+                 (user id connection (make-channel)))
+               (cdr users)
+               (cdr connections)))))
 
 (define simulate-game
   (λ ()
@@ -121,7 +123,7 @@
     (let* ((connections (connect-users))
            (users (setup-game-room connections 'my-room)))
       (send-ws-message (car connections) '(start-game my-room))
-      (recv/print (car connections))
+      ;; (recv/print (car connections))
       (for-each (lambda (user)
                   (thread (lambda ()
                             (client-lambda user))))
@@ -132,4 +134,5 @@
 (define stop-service (start-service))
 (sleep 3)
 (simulate-game)
+(void (read-line))
 (stop-service)

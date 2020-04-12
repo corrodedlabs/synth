@@ -143,11 +143,12 @@
     (let loop ([current-bid-value 16]
                [prev-bid-values '()]
                [player-num 0])
+      (displayln (format "prev bid values ~a" prev-bid-values))
       (cond
         [(ormap (λ (bid-value) (equal? bid-value 'pass))
                 (if (> 3 (length prev-bid-values))
-                    prev-bid-values
-                    (take prev-bid-values 3)))
+                    (reverse prev-bid-values)
+                    (take (reverse prev-bid-values) 3)))
          (cons current-bid-value player-num)]
 
         [else
@@ -157,12 +158,13 @@
              [(or (equal? bid-value 28))
               (cons bid-value player-num)]
          
-             [(or (> bid-value 28)
-                  (< bid-value current-bid-value))
+             [(and (integer? bid-value)
+                   (or (> bid-value 28)
+                       (< bid-value current-bid-value)))
               (begin (error-func player-num 'invalid-bid bid-value)
                      (loop current-bid-value prev-bid-values player-num))]
          
-             [else (loop bid-value
+             [else (loop (if (equal? bid-value 'pass) current-bid-value bid-value)
                          (append prev-bid-values (list bid-value))
                          (remainder (+ 1 player-num) +num-players+))]))]))))
 
@@ -256,17 +258,19 @@
 
               [else (loop (cdr cards) leading-hand (+ 1 index))])))))
           
-    
     (let loop ([trump-suit #f] ;; contains the trump suit when exposed
                [rounds-to-be-played (length (car player-cards))]
                [active-player 0]
                [cards-played-in-round '()]
-               [points-earned (make-hash (map (λ (i) (cons i 0))
+               [points-earned (make-immutable-hash (map (λ (i) (cons i 0))
                                               (range (length player-cards))))])
+      (displayln (format "cards in round ~a points-earner ~a "
+                         cards-played-in-round
+                         points-earned))
       (cond
         [(equal? rounds-to-be-played 0) points-earned]
 
-        [(equal? cards-played-in-round +num-players+)
+        [(equal? (length cards-played-in-round) +num-players+)
          (match (calculate-points trump-suit cards-played-in-round)
            [(cons winning-player-index points-won)
             (loop trump-suit
@@ -295,7 +299,9 @@
                     (cons card-played cards-played-in-round)
                     points-earned)]
 
-             [else (begin (player-func active-player 'invalid-card)
+             [else (begin
+                     (displayln "invalid card played")
+                     (player-func active-player cards-played-in-round trump-suit)
                           (loop trump-suit
                                 rounds-to-be-played
                                 active-player
