@@ -1,6 +1,6 @@
 #lang racket
 
-(provide deck
+(provide initial-deck
          distribute-cards
          start-bidding)
 
@@ -42,14 +42,15 @@
 (define +num-players+ 4)
 
 ;; applicable deck for the game
-(define deck (apply append
-                    (map (lambda (name rank)
-                           (map (lambda (suit)
-                                  (let [(point (assoc card card-points))]
-                                    (card name rank suit (if point (cdr point) 0))))
-                                suits))
-                         card-names
-                         (card-names->ranks card-names))))
+(define initial-deck
+  (apply append
+         (map (lambda (name rank)
+                (map (lambda (suit)
+                       (let [(point (assoc card card-points))]
+                         (card name rank suit (if point (cdr point) 0))))
+                     suits))
+              card-names
+              (card-names->ranks card-names))))
 
 (define shuffle-deck shuffle)
 
@@ -110,7 +111,7 @@
   (λ (dealt-cards)
     (andmap (λ (cards) (ormap no-points-card? cards)) dealt-cards)))
 
-(define-values (dealt-cards deck1) (distribute-cards deck 4))
+(define-values (dealt-cards deck1) (distribute-cards initial-deck 4))
 (check-for-redeal dealt-cards)
 
 (define (player-rebid-func k pnum bid) (+ 1 bid))

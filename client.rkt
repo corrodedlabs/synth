@@ -54,8 +54,16 @@
       (setup-game-room connections 'my-room)
       (send-ws-message (car connections) '(start-game my-room))
       (begin (for-each recv/print connections))
-      (send-ws-message (car connections) '(put-bid 28))
+      (send-ws-message (car connections) `(put-bid ,(car users) 28))
+      (recv/print (car connections))
       (for-each recv/print connections)
+      (send-ws-message (car connections) `(selected-trump ,(car users) club))
+      (recv/print (car connections))
+
+      (for-each recv/print connections)
+      (for-each recv/print connections)
+      (for-each recv/print connections)
+       (recv/print (car connections))
       (for-each ws-close! connections))))
 
 (define stop-service (start-service))

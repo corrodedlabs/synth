@@ -28,8 +28,12 @@
           (handle-evt (ws-recv-evt c #:payload-type 'text)
                       (lambda (m)
                         (unless (eof-object? m)
-                          (let ((data (dispatch c m)))
-                            (ws-send! c (with-output-to-string (λ () (write data))))
+                          (begin
+                            (thread
+                             (λ ()
+                               (let ((data (dispatch c m)))
+                                 (ws-send! c (with-output-to-string (λ () (write data))))))
+                             )
                             (loop)))))))
   (ws-close! c))
 
@@ -41,17 +45,21 @@
            user
            user-connection
            user-email
+           user-hand
+           user-comm
            get-user-by-email)
 
   ;; represents a connected user
   ;; connection => connection corres to the user connected
   ;; email => email of the users
-  (struct user (connection email))
+  ;; hand => list of cards that the player has
+  ;; comm => channel for synchronisation
+  (struct user (connection email hand comm))
 
   (define *connected-users* (make-hash))
 
   (define (connect-new-user connection email)
-    (hash-set! *connected-users* email (user connection email)))
+    (hash-set! *connected-users* email (user connection email '() (make-channel))))
 
   (define (get-user-by-email email)
     (hash-ref *connected-users* email #f))
@@ -118,7 +126,7 @@
   (require (submod ".." room))
   (require "./game.rkt")
 
-  (struct game-data (players deck game-state))
+  (struct game-data (players deck game-state trump-suit))
 
   ;; contains running games keyed against room name
   (define *running-games* (make-hash))
@@ -131,20 +139,37 @@
       (ws-send! connection
                 (with-output-to-string (λ () (write data))))))
 
-  (define distribute-cards-to-players
-    (λ (players)
-      (match/values (distribute-cards deck 4)
-        [(player-hands remaining-deck)
-         (map (λ (player-hand player)
-                (let ([conn (user-connection player)])
-                  (cond
-                    [(ws-conn-closed? conn) (error "connection closed for player" player)]
-                    [else (send-data conn `(hand ,player-hand))])))
-              player-hands
-              players)
-         remaining-deck])))
+  (define send-datum-to-all
+    (λ (players data)
+      (for-each (λ (player)
+                  (send-data (user-connection player) data))
+                players)))
 
-  (define read-string-data (compose1 read open-input-string))
+  (define distribute-cards-to-players
+    (case-lambda
+      [(players) (distribute-cards-to-players players initial-deck)]
+      [(players deck)
+       (match/values (distribute-cards deck 4)
+                     [(new-cards-for-players remaining-deck)
+                      (let ([players (map (λ (new-cards player)
+                                            (let ([conn (user-connection player)])
+                                              (cond
+                                                [(ws-conn-closed? conn)
+                                                 (error "connection closed for player" player)]
+                                                [else
+                                                 (begin
+                                                   (send-data conn
+                                                              `(hand ,(user-email player)
+                                                                     ,new-cards))
+                                                   (struct-copy user player
+                                                                (hand (append (user-hand player)
+                                                                              new-cards))))])))
+                                          new-cards-for-players
+                                          players)])
+                        (cons players remaining-deck))])]))
+
+ 
+  (define receive-datum (compose1 channel-get user-comm))
 
   ;; performs the bidding process and returns the final bid value
   (define perform-bidding
@@ -153,10 +178,21 @@
                        (let* ((player (list-ref players player-index))
                               (connection (user-connection player)))
                          (send-data connection `(request-bid ,current-bid-value))
-                         (cadr (read-string-data (ws-recv connection)))))
+                         (caddr (receive-datum player))))
                      (λ (player-index error-msg)
                        (send-data (user-connection (list-ref players player-index))
                                   `(error ,error-msg))))))
+
+  
+  ;; player index is the index of the player who won the bid and will choose the trump
+  (define choose-trump-suit
+    (λ (players player-index)
+      (let* ((bidder (list-ref players player-index))
+             (connection (user-connection bidder)))
+        (send-data connection '(choose-trump))
+        (let ([selected-trump-suit (caddr (receive-datum bidder))])
+          (send-datum-to-all players '(trump-selected))
+          selected-trump-suit))))
   
   (define start-game
     (λ (room-name)
@@ -173,16 +209,18 @@
                                (ws-conn-closed? (user-connection member)))
                              members)))
             (let* ((players (cons host members))
-                   (deck (distribute-cards-to-players (cons host members)))
-                   (bid-result (perform-bidding players)))
-              (begin (hash-set! *running-games*
-                                name
-                                (game-data members deck 'init))
-                     (for-each (λ (player)
-                                 (send-data (user-connection player)
-                                            `(bid-result ,bid-result)))
-                               players)
-                     'game-started))]
+                   (players+deck (distribute-cards-to-players players))
+                   (bid-result (perform-bidding players))
+                   (trump-suit (choose-trump-suit players (cdr bid-result))))
+              (begin
+                (for-each (λ (player)
+                            (send-data (user-connection player)
+                                       `(bid-result ,bid-result)))
+                          players)
+                (match (distribute-cards-to-players players (cdr players+deck))
+                  [(cons players deck)
+                   (hash-set! *running-games* name (game-data players deck 'init trump-suit))
+                   'game-started])))]
            
            [else 'room-not-ready])]))))
 
@@ -219,7 +257,11 @@
 ;;
 ;; (start-game <room-name>)
 ;;
-;; (put-bid <user-email> <bid-value>) => make a bid 
+;; the following messages are sent to the channel of <user-email>'s user
+;; and are handled via the game logic
+;;
+;; (put-bid <user-email> <bid-value>) => make a bid
+;; [selected-trump <user-email> <trump-suit>] => select a trump suit
 ;; 
 (define (dispatch connection message)
   (let ((message (read (open-input-string message))))
@@ -235,6 +277,9 @@
       ;; game messages
       ((start-game) (start-game (cadr message)))
 
+      ((put-bid selected-trump)
+       (channel-put (user-comm (get-user-by-email (cadr message))) message))
+
       ;; catch all
       (else 'invalid-request))))
 
@@ -246,6 +291,6 @@
     (ws-serve connection-handler #:port port)))
 
 
-  ;; (printf "Server running. Hit enter to stop service.\n")
-  ;; (void (read-line))
-  ;; (stop-service)
+;; (printf "Server running. Hit enter to stop service.\n")
+;; (void (read-line))
+;; (stop-service)
