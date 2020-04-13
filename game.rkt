@@ -9,7 +9,8 @@
          card-rank
          card-suit
          card-point
-         print-card)
+         print-card
+         valid-card?)
 
 (require racket/struct)
 (require racket/control)
@@ -56,18 +57,20 @@
 
 (define +num-players+ 4)
 
-;; applicable deck for the game
-(define initial-deck
-  (apply append
-         (map (lambda (name rank)
-                (map (lambda (suit)
-                       (let [(point (assoc card card-points))]
-                         (card name rank suit (if point (cdr point) 0))))
-                     suits))
-              card-names
-              (card-names->ranks card-names))))
 
 (define shuffle-deck shuffle)
+
+;; applicable deck for the game
+(define initial-deck
+  (shuffle (apply append
+                  (map (lambda (name rank)
+                         (map (lambda (suit)
+                                (let [(point (assoc name card-points))]
+                                  (card name rank suit (if point (cdr point) 0))))
+                              suits))
+                       card-names
+                       (card-names->ranks card-names)))))
+
 
 
 ;; Deal and Bidding
@@ -184,6 +187,22 @@
   (λ (player-func player-num)
     (player-func player-num 'choose-trump)))
 
+;; if its the first card then it is valid, otherwise it should be of the suit of the
+;; first card played or the trump-suit if trump-suit is exposed
+;; or else he can play a card if he does not have any card of first suit
+(define valid-card?
+  (λ (card first-suit cards-played-in-round trump-suit hand)
+
+    (define (is-card-of-suit? card suit) (equal? suit (card-suit card)))
+    
+    (and (member card hand)
+         (or (equal? (length cards-played-in-round) 0)
+             (is-card-of-suit? card first-suit)
+             (is-card-of-suit? card trump-suit)
+             (andmap (λ (card)
+                       (not (is-card-of-suit? card first-suit)))
+                     hand)))))
+
 
 ;;
 ;; The Play
@@ -258,12 +277,14 @@
 
               [else (loop (cdr cards) leading-hand (+ 1 index))])))))
           
-    (let loop ([trump-suit #f] ;; contains the trump suit when exposed
+    (let loop ([player-cards player-cards]
+               [trump-suit #f] ;; contains the trump suit when exposed
                [rounds-to-be-played (length (car player-cards))]
                [active-player 0]
                [cards-played-in-round '()]
+               [first-suit #f]
                [points-earned (make-immutable-hash (map (λ (i) (cons i 0))
-                                              (range (length player-cards))))])
+                                                        (range (length player-cards))))])
       (displayln (format "cards in round ~a points-earner ~a "
                          cards-played-in-round
                          points-earned))
@@ -273,40 +294,61 @@
         [(equal? (length cards-played-in-round) +num-players+)
          (match (calculate-points trump-suit cards-played-in-round)
            [(cons winning-player-index points-won)
-            (loop trump-suit
+            (displayln (format "winner index is ~a" winning-player-index))
+            (loop player-cards
+                  trump-suit
                   (- rounds-to-be-played 1)
-                  0
+                  winning-player-index
                   '()
+                  #f
                   (hash-update points-earned
                                winning-player-index
                                (λ (current-points)
                                  (+ current-points points-won))))])]
 
         [else
-         (let ([card-played (player-func active-player cards-played-in-round trump-suit)])
+         (displayln (format "esle called ~a" active-player))
+         (let ([card-played (player-func active-player
+                                         cards-played-in-round
+                                         `((trump-suit . ,trump-suit)
+                                           (first-suit . ,first-suit)))]
+               [player-hand (list-ref player-cards active-player)])
            (cond
              [(equal? card-played 'expose-trump)
-              (loop selected-trump-suit
+              (loop player-cards
+                    selected-trump-suit
                     rounds-to-be-played
                     active-player
                     cards-played-in-round
+                    first-suit
                     points-earned)]
              
-             [(member card-played (list-ref player-cards active-player))
-              (loop trump-suit
+             [(valid-card? card-played
+                           first-suit
+                           cards-played-in-round
+                           trump-suit
+                           player-hand)
+              (loop (list-set player-cards
+                              active-player
+                              (remove card-played player-hand))
+                    trump-suit
                     rounds-to-be-played
-                    (+ 1 active-player)
+                    (remainder (+ 1 active-player) +num-players+)
                     (cons card-played cards-played-in-round)
+                    (if (equal? (length cards-played-in-round) 0)
+                        (card-suit card-played)
+                        first-suit)
                     points-earned)]
 
              [else (begin
                      (displayln "invalid card played")
                      (player-func active-player cards-played-in-round trump-suit)
-                          (loop trump-suit
-                                rounds-to-be-played
-                                active-player
-                                cards-played-in-round
-                                points-earned))]))]))))
+                     (loop trump-suit
+                           rounds-to-be-played
+                           active-player
+                           cards-played-in-round
+                           first-suit
+                           points-earned))]))]))))
 
 ;; Scoring
 ;; ==================================================================================================
