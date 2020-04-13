@@ -21,21 +21,22 @@
 (define (connection-handler c state)
   (displayln  (format "handler called ~a" c))
   (let loop ()
-    (sync ;; (handle-evt (alarm-evt (+ (current-inexact-milliseconds) 1000))
-          ;;             (lambda _
-          ;;               (ws-send! c "Waited another second")
-          ;;               (loop)))
-          (handle-evt (ws-recv-evt c #:payload-type 'text)
-                      (lambda (m)
-                        (displayln (format "m is ~a" m))
-                        (if (eof-object? m)
-                            (loop)
-                            (begin
-                              (thread
-                               (λ ()
-                                 (let ((data (dispatch c m)))
-                                   (ws-send! c (with-output-to-string (λ () (write data)))))))
-                              (loop)))))))
+    (sync
+     ;; (handle-evt (alarm-evt (+ (current-inexact-milliseconds) 1000))
+     ;;             (lambda _
+     ;;               (ws-send! c "Waited another second")
+     ;;               (loop)))
+     (handle-evt (ws-recv-evt c #:payload-type 'text)
+                 (lambda (m)
+                   (displayln (format "m is ~a" m))
+                   (if (eof-object? m)
+                       (loop)
+                       (begin
+                         (thread
+                          (λ ()
+                            (let ((data (dispatch c m)))
+                              (ws-send! c (with-output-to-string (λ () (write data)))))))
+                         (loop)))))))
   (ws-close! c))
 
 ;; Users
@@ -151,22 +152,23 @@
       [(players) (distribute-cards-to-players players initial-deck)]
       [(players deck)
        (match/values (distribute-cards deck 4)
-         [(new-cards-for-players remaining-deck)
-          (let ([players1 (map (λ (new-cards player)
-                                (let ([conn (user-connection player)])
-                                  (cond
-                                    [(ws-conn-closed? conn)
-                                     (error "connection closed for player" player)]
-                                    [else
-                                     (begin
-                                       (send-datum player
-                                                   `(hand ,(user-email player) ,new-cards))
-                                       (struct-copy user player
-                                                    (hand (append (user-hand player)
-                                                                  new-cards))))])))
-                              new-cards-for-players
-                              players)])
-            (cons players1 remaining-deck))])]))
+                     [(new-cards-for-players remaining-deck)
+                      (let ([players1
+                             (map (λ (new-cards player)
+                                    (let ([conn (user-connection player)])
+                                      (cond
+                                        [(ws-conn-closed? conn)
+                                         (error "connection closed for player" player)]
+                                        [else
+                                         (begin
+                                           (send-datum player
+                                                       `(hand ,(user-email player) ,new-cards))
+                                           (struct-copy user player
+                                                        (hand (append (user-hand player)
+                                                                      new-cards))))])))
+                                  new-cards-for-players
+                                  players)])
+                        (cons players1 remaining-deck))])]))
 
  
   (define receive-datum (compose1 channel-get user-comm))
@@ -209,28 +211,26 @@
                    (players+deck (distribute-cards-to-players players))
                    (bid-result (perform-bidding players))
                    (trump-suit (choose-trump-suit players (cdr bid-result))))
-              (begin
-                (for-each (λ (player)
-                            (send-datum player `(bid-result ,bid-result)))
-                          players)
-                (match (distribute-cards-to-players (car players+deck) (cdr players+deck))
-                  [(cons players deck)
-                   (displayln "huytrer")
-                   (let ((points-won
-                          (play-game (map user-hand players)
-                                     trump-suit
-                                     (λ (player-index cards-played-in-round game-state)
-                                       (displayln (format "waiting for player ~a " player-index))
-                                       (let ((player (list-ref players player-index)))
-                                         (send-datum player
-                                                     `(play-card . ((cards-played . ,cards-played-in-round)
-                                                                    (game-state . ,game-state))))
+              (for-each (λ (player)
+                          (send-datum player `(bid-result ,bid-result)))
+                        players)
+              (match (distribute-cards-to-players (car players+deck) (cdr players+deck))
+                [(cons players deck)
+                 (let ((points-won
+                        (play-game (map user-hand players)
+                                   trump-suit
+                                   (λ (player-index cards-in-round game-state)
+                                     (displayln (format "waiting for player ~a " player-index))
+                                     (let ((player (list-ref players player-index)))
+                                       (send-datum player
+                                                   `(play-card . ((cards-played . ,cards-in-round)
+                                                                  (game-state . ,game-state))))
                                                      
-                                         (caddr (receive-datum player)))))))
-                     (send-datum-to-all players `(points-won ,points-won)))
-                   ;; (hash-set! *running-games* name (game-data players deck 'init trump-suit))
-                   'game-started]
-                  (else (error "fuck")))))]
+                                       (caddr (receive-datum player)))))))
+                   (send-datum-to-all players `(points-won ,points-won)))
+                 ;; (hash-set! *running-games* name (game-data players deck 'init trump-suit))
+                 'game-started]
+                (else (error "fuck"))))]
            
            [else 'room-not-ready])]))))
 
@@ -288,12 +288,12 @@
       ;; game messages
       ((start-game)
        (begin (thread (λ () (start-game (cadr message))))
-       '(game-started)))
+              '(game-started)))
 
       ((put-bid selected-trump card-played)
        (begin (displayln (format "got card from ~a" message))
-       (channel-put (user-comm (get-user-by-email (cadr message))) message)
-       '(done)))
+              (channel-put (user-comm (get-user-by-email (cadr message))) message)
+              '(done)))
 
       ;; catch all
       (else 'invalid-request))))

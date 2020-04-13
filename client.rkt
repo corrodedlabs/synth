@@ -56,6 +56,13 @@
 
 (define client-lambda
   (λ (user)
+
+    (define select-card
+      (λ (hand cards-played-in-round first-suit)
+        (findf (λ (card)
+                (valid-card? card first-suit cards-played-in-round #f hand))
+              hand)))
+    
     (let loop ((client-state (default-state user))
                (server-msg (receive-data user)))
       (if server-msg
@@ -84,9 +91,11 @@
                           (receive-data user))))
             ((play-card)
              (let ((cards-played (cdadr server-msg))
-                   (game-state (cdddr server-msg)))
+                   (game-state (cdaddr server-msg)))
                (send-data (state-user client-state)
-                          `(card-played ,(car (state-hand client-state))))
+                          `(card-played ,(select-card (state-hand client-state)
+                                                      cards-played
+                                                      (cdr (assoc 'first-suit game-state)))))
                (loop client-state (receive-data user))))
             (else
              (begin (displayln (format "unhandled message ~a" server-msg))

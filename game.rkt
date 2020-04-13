@@ -9,7 +9,8 @@
          card-rank
          card-suit
          card-point
-         print-card)
+         print-card
+         valid-card?)
 
 (require racket/struct)
 (require racket/control)
@@ -61,7 +62,7 @@
   (apply append
          (map (lambda (name rank)
                 (map (lambda (suit)
-                       (let [(point (assoc card card-points))]
+                       (let [(point (assoc name card-points))]
                          (card name rank suit (if point (cdr point) 0))))
                      suits))
               card-names
@@ -184,6 +185,22 @@
   (λ (player-func player-num)
     (player-func player-num 'choose-trump)))
 
+;; if its the first card then it is valid, otherwise it should be of the suit of the
+;; first card played or the trump-suit if trump-suit is exposed
+;; or else he can play a card if he does not have any card of first suit
+(define valid-card?
+  (λ (card first-suit cards-played-in-round trump-suit hand)
+
+    (define (is-card-of-suit? card suit) (equal? suit (card-suit card)))
+    
+    (and (member card hand)
+         (or (equal? (length cards-played-in-round) 0)
+             (is-card-of-suit? card first-suit)
+             (is-card-of-suit? card trump-suit)
+             (andmap (λ (card)
+                      (not (is-card-of-suit? card first-suit)))
+                    hand)))))
+
 
 ;;
 ;; The Play
@@ -262,6 +279,7 @@
                [rounds-to-be-played (length (car player-cards))]
                [active-player 0]
                [cards-played-in-round '()]
+               [first-suit #f]
                [points-earned (make-immutable-hash (map (λ (i) (cons i 0))
                                               (range (length player-cards))))])
       (displayln (format "cards in round ~a points-earner ~a "
@@ -277,26 +295,38 @@
                   (- rounds-to-be-played 1)
                   0
                   '()
+                  #f
                   (hash-update points-earned
                                winning-player-index
                                (λ (current-points)
                                  (+ current-points points-won))))])]
 
         [else
-         (let ([card-played (player-func active-player cards-played-in-round trump-suit)])
+         (let ([card-played (player-func active-player
+                                         cards-played-in-round
+                                         `((trump-suit . ,trump-suit)
+                                           (first-suit . ,first-suit)))])
            (cond
              [(equal? card-played 'expose-trump)
               (loop selected-trump-suit
                     rounds-to-be-played
                     active-player
                     cards-played-in-round
+                    first-suit
                     points-earned)]
              
-             [(member card-played (list-ref player-cards active-player))
+             [(valid-card? card-played
+                           first-suit
+                           cards-played-in-round
+                           trump-suit
+                           (list-ref player-cards active-player))
               (loop trump-suit
                     rounds-to-be-played
                     (+ 1 active-player)
                     (cons card-played cards-played-in-round)
+                    (if (equal? (length cards-played-in-round) 0)
+                        (card-suit card-played)
+                        first-suit)
                     points-earned)]
 
              [else (begin
