@@ -90,13 +90,17 @@
                                        (selected-trump 'diamond))
                           (receive-data user))))
             ((play-card)
-             (let ((cards-played (cdadr server-msg))
-                   (game-state (cdaddr server-msg)))
+             (let* ((cards-played (cdadr server-msg))
+                    (game-state (cdaddr server-msg))
+                    (hand (state-hand client-state))
+                    (card (select-card hand
+                                       cards-played
+                                       (cdr (assoc 'first-suit game-state)))))
                (send-data (state-user client-state)
-                          `(card-played ,(select-card (state-hand client-state)
-                                                      cards-played
-                                                      (cdr (assoc 'first-suit game-state)))))
-               (loop client-state (receive-data user))))
+                          `(card-played ,card))
+               (loop (struct-copy state client-state
+                                  (hand (remove card hand)))
+                     (receive-data user))))
             (else
              (begin (displayln (format "unhandled message ~a" server-msg))
                     (loop client-state (receive-data user)))))

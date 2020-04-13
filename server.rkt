@@ -228,7 +228,6 @@
                                                      
                                        (caddr (receive-datum player)))))))
                    (send-datum-to-all players `(points-won ,points-won)))
-                 ;; (hash-set! *running-games* name (game-data players deck 'init trump-suit))
                  'game-started]
                 (else (error "fuck"))))]
            
