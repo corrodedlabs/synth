@@ -17,6 +17,21 @@
 (define width (js-ref window "innerWidth"))
 (define height (js-ref window "innerHeight"))
 
+;; Representing position
+
+(define-record-type position (fields x y z))
+
+(define set-position (lambda (obj pos)
+		       (js-invoke (js-ref obj "position")
+				  "set"
+				  (position-x pos)
+				  (position-y pos)
+				  (position-z pos))))
+
+;; some handy constructors for setting position
+(define (z val) (make-position 0 0 val))
+(define (y val) (make-position 0 val 0))
+(define (x val) (make-position val 0 0))
 
 ;; set up the scene and our camera.
 ;; There are a few different cameras in three.js. For now, let's use a PerspectiveCamera.
@@ -36,7 +51,7 @@
 (define scene (js-new "THREE.Scene"))
 (define camera (js-new "THREE.PerspectiveCamera" 75 (/ width height) 0.1 1000))
 
-(js-set! (js-ref camera "position") "z" 5)
+(set-position camera (z 5))
 ;; (js-invoke camera "lookAt" 0 0 0)
 
 ;; setup the webgl renderer
@@ -61,17 +76,94 @@
 (js-invoke body "appendChild" (js-ref renderer "domElement"))
 
 
+(define add-to-scene (lambda (scene obj) (js-invoke scene "add" obj)))
+
 ;; Lights
 
-(define light (js-new "THREE.AmbientLight" #x404040))
-(js-invoke scene "add" light)
+(define light (js-new "THREE.AmbientLight" #xffffff))
+(add-to-scene scene light)
 
+;; Hemisphere Lights
 ;;
 ;; var light = new THREE.HemisphereLight( 0xffffbb, 0x080820, 1 );
 ;; scene.add( light );
 
 (define light2 (js-new "THREE.HemisphereLight" #xffffbb 0x080820 1))
-(js-invoke scene "add" light)
+(add-to-scene scene light)
+
+
+;; SpotLight
+;;
+;; This light gets emitted from a single point in one direction, along a cone that increases in size the further from the light it gets.
+
+;; This light can cast shadows - see the SpotLightShadow page for details.
+
+;; Code Example
+;; // white spotlight shining from the side, casting a shadow
+
+;; var spotLight = new THREE.SpotLight( 0xffffff );
+;; spotLight.position.set( 100, 1000, 100 );
+
+;; spotLight.castShadow = true;
+
+;; spotLight.shadow.mapSize.width = 1024;
+;; spotLight.shadow.mapSize.height = 1024;
+
+;; spotLight.shadow.camera.near = 500;
+;; spotLight.shadow.camera.far = 4000;
+;; spotLight.shadow.camera.fov = 30;
+
+;; scene.add( spotLight );
+
+(define spotlight (js-new "THREE.SpotLight" #xffffff))
+(set-position spotlight (make-position 100 1000 100))
+
+;; shadow props
+
+
+(let ((shadow-map-size-obj  (js-ref (js-ref spotlight "shadow") "mapSize"))
+      (shadow-camera (js-ref (js-ref spotlight "shadow") "camera")))
+  (js-set! spotlight "castShadow" #t)
+  (js-set! shadow-map-size-obj "width" 1024)
+  (js-set! shadow-camera "near" 500)
+  (js-set! shadow-camera "far" 4000)
+  (js-set! shadow-camera "fov" 30))
+
+(add-to-scene scene spotlight)
+
+
+;; Geometries
+
+;; PlaneGeometry
+;; A class for generating plane geometries
+
+
+;; Code Example
+;; var geometry = new THREE.PlaneGeometry( 5, 20, 32 );
+;; var material = new THREE.MeshBasicMaterial( {color: 0xffff00, side: THREE.DoubleSide} );
+;; var plane = new THREE.Mesh( geometry, material );
+;; scene.add( plane );
+;; Constructor
+;; PlaneGeometry(width : Float, height : Float, widthSegments : Integer, heightSegments : Integer)
+;; width — Width along the X axis. Default is 1.
+;; height — Height along the Y axis. Default is 1.
+;; widthSegments — Optional. Default is 1.
+;; heightSegments — Optional. Default is 1.
+
+;; Properties
+;; See the base Geometry class for common properties.
+
+;; .parameters
+;; An object with a property for each of the constructor parameters. Any modification after instantiation does not change the geometry.
+
+;; Methods
+;; See the base Geometry class for common methods.
+
+(define create-plane
+  (case-lambda
+   ((width height) (create-plane width height 1 1))
+   ((width height width-segments height-segments)
+    (js-new "THREE.PlaneGeometry" width height width-segments height-segments))))
 
 ;; cube
 
@@ -81,9 +173,11 @@
 ;; scene.add( cube );
 
 (define geometry (js-new "THREE.BoxGeometry" 1 1 1))
-(define material (js-new "THREE.MeshBasicMaterial" (js-obj "color" #x00ff00)))
+(define material (js-new "THREE.MeshStandardMaterial" (js-obj "color" #xff0000)))
 (define cube (js-new "THREE.Mesh" geometry material))
-;; (js-invoke scene "add" cube)
+
+(set-position cube (make-position 0 0 0))
+(add-to-scene scene cube)
 
 ;; Model Loaders
 
@@ -132,7 +226,12 @@
     (define resource-loaded-callback
       (lambda (gltf-model)
 	(console-log "adding" )
-	(js-invoke scene "add" (js-ref gltf-model "scene"))))
+	(let ((mesh (js-ref gltf-model "scene")))
+	  (js-set! (js-ref mesh "rotation") "x" (js-eval "Math.PI"))
+	  (js-set! (js-ref mesh "position") "x" -5)
+	  (js-set! (js-ref mesh "position") "y" -4)
+	  (js-set! (js-ref mesh "position") "z" -4)
+	  (js-invoke scene "add" mesh))))
 
     (define progress-callback
       (lambda (progress)
