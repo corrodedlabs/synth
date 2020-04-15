@@ -304,7 +304,8 @@
   (λ ()
     (ws-serve connection-handler #:port port)))
 
+(define stop-service (start-service))
 
-;; (printf "Server running. Hit enter to stop service.\n")
-;; (void (read-line))
-;; (stop-service)
+(printf "Server running. Hit enter to stop service.\n")
+(void (read-line))
+(stop-service)

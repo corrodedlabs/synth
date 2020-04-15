@@ -257,3 +257,38 @@
 	       (js-closure animate))))
 
 (animate)
+
+;; Websockets
+
+(define socket (js-new  "WebSocket" "ws://localhost:8081"))
+
+(define setup-socket
+  (lambda (socket)
+    (define on-close
+      (lambda (event)
+	(console-log "connection closed" event)))
+
+    (define on-error
+      (lambda (event)
+	(console-log "error occured in websocket" event)))
+
+    (define on-message
+      (lambda (event)
+	(console-log "new message has arrived" event)))
+
+    (define on-open
+      (lambda (event)
+	(console-log "connection opened")
+	(send-message socket "(connect-user akash)")
+	(send-message socket "(make-room room1 awaaz)")))
+    
+    (js-set! socket "onclose" (js-closure on-close))
+    (js-set! socket "onerror" (js-closure on-error))
+    (js-set! socket "onmessage" (js-closure on-message))
+    (js-set! socket "onopen" (js-closure on-open))))
+
+(define send-message
+  (lambda (socket message)
+    (js-invoke socket "send" message)))
+
+(setup-socket socket)
