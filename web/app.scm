@@ -223,10 +223,10 @@
     (call/cc (lambda (k)
 	       (js-invoke texture-loader "load" texture-path
 			  (js-closure (lambda (map)
-					(js-set! map "wrapS" +repeat-wrapping+)
-					(js-set! map "wrapT" +repeat-wrapping+)
-					(js-set! map "anisotropy" 4)
-					(js-invoke (js-ref map "repeat") "set" 10 24)
+					;; (js-set! map "wrapS" +repeat-wrapping+)
+					;; (js-set! map "wrapT" +repeat-wrapping+)
+					;; (js-set! map "anisotropy" 4)
+					;; (js-invoke (js-ref map "repeat") "set" 10 24)
 					(k map))))))))
 
 ;; setup textures for the floor
@@ -350,6 +350,8 @@
 (js-invoke draco-loader "setDecoderPath" "js/draco")
 (js-invoke loader "setDRACOLoader" draco-loader)
 
+(js-eval "window.isMesh = function(x) { return (x instanceof THREE.Mesh);}")
+
 ;; load a gltf resource
 (define load-gltf
   (lambda (model-path)
@@ -362,7 +364,21 @@
 	  (js-set! (js-ref mesh "position") "y" 5)
 	  (js-set! (js-ref mesh "position") "z" 21)
 	  (js-invoke (js-ref mesh "scale") "set" 0.5 0.5 0.5)
-	  (js-invoke scene "add" mesh))))
+	  (js-invoke scene "add" mesh)
+
+	  (let ((mesh2 (js-invoke mesh "clone"))
+		(card (load-texture "textures/nine.jpeg")))
+	    (define n 2)
+	    (let* ((scene-data  (js-array->list (js-ref mesh2 "children")))
+		   (card-mesh (caddr scene-data)))
+	      (let* ((card-face (js-array->list (js-ref card-mesh "children")))
+		     (child-material (js-ref (cadr card-face) "material")))
+		(js-set! child-material "map" card)
+		(js-set! (js-ref child-material "map") "needsUpdate" #t)
+		(js-set! child-material "needsUpdate" #t)
+		
+		(set-position mesh2 (make-position 2 5 21))
+		(add-to-scene scene mesh2)))))))
 
     (define progress-callback
       (lambda (progress)
