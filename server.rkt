@@ -178,7 +178,7 @@
     (λ (players)
       (start-bidding (λ (player-index current-bid-value)
                        (let* ((player (list-ref players player-index)))
-                         (send-datum player `(request-bid ,current-bid-value))
+                         (send-datum player `(request-bid ,current-bid-value)) 
                          (caddr (receive-datum player))))
                      (λ (player-index error-msg)
                        (send-datum (list-ref players player-index) `(error ,error-msg))))))

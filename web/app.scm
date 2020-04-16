@@ -17,6 +17,8 @@
 (define width (js-ref window "innerWidth"))
 (define height (js-ref window "innerHeight"))
 
+(define π (js-eval "Math.PI"))
+
 ;; Representing position
 
 (define-record-type position (fields x y z))
@@ -51,7 +53,7 @@
 (define scene (js-new "THREE.Scene"))
 (define camera (js-new "THREE.PerspectiveCamera" 75 (/ width height) 0.1 1000))
 
-(set-position camera (z 5))
+(set-position camera (make-position 0 10 30))
 ;; (js-invoke camera "lookAt" 0 0 0)
 
 ;; setup the webgl renderer
@@ -79,6 +81,37 @@
 (define add-to-scene (lambda (scene obj) (js-invoke scene "add" obj)))
 
 ;; Lights
+
+;; Buld
+
+;; // ref for lumens: http://www.power-sure.com/lumens.htm
+;; var bulbLuminousPowers = {
+;; 			  "110000 lm (1000W)": 110000,
+;; 			  "3500 lm (300W)": 3500,
+;; 			  "1700 lm (100W)": 1700,
+;; 			  "800 lm (60W)": 800,
+;; 			  "400 lm (40W)": 400,
+;; 			  "180 lm (25W)": 180,
+;; 			  "20 lm (4W)": 20,
+;; 			  "Off": 0
+;; 			  };
+
+;; // ref for solar irradiances: https://en.wikipedia.org/wiki/Lux
+;; var hemiLuminousIrradiances = {
+;; 			       "0.0001 lx (Moonless Night)": 0.0001,
+;; 			       "0.002 lx (Night Airglow)": 0.002,
+;; 			       "0.5 lx (Full Moon)": 0.5,
+;; 			       "3.4 lx (City Twilight)": 3.4,
+;; 			       "50 lx (Living Room)": 50,
+;; 			       "100 lx (Very Overcast)": 100,
+;; 			       "350 lx (Office Room)": 350,
+;; 			       "400 lx (Sunrise/Sunset)": 400,
+;; 			       "1000 lx (Overcast)": 1000,
+;; 			       "18000 lx (Daylight)": 18000,
+;; 			       "50000 lx (Direct Sun)": 50000
+;; 			       };
+
+
 
 (define light (js-new "THREE.AmbientLight" #xffffff))
 (add-to-scene scene light)
@@ -131,6 +164,98 @@
 
 (add-to-scene scene spotlight)
 
+;; Floor material
+;; floorMat = new THREE.MeshStandardMaterial( {
+;; 					roughness: 0.8,
+;; 					color: 0xffffff,
+;; 					metalness: 0.2,
+;; 					bumpScale: 0.0005
+;; 				} );
+
+(define floor-material (js-new "THREE.MeshStandardMaterial"
+			       (js-obj "roughness" 0.8
+				       "color" #xffffff
+				       "metalness" 0.2
+				       "bumpScale" 0.0005)))
+
+;; Textures
+
+;; var textureLoader = new THREE.TextureLoader();
+;; 				textureLoader.load( "textures/hardwood2_diffuse.jpg", function ( map ) {
+
+;; 					map.wrapS = THREE.RepeatWrapping;
+;; 					map.wrapT = THREE.RepeatWrapping;
+;; 					map.anisotropy = 4;
+;; 					map.repeat.set( 10, 24 );
+;; 					map.encoding = THREE.sRGBEncoding;
+;; 					floorMat.map = map;
+;; 					floorMat.needsUpdate = true;
+
+;; 	} );
+;; 				textureLoader.load( "textures/hardwood2_bump.jpg", function ( map ) {
+
+;; 					map.wrapS = THREE.RepeatWrapping;
+;; 					map.wrapT = THREE.RepeatWrapping;
+;; 					map.anisotropy = 4;
+;; 					map.repeat.set( 10, 24 );
+;; 					floorMat.bumpMap = map;
+;; 					floorMat.needsUpdate = true;
+
+;; 	} );
+;; 				textureLoader.load( "textures/hardwood2_roughness.jpg", function ( map ) {
+
+;; 					map.wrapS = THREE.RepeatWrapping;
+;; 					map.wrapT = THREE.RepeatWrapping;
+;; 					map.anisotropy = 4;
+;; 					map.repeat.set( 10, 24 );
+;; 					floorMat.roughnessMap = map;
+;; 					floorMat.needsUpdate = true;
+
+;; 	} );
+
+(define texture-loader (js-new "THREE.TextureLoader"))
+
+(define +repeat-wrapping+ (js-eval "THREE.RepeatWrapping"))
+(define +s-rgbe-encoding+ (js-eval "THREE.sRGBEncoding"))
+
+(define load-texture
+  (lambda (texture-path)
+    (call/cc (lambda (k)
+	       (js-invoke texture-loader "load" texture-path
+			  (js-closure (lambda (map)
+					(js-set! map "wrapS" +repeat-wrapping+)
+					(js-set! map "wrapT" +repeat-wrapping+)
+					(js-set! map "anisotropy" 4)
+					(js-invoke (js-ref map "repeat") "set" 10 24)
+					(k map))))))))
+
+;; setup textures for the floor
+(let ((diffuse-map (load-texture "textures/hardwood2_diffuse.jpg"))
+      (bump-map (load-texture "textures/hardwood2_bump.jpg"))
+      (roughness-map (load-texture "textures/hardwood2_roughness.jpg")))
+  (js-set! diffuse-map "encoding" +s-rgbe-encoding+)
+  (js-set! floor-material "map" diffuse-map)
+  (js-set! floor-material "bumpMap" bump-map)
+  (js-set! floor-material "roughnessMap" roughness-map)
+  (js-set! floor-material "needsUpdate" #t))
+
+;; var floorGeometry = new THREE.PlaneBufferGeometry( 20, 20 );
+;; var floorMesh = new THREE.Mesh( floorGeometry, floorMat );
+;; floorMesh.receiveShadow = true;
+;; floorMesh.rotation.x = - Math.PI / 2.0;
+;; scene.add( floorMesh );
+
+(console-log floor-material)
+
+(define floor-geometry (js-new "THREE.PlaneBufferGeometry" 60 60))
+(define floor-mesh (js-new "THREE.Mesh" floor-geometry floor-material))
+(js-set! floor-mesh "receiveShadow" #t)
+(console-log "pi is" π)
+(js-set! (js-ref floor-mesh "rotation") "x" (- (/ π 2.0)))
+
+(set-position floor-mesh (make-position 0 0 0))
+(add-to-scene scene floor-mesh)
+
 
 ;; Geometries
 
@@ -164,6 +289,11 @@
    ((width height) (create-plane width height 1 1))
    ((width height width-segments height-segments)
     (js-new "THREE.PlaneGeometry" width height width-segments height-segments))))
+
+;; (let ((plane-geometry (create-plane 200 200)))
+;;   )
+
+;; (add-to-scene scene )
 
 ;; cube
 
@@ -228,9 +358,10 @@
 	(console-log "adding" )
 	(let ((mesh (js-ref gltf-model "scene")))
 	  (js-set! (js-ref mesh "rotation") "x" (js-eval "Math.PI"))
-	  (js-set! (js-ref mesh "position") "x" -5)
-	  (js-set! (js-ref mesh "position") "y" -4)
-	  (js-set! (js-ref mesh "position") "z" -4)
+	  (js-set! (js-ref mesh "position") "x" 0)
+	  (js-set! (js-ref mesh "position") "y" 5)
+	  (js-set! (js-ref mesh "position") "z" 21)
+	  (js-invoke (js-ref mesh "scale") "set" 0.5 0.5 0.5)
 	  (js-invoke scene "add" mesh))))
 
     (define progress-callback
@@ -249,8 +380,21 @@
 
 (load-gltf "models/base-card.glb")
 
+
+;; renderer = new THREE.WebGLRenderer();
+;; renderer.physicallyCorrectLights = true;
+;; renderer.outputEncoding = THREE.sRGBEncoding;
+;; renderer.shadowMap.enabled = true;
+;; renderer.toneMapping = THREE.ReinhardToneMapping;
+;; renderer.setPixelRatio( window.devicePixelRatio );
+;; renderer.setSize( window.innerWidth, window.innerHeight );
+
 (define animate
   (lambda ()
+    (js-set! renderer "physicallyCorrectLights" #t)
+    (js-set! renderer "outputEncoding" +s-rgbe-encoding+)
+    (js-set! (js-ref renderer "shadowMap") "enabled" #t)
+    (js-set! renderer "toneMapping" (js-eval "THREE.ReinhardToneMapping"))
     (js-invoke renderer "render" scene camera)
     (js-invoke window
 	       "requestAnimationFrame"

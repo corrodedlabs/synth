@@ -155,7 +155,7 @@
          (cons current-bid-value player-num)]
 
         [else
-         (let ([bid-value (reset (player-bid-func player-num current-bid-value))])
+         (let ([bid-value (player-bid-func player-num current-bid-value)])
            (displayln (format "received bid value of ~a from player ~a " bid-value player-num))
            (cond
              [(or (equal? bid-value 28))
