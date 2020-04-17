@@ -74,8 +74,11 @@
 ;; Last but not least, we add the renderer element to our HTML document.
 ;; This is a <canvas> element the renderer uses to display the scene to us.
 (define renderer (js-new "THREE.WebGLRenderer"))
-(js-invoke renderer "setSize" width height)
-(js-invoke body "appendChild" (js-ref renderer "domElement"))
+
+(define attach-renderer
+  (lambda (renderer body)
+    (js-invoke renderer "setSize" width height)
+    (js-invoke body "appendChild" (js-ref renderer "domElement"))))
 
 
 (define add-to-scene (lambda (scene obj) (js-invoke scene "add" obj)))
@@ -416,7 +419,7 @@
 	       "requestAnimationFrame"
 	       (js-closure animate))))
 
-(animate)
+;; (animate)
 
 ;; Websockets
 
@@ -451,4 +454,35 @@
   (lambda (socket message)
     (js-invoke socket "send" message)))
 
-(setup-socket socket)
+;; (setup-socket socket)
+
+;; Ui setup
+
+(define button-class "bg-transparent hover:bg-blue-500 text-blue-700 font-semibold 
+                      hover:text-white py-2 px-4 border border-blue-500 
+                      hover:border-transparent rounded ")
+
+(define (button id text)
+  `(div class
+	"w-64 text-center text-grey-darker bg-grey-light px-4 py-2 m-2 "
+	(button id ,id class ,button-class  ,text)))
+
+;; Home page
+;;
+;; The options available are:
+;; * create a game room
+;; * join a game room
+;;
+
+(define home-element
+  (element-new
+   `(div class "container mx-auto h-full flex flex-col h-screen items-center justify-center"
+	 ,(button "create" "Create a Game room")
+	 ,(button "join" "Join a Game room"))))
+
+(js-invoke body "appendChild" home-element)
+(add-handler! "#create" "click" (lambda (event)
+				  (console-log "create a game room")))
+
+(add-handler! "#join" "click" (lambda (event)
+				(console-log "join a game room")))
