@@ -7,6 +7,11 @@
 	  <meta description="Twenty Eight Card Game"
 		keywords="web-game, card game"
 		author="CorrodedLabs" />
+
+	  <meta name="google-signin-client_id"
+		content="352017580530-o2l5ceece5bronvtqd5a7k945j1e1djt.apps.googleusercontent.com">
+
+	  
 	  <title>Twenty Eight</title>
 
 	  <!-- Tailwind css for dev -->
@@ -24,6 +29,8 @@
 	</head>
 	<body class="bg-grey-lighter h-screen font-sans">
 	  <!-- <div id="bs-console"></div> -->
+	  <!-- <div class="g-signin2" data-onsuccess="onSignIn"></div> -->
+	  
 	  <!-- Three js and related deps -->
 	  <script src="./js/three.js"></script>
 	  <script src="./js/gltf-loader.js"></script>
@@ -34,5 +41,8 @@
 	  <script type="text/biwascheme" >
 	    (load "app.scm")
 	  </script>
+
+	  <!-- Google Sign In -->
+	  <script src="https://apis.google.com/js/platform.js?onload=renderButton" async defer></script>
 	</body>
 </html>

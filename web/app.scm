@@ -467,6 +467,38 @@
 	"w-64 text-center text-grey-darker bg-grey-light px-4 py-2 m-2 "
 	(button id ,id class ,button-class  ,text)))
 
+;; Sign In page
+
+;; <div class="g-signin2" data-onsuccess="onSignIn"></div>
+
+(define sign-in-element
+  (element-new
+   '(div class "container mx-auto h-full flex flex-col h-screen items-center justify-center"
+	 (div#sign-in))))
+
+(js-invoke body "appendChild" sign-in-element)
+
+(define on-sign-in
+  (js-closure
+   (lambda (user-info)
+     (let ((profile (js-invoke user-info "getBasicProfile"))
+	   (token (js-ref (js-invoke user-info "getAuthResponse") "id_token")))
+       (console-log "token" token)
+       (console-log "email" (js-invoke profile "getEmail"))))))
+
+(js-set! window "renderButton"
+	 (js-closure (lambda ()
+		       (js-invoke (js-ref (js-ref window "gapi") "signin2")
+				  "render"
+				  "sign-in"
+				  (js-obj "scope" "profile email"
+					  "width" 240
+					  "height" 50
+					  "longtitle" #t
+					  "onsuccess" on-sign-in
+					  "onfailure" (js-closure (lambda (error)
+								    (console-log error))))))))
+
 ;; Home page
 ;;
 ;; The options available are:
@@ -480,7 +512,6 @@
 	 ,(button "create" "Create a Game room")
 	 ,(button "join" "Join a Game room"))))
 
-(js-invoke body "appendChild" home-element)
 (add-handler! "#create" "click" (lambda (event)
 				  (console-log "create a game room")))
 
