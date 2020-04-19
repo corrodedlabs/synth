@@ -13,6 +13,16 @@
 (define document (js-eval "document"))
 (define body (js-ref document "body"))
 
+(define append-to-body
+  (lambda (element) (js-invoke body "appendChild" element)))
+
+(define replace-body
+  (lambda (element)
+    (let ((app (js-invoke document "getElementById" "app")))
+      (js-set! app "innerHTML" "")
+      (js-invoke app "appendChild" element))))
+
+
 ;; Dimensions of the window
 (define width (js-ref window "innerWidth"))
 (define height (js-ref window "innerHeight"))
@@ -467,37 +477,65 @@
 	"w-64 text-center text-grey-darker bg-grey-light px-4 py-2 m-2 "
 	(button id ,id class ,button-class  ,text)))
 
+(define *events* '())
+
+(define new-event
+  (lambda (thunk)
+    (set! *events* (append *events* (list thunk)))))
+
+(define start-render
+  (lambda ()
+    (let ((event ((car *events*))))
+      (set! *events* (cdr *events*))
+      (render-page event))))
+
+(define next-event
+  (lambda ()
+    (call/cc (lambda (k)
+	       (new-event (lambda () (k #f)))
+	       (start-render)))))
+
 ;; Sign In page
 
 ;; <div class="g-signin2" data-onsuccess="onSignIn"></div>
 
+(define-record-type element (fields html on-load))
+
 (define sign-in-element
-  (element-new
-   '(div class "container mx-auto h-full flex flex-col h-screen items-center justify-center"
-	 (div#sign-in))))
+  (lambda ()
+    (make-element
+     (element-new
+      '(div class "container mx-auto h-full flex flex-col h-screen items-center justify-center"
+	    (div#sign-in)))
+     (lambda ()
+       (define on-sign-in
+	 (js-closure
+	  (lambda (user-info)
+	    (let* ((profile (js-invoke user-info "getBasicProfile"))
+		   (token (js-ref (js-invoke user-info "getAuthResponse") "id_token"))
+		   (email (js-invoke profile "getEmail"))
+		   (name (js-invoke profile "getName")))
+	      (render-page 'home `((token . ,token)
+				   (email . ,email)
+				   (name . ,name)))))))
 
-(js-invoke body "appendChild" sign-in-element)
+       (define on-fail (js-closure (lambda (error) (console-log error))))
+       
+       (js-set! window
+		"renderButton"
+		(js-closure (lambda ()
+			      (js-invoke (js-ref (js-ref window "gapi") "signin2")
+					 "render"
+					 "sign-in"
+					 (js-obj "scope" "profile email"
+						 "width" 240
+						 "height" 50
+						 "longtitle" #t
+						 "onsuccess" on-sign-in
+						 "onfailure" on-fail)))))))))
 
-(define on-sign-in
-  (js-closure
-   (lambda (user-info)
-     (let ((profile (js-invoke user-info "getBasicProfile"))
-	   (token (js-ref (js-invoke user-info "getAuthResponse") "id_token")))
-       (console-log "token" token)
-       (console-log "email" (js-invoke profile "getEmail"))))))
 
-(js-set! window "renderButton"
-	 (js-closure (lambda ()
-		       (js-invoke (js-ref (js-ref window "gapi") "signin2")
-				  "render"
-				  "sign-in"
-				  (js-obj "scope" "profile email"
-					  "width" 240
-					  "height" 50
-					  "longtitle" #t
-					  "onsuccess" on-sign-in
-					  "onfailure" (js-closure (lambda (error)
-								    (console-log error))))))))
+
 
 ;; Home page
 ;;
@@ -507,13 +545,32 @@
 ;;
 
 (define home-element
-  (element-new
-   `(div class "container mx-auto h-full flex flex-col h-screen items-center justify-center"
-	 ,(button "create" "Create a Game room")
-	 ,(button "join" "Join a Game room"))))
+  (lambda (data)
+    (make-element (element-new
+		   `(div class "container mx-auto h-full flex flex-col h-screen items-center justify-center"
+			 ,(button "create" "Create a Game room")
+			 ,(button "join" "Join a Game room")))
+		  (lambda ()
+		    (add-handler! "#create" "click" (lambda (event)
+						      (console-log "create a game room")))
 
-(add-handler! "#create" "click" (lambda (event)
-				  (console-log "create a game room")))
+		    (add-handler! "#join" "click" (lambda (event)
+						    (console-log "join a game room")))))))
 
-(add-handler! "#join" "click" (lambda (event)
-				(console-log "join a game room")))
+(define create-room-element
+  (lambda (data)
+    #f))
+
+(define render-page
+  (case-lambda
+   ((page) (render-page page #f))
+   ((page data)
+    (console-log "rendering page " page "with data" data)
+    (let ((element (case page
+		     ((sign-in) (sign-in-element))
+		     ((home) (home-element data))
+		     ((create-room) (create-room-element data)))))
+      (replace-body (element-html element))
+      ((element-on-load element))))))
+
+(render-page 'sign-in)
