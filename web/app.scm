@@ -505,7 +505,8 @@
   (lambda ()
     (make-element
      (element-new
-      '(div class "container mx-auto h-full flex flex-col h-screen items-center justify-center"
+      '(div class
+	    "container mx-auto h-full flex flex-col h-screen items-center justify-center"
 	    (div#sign-in)))
      (lambda ()
        (define on-sign-in
@@ -514,10 +515,12 @@
 	    (let* ((profile (js-invoke user-info "getBasicProfile"))
 		   (token (js-ref (js-invoke user-info "getAuthResponse") "id_token"))
 		   (email (js-invoke profile "getEmail"))
-		   (name (js-invoke profile "getName")))
+		   (name (js-invoke profile "getName"))
+		   (pic-url (js-invoke profile "getImageUrl")))
 	      (render-page 'home `((token . ,token)
 				   (email . ,email)
-				   (name . ,name)))))))
+				   (name . ,name)
+				   (photo-url . ,pic-url)))))))
 
        (define on-fail (js-closure (lambda (error) (console-log error))))
        
@@ -535,7 +538,8 @@
 						 "onfailure" on-fail)))))))))
 
 
-
+(define container
+  '(div class "container mx-auto h-full flex flex-col h-screen items-center justify-center"))
 
 ;; Home page
 ;;
@@ -547,19 +551,84 @@
 (define home-element
   (lambda (data)
     (make-element (element-new
-		   `(div class "container mx-auto h-full flex flex-col h-screen items-center justify-center"
-			 ,(button "create" "Create a Game room")
-			 ,(button "join" "Join a Game room")))
+		   `(,@container
+		     ,(button "create" "Create a Game room")
+		     ,(button "join" "Join a Game room")))
 		  (lambda ()
 		    (add-handler! "#create" "click" (lambda (event)
-						      (console-log "create a game room")))
+						      (console-log "create a game room")
+						      (render-page 'create-room data)))
 
 		    (add-handler! "#join" "click" (lambda (event)
-						    (console-log "join a game room")))))))
+						    (console-log "join a game room")
+						    (render-page 'join-room #f)))))))
+
+(define-record-type player (fields name email photo-url))
 
 (define create-room-element
   (lambda (data)
-    #f))
+    (let ((name (cdr (assoc 'name data)))
+	  (email (cdr (assoc 'email data)))
+	  (photo-url (cdr (assoc 'photo-url data))))
+      (make-element
+       (element-new
+	`(,@container
+	  (form class "w-full max-w-sm"
+		(div class "flex items-center border-b border-b-2 border-teal-500 py-2"
+		     (input class "appearance-none bg-transparent border-none w-full 
+                               text-gray-700 mr-3 py-1 px-2 leading-tight focus:outline-none"
+			    type "text"
+			    placeholder "Enter Game room name"
+			    aria-label "Game room name")
+		     (button#create-room
+		      class "flex-shrink-0 bg-teal-500 hover:bg-teal-700 border-teal-500
+                         hover:border-teal-500 text-sm border-4 text-white py-1 px-2
+                         rounded"
+		      type "button"
+		      "Create Room")
+		     (button#go-back
+		      class "flex-shrink-0 border-transparent border-4 text-teal-500
+                         hover:text-teal-800 text-sm py-1 px-2 rounded"
+		      type "button"
+		      "Go back")))))
+       (lambda ()
+	 (add-handler! "#create-room"
+		       "click"
+		       (lambda (event)
+			 (console-log "create")
+			 (render-page 'game-room
+				      (cons "My Game room"
+					    (list (make-player name email photo-url))))))
+	 (add-handler! "#go-back"
+		       "click"
+		       (lambda (event)
+			 (console-log "go back")
+			 (render-page 'home))))))))
+
+
+(define game-room-element
+  (case-lambda
+   ((data)
+    (game-room-element (car data) (cdr data)))
+   ((game-room-name players)
+    (define player-view (lambda (player)
+			  (console-log "player is " player)
+			  `(div class "flex items-center"
+				(img class "w-10 h-10 rounded-full mr-4"
+				     alt "Avatar"
+				     src ,(player-photo-url player))
+				(div.text-sm
+				 (p class "text-gray-900 leading-none"
+				    ,(player-name player))))))
+
+    (define start-game-button (if (= (length players) 4) (button "Start Game") '(div)))
+    
+    (make-element
+     (element-new `(,@container (div class "font-bold text-2xl mb-2" "My Game Room")
+				(div class "text-lg mb-2" "Players in this room")
+				(div class "flex items-center" ,@(map player-view players))
+				,start-game-button))
+     (lambda () #f)))))
 
 (define render-page
   (case-lambda
@@ -569,7 +638,8 @@
     (let ((element (case page
 		     ((sign-in) (sign-in-element))
 		     ((home) (home-element data))
-		     ((create-room) (create-room-element data)))))
+		     ((create-room) (create-room-element data))
+		     ((game-room) (game-room-element data)))))
       (replace-body (element-html element))
       ((element-on-load element))))))
 
