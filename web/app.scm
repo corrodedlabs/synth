@@ -433,7 +433,12 @@
 
 ;; Websockets
 
-(define socket (js-new  "WebSocket" "ws://localhost:8081"))
+(define *socket* (js-new  "WebSocket" "ws://localhost:8081"))
+
+(define *pending-continuation* #f)
+
+(define *ws-connected?* #f)
+(define *pending-messages* '())
 
 (define setup-socket
   (lambda (socket)
@@ -447,24 +452,48 @@
 
     (define on-message
       (lambda (event)
-	(console-log "new message has arrived" event)))
-
+	(console-log "new message has arrived" (js-ref event "data"))
+	(if *pending-continuation* (*pending-continuation* #t) #f)))
+    
     (define on-open
       (lambda (event)
 	(console-log "connection opened")
-	(send-message socket "(connect-user akash)")
-	(send-message socket "(make-room room1 awaaz)")))
+	(set! *ws-connected?* #t)
+	(let loop ((pending-msg-conts *pending-messages*))
+	  (cond
+	   ((null? pending-msg-conts) #f)
+	   (else (begin  ((car pending-msg-conts) #t)
+			 (loop (cdr pending-msg-conts))))))))
     
     (js-set! socket "onclose" (js-closure on-close))
     (js-set! socket "onerror" (js-closure on-error))
     (js-set! socket "onmessage" (js-closure on-message))
     (js-set! socket "onopen" (js-closure on-open))))
 
-(define send-message
-  (lambda (socket message)
-    (js-invoke socket "send" message)))
+(setup-socket *socket*)
 
-;; (setup-socket socket)
+(define send-message!
+  (case-lambda
+   ((message) (send-message! *socket* message))
+   ((socket message)
+    (call/cc (lambda (k)
+	       (console-log "sending message" (format #f "~s" message))
+	       (if *ws-connected?*
+		   (js-invoke socket "send" (format #f "~s" message))
+		   (append *pending-messages* k)))))))
+
+(define connect-user
+  (lambda (user-email)
+    (send-message! `(connect-user ,user-email))))
+
+
+(define create-room
+  (lambda (email room-name)
+    (call/cc (lambda (k)
+	       (send-message! `(make-room ,email ,room-name))
+	       (console-log "message sent")
+	       (set! *pending-continuation* k)
+	       #f))))
 
 ;; Ui setup
 
@@ -541,6 +570,11 @@
 (define container
   '(div class "container mx-auto h-full flex flex-col h-screen items-center justify-center"))
 
+(define (assget key alist)
+  (cond
+   ((assoc alist key) => cdr)
+   (else #f)))
+
 ;; Home page
 ;;
 ;; The options available are:
@@ -555,10 +589,10 @@
 		     ,(button "create" "Create a Game room")
 		     ,(button "join" "Join a Game room")))
 		  (lambda ()
+		    (connect-user (assget data 'email))
 		    (add-handler! "#create" "click" (lambda (event)
 						      (console-log "create a game room")
 						      (render-page 'create-room data)))
-
 		    (add-handler! "#join" "click" (lambda (event)
 						    (console-log "join a game room")
 						    (render-page 'join-room #f)))))))
@@ -575,11 +609,12 @@
 	`(,@container
 	  (form class "w-full max-w-sm"
 		(div class "flex items-center border-b border-b-2 border-teal-500 py-2"
-		     (input class "appearance-none bg-transparent border-none w-full 
-                               text-gray-700 mr-3 py-1 px-2 leading-tight focus:outline-none"
-			    type "text"
-			    placeholder "Enter Game room name"
-			    aria-label "Game room name")
+		     (input#game-room-name
+		      class "appearance-none bg-transparent border-none w-full 
+                             text-gray-700 mr-3 py-1 px-2 leading-tight focus:outline-none"
+		      type "text"
+		      placeholder "Enter Game room name"
+		      aria-label "Game room name")
 		     (button#create-room
 		      class "flex-shrink-0 bg-teal-500 hover:bg-teal-700 border-teal-500
                          hover:border-teal-500 text-sm border-4 text-white py-1 px-2
@@ -595,10 +630,14 @@
 	 (add-handler! "#create-room"
 		       "click"
 		       (lambda (event)
-			 (console-log "create")
-			 (render-page 'game-room
-				      (cons "My Game room"
-					    (list (make-player name email photo-url))))))
+			 (let ((room-name (get-content "#game-room-name")))
+			   (cond
+			    ((create-room email room-name)			   
+			     (begin (console-log "now rendering page")
+				    (render-page 'game-room
+						 (cons room-name
+						       (list (make-player name email photo-url))))))
+			    (else #f)))))
 	 (add-handler! "#go-back"
 		       "click"
 		       (lambda (event)
