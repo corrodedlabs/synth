@@ -9,7 +9,13 @@
 (require "./game.rkt")
 (require "./server.rkt")
 
-(define +ws-url+ "ws://localhost:8081/test")
+(provide connect-to-ws
+         connect-user
+         get-active-rooms
+         create-room
+         join-room)
+
+(define +ws-url+ "ws://localhost:8080/test")
 (define protocol 'rfc6455)
 
 (define connect-to-ws
@@ -17,7 +23,9 @@
     (ws-connect (string->url +ws-url+) #:protocol protocol)))
 
 (define (recv/print c)
-  (displayln (format "got message ~a " (ws-recv c))))
+  (let ((msg (ws-recv c)))
+    (displayln (format "got message ~a " msg))
+    msg))
 
 (define write-data-to-string
   (λ (data) (with-output-to-string (λ ()  (write data)))))
@@ -41,8 +49,8 @@
   (λ (user) (state user '() #f #f)))
 
 (define receive-data
-  (lambda (user)
-    (let ((data (ws-recv (user-connection user))))
+  (lambda (connection)
+    (let ((data (ws-recv connection)))
       (if (or (eof-object? data) (equal? "#<void>" data))
           #f
           (begin (displayln (format "received data is ~a" data))
@@ -61,34 +69,37 @@
       (λ (hand cards-played-in-round first-suit)
         (findf (λ (card)
                 (valid-card? card first-suit cards-played-in-round #f hand))
-              hand)))
+               hand)))
+
+    (define connection (user-connection user))
     
     (let loop ((client-state (default-state user))
-               (server-msg (receive-data user)))
+               (server-msg (receive-data connection)))
       (if server-msg
           (case (car server-msg)
             ((hand)
              (let ((new-cards (caddr server-msg)))
                (loop (struct-copy state client-state
                                   (hand (append (state-hand client-state) new-cards)))
-                     (receive-data user))))
+                     (receive-data connection))))
             ((request-bid)
              (let ((current-bid (cadr server-msg)))
                (send-data (state-user client-state)
                           (list 'put-bid
                                 (if (< current-bid 27) (+ current-bid 1) 'pass)))
-               (loop client-state (receive-data user))))
+               (loop client-state
+                     (receive-data connection))))
             ((bid-result)
              (match (cadr server-msg)
                ((cons set-bid-value player-index)
                 (loop (struct-copy state client-state
                                    (bid-value set-bid-value))
-                      (receive-data user)))))
+                      (receive-data connection)))))
             ((choose-trump)
              (begin (send-data (state-user client-state) `(selected-trump diamond))
                     (loop (struct-copy state client-state
                                        (selected-trump 'diamond))
-                          (receive-data user))))
+                          (receive-data connection))))
             ((play-card)
              (let* ((cards-played (cdadr server-msg))
                     (game-state (cdaddr server-msg))
@@ -100,19 +111,39 @@
                           `(card-played ,card))
                (loop (struct-copy state client-state
                                   (hand (remove card hand)))
-                     (receive-data user))))
+                     (receive-data connection))))
             (else
              (begin (displayln (format "unhandled message ~a" server-msg))
-                    (loop client-state (receive-data user)))))
-          (loop client-state (receive-data user))))))
+                    (loop client-state (receive-data connection)))))
+          (loop client-state (receive-data connection))))))
+
+(define get-active-rooms
+  (lambda (connection)
+    (send-ws-message connection '(get-active-rooms))
+    (receive-data connection)))
+
+(define connect-user
+  (lambda (connection user-id)
+    (send-ws-message connection `(connect-user ,user-id))
+    (receive-data connection)))
+
+(define create-room
+  (lambda (connection user-id room-name)
+    (send-ws-message connection `(make-room ,user-id ,room-name))
+    (receive-data connection)))
+
+(define join-room
+  (lambda (connection room-name user-email)
+    (send-ws-message connection `(join-room ,room-name ,user-email))
+    (receive-data connection)
+    (user user-email connection (make-channel))))
 
 ;; we create a new connection for each user
 (define connect-users
   (λ ()
     (map (λ (user)
            (let ((connection (connect-to-ws)))
-             (send-ws-message connection `(connect-user ,user))
-             (recv/print connection)
+             (connect-user connection user)
              connection))
          users)))
 
@@ -123,10 +154,7 @@
     (send-ws-message host-connection `(make-room ,host-id ,room-name))
     (recv/print (car connections))
     (cons (user host-id host-connection (make-channel))
-          (map (λ (id connection)
-                 (send-ws-message connection `(join-room ,room-name ,id))
-                 (recv/print connection)
-                 (user id connection (make-channel)))
+          (map (λ (id connection) (join-room connection room-name id))
                (cdr users)
                (cdr connections)))))
 
@@ -144,8 +172,16 @@
       ;; (for-each ws-close! connections)
       )))
 
-(define stop-service (start-service))
-(sleep 3)
-(simulate-game)
-(void (read-line))
-(stop-service)
+
+;; (define connection (connect-to-ws))
+
+;; (define user-email 'bot-1)
+
+;; (define active-rooms  (get-active-rooms connection))
+;; (displayln (format "active rooms ~a" active-rooms))
+;; (define choosen-room-name (cdr (assoc 'name (car active-rooms))))
+
+;; (connect-user connection user-email)
+;; (join-room connection choosen-room-name user-email)
+
+;; (get-active-rooms connection)

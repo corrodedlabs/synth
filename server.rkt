@@ -10,7 +10,7 @@
 
 (provide start-service)
 
-(define port 8081)
+(define port 8080)
 (define idle-timeout #f)
 (command-line #:once-each
               ["--timeout" SECONDS "Set per-connection idle timeout"
@@ -77,6 +77,7 @@
   (require (submod ".." user))
   
   (provide add-game-room
+           get-active-rooms
            get-room-details
            find-room-by-name
            add-user-to-game-room
@@ -86,6 +87,14 @@
   ;; name => is the game romm name
   ;; members => list of members who have joined the game room and are online
   (serializable-struct game-room (host name members))
+
+  (define game-room->list
+    (lambda (room)
+      (match room
+        ((game-room host name members)
+         `((host . ,(user-email host))
+           (name . ,name)
+           (members . ,(map user-email members)))))))
 
   ;; hash from host email to game-room struct
   (define *game-rooms* (make-hash))
@@ -97,7 +106,10 @@
     'room-created)
 
   (define (get-room-details host-email)
-    (serialize (game-room-members (hash-ref *game-rooms* host-email))))
+    (game-room->list (hash-ref *game-rooms* host-email)))
+
+  (define (get-active-rooms)
+    (map game-room->list (hash-values *game-rooms*)))
 
   (define find-room-by-name
     (λ (room-name)
@@ -106,14 +118,15 @@
              (hash-values *game-rooms*))))
 
   ;; adds user to room's member controlled by host
+  ;; returns the members of the game room
   (define add-user-to-game-room
     (λ (room user)
       (match room
         [(game-room host name members)
-         (hash-update! *game-rooms*
-                       (user-email host)
-                       (λ (room-details)
-                         (game-room host name (cons user members))))]))))
+         (let ((new-members (cons user members)))
+           (hash-update! *game-rooms* (user-email host) (λ (room-details)
+                                                          (game-room host name new-members)))
+           new-members)]))))
 
 
 ;; Game
@@ -282,6 +295,7 @@
       ;; room messages
       ((make-room) (add-game-room (cadr message) (caddr message)))
       ((join-room) (join-room message))
+      ((get-active-rooms) (get-active-rooms))
       ((get-room-details) (get-room-details (cadr message)))
 
       ;; game messages
@@ -302,10 +316,13 @@
 
 (define start-service
   (λ ()
+    (displayln (format "port is ~a" port))
     (ws-serve connection-handler #:port port)))
 
-(define stop-service (start-service))
 
-(printf "Server running. Hit enter to stop service.\n")
-(void (read-line))
-(stop-service)
+(module+ main
+  (define stop-service (start-service))
+  (printf "Server running. Hit enter to stop service.\n")
+  (void (read-line))
+  (stop-service))
+ 
