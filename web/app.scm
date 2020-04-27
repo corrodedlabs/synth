@@ -644,6 +644,9 @@
 			 (console-log "go back")
 			 (render-page 'home))))))))
 
+(define add-click-handler
+  (lambda (id f)
+    (add-handler! (symbol->string id) "click" f)))
 
 (define game-room-element
   (case-lambda
@@ -666,8 +669,12 @@
      (element-new `(,@container (div class "font-bold text-2xl mb-2" "My Game Room")
 				(div class "text-lg mb-2" "Players in this room")
 				(div class "flex items-center" ,@(map player-view players))
+				(button#add-bot "Add Bot")
 				,start-game-button))
-     (lambda () #f)))))
+     (lambda ()
+       (add-click-handler '#add-bot
+			  (lambda (event)
+			    (send-message! `(add-bot-to-room ,game-room-name)))))))))
 
 (define render-page
   (case-lambda

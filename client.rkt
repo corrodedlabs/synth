@@ -7,7 +7,6 @@
 (require racket/serialize)
 
 (require "./game.rkt")
-(require "./server.rkt")
 
 (provide connect-to-ws
          connect-user
@@ -15,7 +14,7 @@
          create-room
          join-room)
 
-(define +ws-url+ "ws://localhost:8080/test")
+(define +ws-url+ "ws://localhost:8081/test")
 (define protocol 'rfc6455)
 
 (define connect-to-ws

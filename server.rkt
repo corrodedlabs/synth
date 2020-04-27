@@ -10,7 +10,7 @@
 
 (provide start-service)
 
-(define port 8080)
+(define port 8081)
 (define idle-timeout #f)
 (command-line #:once-each
               ["--timeout" SECONDS "Set per-connection idle timeout"
@@ -49,7 +49,10 @@
            user-email
            user-hand
            user-comm
-           get-user-by-email)
+           get-user-by-email
+           create-bot-user)
+
+  (require "./client.rkt")
 
   ;; represents a connected user
   ;; connection => connection corres to the user connected
@@ -67,7 +70,13 @@
     (hash-ref *connected-users* email #f))
   
   (define get-connected-users-email
-    (λ () (hash-keys *connected-users*))))
+    (λ () (hash-keys *connected-users*)))
+
+  (define create-bot-user
+    (lambda (bot-name)
+      (let ((connection (connect-to-ws)))
+        (connect-user connection bot-name)
+        (get-user-by-email bot-name)))))
 
 
 ;; Game rooms
@@ -81,6 +90,7 @@
            get-room-details
            find-room-by-name
            add-user-to-game-room
+           add-bot-to-game-room
            game-room)
   
   ;; game room is always public
@@ -100,10 +110,11 @@
   (define *game-rooms* (make-hash))
 
   (define (add-game-room host-email room-name)
-    (hash-set! *game-rooms*
-               host-email
-               (game-room (get-user-by-email host-email) room-name '()))
-    'room-created)
+    (let ((host-user (get-user-by-email host-email)))
+      (hash-set! *game-rooms*
+                 host-email
+                 (game-room host-user room-name (list host-user)))
+      'room-created))
 
   (define (get-room-details host-email)
     (game-room->list (hash-ref *game-rooms* host-email)))
@@ -126,13 +137,20 @@
          (let ((new-members (cons user members)))
            (hash-update! *game-rooms* (user-email host) (λ (room-details)
                                                           (game-room host name new-members)))
-           new-members)]))))
+           new-members)])))
+
+  (define add-bot-to-game-room
+    (lambda (room-name)
+      (add-user-to-game-room (find-room-by-name room-name) (create-bot-user 'bot-1)))))
+
 
 
 ;; Game
 
 (module game racket
-  (provide start-game)
+  (provide start-game
+           send-datum
+           send-datum-to-all)
 
   (require net/rfc6455)
   (require racket/control)
@@ -149,16 +167,17 @@
   (define +max-players+ 4)
 
   ;; send data over connection
-  (define send-datum
-    (λ (player data)
-      (ws-send! (user-connection player)
-                (with-output-to-string (λ () (write data))))))
+(define send-datum
+  (λ (player data)
+    (displayln (format "sending datum ~a to player ~a" (user-email player) data))
+    (ws-send! (user-connection player)
+              (with-output-to-string (λ () (write data))))))
 
-  (define send-datum-to-all
-    (λ (players data)
-      (for-each (λ (player)
-                  (send-datum player data))
-                players)))
+(define send-datum-to-all
+  (λ (players data)
+    (for-each (λ (player)
+                (send-datum player data))
+              players)))
 
   (define distribute-cards-to-players
     (case-lambda
@@ -214,9 +233,7 @@
            [(hash-ref *running-games* name #f)
             'game-already-started]
            
-           [(and (equal? (length members)
-                         ;; host should always be there
-                         (- +max-players+ 1))
+           [(and (equal? (length members) +max-players+)
                  (not (ormap (λ (member)
                                (ws-conn-closed? (user-connection member)))
                              members)))
@@ -256,9 +273,18 @@
      (let ([room (find-room-by-name room-name)])
        (cond
          ((member email (get-connected-users-email))
-          (add-user-to-game-room room (get-user-by-email email)))
+          (let ((members (add-user-to-game-room room (get-user-by-email email))))
+            (send-datum-to-all members
+                               (map user-email members))))
          (else (error "user not connected")))))
     (_ (error "message is invalid"))))
+
+(define add-bot-to-room
+  (lambda (room-name)
+    (let ((members (add-bot-to-game-room room-name)))
+      (displayln (format "goe members ~a " members))
+      (send-datum-to-all members
+                         `(room-members ,room-name ,(map user-email members))))))
 
 ;; accepted messages:
 ;;
@@ -297,6 +323,7 @@
       ((join-room) (join-room message))
       ((get-active-rooms) (get-active-rooms))
       ((get-room-details) (get-room-details (cadr message)))
+      ((add-bot-to-room) (add-bot-to-room (cadr message)))
 
       ;; game messages
       ((start-game)
