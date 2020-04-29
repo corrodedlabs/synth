@@ -59,12 +59,12 @@
   ;; email => email of the users
   ;; hand => list of cards that the player has
   ;; comm => channel for synchronisation
-  (struct user (connection email hand comm))
+  (struct user (connection email hand comm pic-url))
 
   (define *connected-users* (make-hash))
 
-  (define (connect-new-user connection email)
-    (hash-set! *connected-users* email (user connection email '() (make-channel))))
+  (define (connect-new-user connection email pic-url)
+    (hash-set! *connected-users* email (user connection email '() (make-channel) pic-url)))
 
   (define (get-user-by-email email)
     (hash-ref *connected-users* email #f))
@@ -290,7 +290,7 @@
 ;;
 ;; User messages:
 ;; 
-;; (connect-user <email>) => connect a new user to the system
+;; (connect-user <email> <pic-url>) => connect a new user to the system
 ;;
 ;; (make-room <host-email> <room-name>) => create a new game room
 ;;
@@ -316,7 +316,7 @@
     (displayln (format "message is ~a" message))
     (case (car message)
       ;; user messages
-      ((connect-user) (connect-new-user connection (cadr message)))
+      ((connect-user) (connect-new-user connection (cadr message) (caddr message)))
 
       ;; room messages
       ((make-room) (add-game-room (cadr message) (caddr message)))

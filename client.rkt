@@ -123,7 +123,7 @@
 
 (define connect-user
   (lambda (connection user-id)
-    (send-ws-message connection `(connect-user ,user-id))
+    (send-ws-message connection `(connect-user ,user-id "./bot.jpeg"))
     (receive-data connection)))
 
 (define create-room

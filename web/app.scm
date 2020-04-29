@@ -483,8 +483,8 @@
 		   (append *pending-messages* k)))))))
 
 (define connect-user
-  (lambda (user-email)
-    (send-message! `(connect-user ,user-email))))
+  (lambda (user-email pic-url)
+    (send-message! `(connect-user ,user-email ,pic-url))))
 
 
 (define create-room
@@ -589,7 +589,8 @@
 		     ,(button "create" "Create a Game room")
 		     ,(button "join" "Join a Game room")))
 		  (lambda ()
-		    (connect-user (assget data 'email))
+		    (connect-user (assget data 'email)
+				  (assget data 'photo-url))
 		    (add-handler! "#create" "click" (lambda (event)
 						      (console-log "create a game room")
 						      (render-page 'create-room data)))
