@@ -1,2 +1,4 @@
 *.bak
 compiled/*
+app/node_modules/*
+.lsp

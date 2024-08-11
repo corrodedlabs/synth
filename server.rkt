@@ -26,17 +26,19 @@
      ;;             (lambda _
      ;;               (ws-send! c "Waited another second")
      ;;               (loop)))
-     (handle-evt (ws-recv-evt c #:payload-type 'text)
-                 (lambda (m)
-                   (displayln (format "m is ~a" m))
-                   (if (eof-object? m)
-                       (loop)
-                       (begin
-                         (thread
-                          (λ ()
-                            (let ((data (dispatch c m)))
-                              (ws-send! c (with-output-to-string (λ () (write data)))))))
-                         (loop)))))))
+     (handle-evt
+      (ws-recv-evt c #:payload-type 'text)
+      (lambda (m)
+        (if (eof-object? m)
+            (loop)
+            (begin
+              (thread
+               (λ ()
+                 (displayln (format "m is ~a" m))
+                 (let ((data (dispatch c m)))
+                   (ws-send! c
+                             (with-output-to-string (λ () (write data)))))))
+              (loop)))))))
   (ws-close! c))
 
 ;; Users
@@ -64,7 +66,8 @@
   (define *connected-users* (make-hash))
 
   (define (connect-new-user connection email pic-url)
-    (hash-set! *connected-users* email (user connection email '() (make-channel) pic-url)))
+    (hash-set! *connected-users* email
+               (user connection email '() (make-channel) pic-url)))
 
   (define (get-user-by-email email)
     (hash-ref *connected-users* email #f))
@@ -135,8 +138,9 @@
       (match room
         [(game-room host name members)
          (let ((new-members (cons user members)))
-           (hash-update! *game-rooms* (user-email host) (λ (room-details)
-                                                          (game-room host name new-members)))
+           (hash-update! *game-rooms* (user-email host)
+                         (λ (room-details)
+                           (game-room host name new-members)))
            new-members)])))
 
   (define add-bot-to-game-room
@@ -183,24 +187,25 @@
     (case-lambda
       [(players) (distribute-cards-to-players players initial-deck)]
       [(players deck)
-       (match/values (distribute-cards deck 4)
-                     [(new-cards-for-players remaining-deck)
-                      (let ([players1
-                             (map (λ (new-cards player)
-                                    (let ([conn (user-connection player)])
-                                      (cond
-                                        [(ws-conn-closed? conn)
-                                         (error "connection closed for player" player)]
-                                        [else
-                                         (begin
-                                           (send-datum player
-                                                       `(hand ,(user-email player) ,new-cards))
-                                           (struct-copy user player
-                                                        (hand (append (user-hand player)
-                                                                      new-cards))))])))
-                                  new-cards-for-players
-                                  players)])
-                        (cons players1 remaining-deck))])]))
+       (match/values
+           (distribute-cards deck 4)
+         [(new-cards-for-players remaining-deck)
+          (let ([players1
+                 (map (λ (new-cards player)
+                          (let ([conn (user-connection player)])
+                            (cond
+                              [(ws-conn-closed? conn)
+                               (error "connection closed for player" player)]
+                              [else
+                               (begin
+                                 (send-datum player
+                                             `(hand ,(user-email player) ,new-cards))
+                                 (struct-copy user player
+                                              (hand (append (user-hand player)
+                                                            new-cards))))])))
+                      new-cards-for-players
+                      players)])
+            (cons players1 remaining-deck))])]))
 
  
   (define receive-datum (compose1 channel-get user-comm))
