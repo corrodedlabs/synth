@@ -7,8 +7,8 @@ export class PlayArea {
   private playedCards: Card[] = [];
   private positions: THREE.Vector3[] = []; // 4 positions for 4 players
   
-  // Enso markers for left and right decoration (2 total)
-  private ensoMarkers: THREE.Sprite[] = [];
+  // Enso markers for other players (3D meshes positioned in scene)
+  private ensoMarkers: THREE.Mesh[] = [];
   private ensoTexture: THREE.Texture | null = null;
   private activePulseTween: TWEEN.Tween<THREE.Vector3> | null = null;
   private activeMarkerIndex: number = -1;
@@ -17,16 +17,21 @@ export class PlayArea {
     this.scene = scene;
     
     // Define positions for played cards (Center of table)
-    // Cards positioned in clear cross/plus pattern centered on play area
-    // 0: Bottom (Player) - closer to camera
+    // Cards positioned in compact cross/plus pattern centered on play area
+    // Matching mockup layout - tight cross with minimal spacing
+    // Center point is around z=-0.5 (slightly toward back of view)
+    // 0: Bottom (Player) - closest to camera
     // 1: Right
-    // 2: Top - further from camera  
+    // 2: Top - furthest from camera  
     // 3: Left
+    const centerZ = -0.5;
+    const spacingH = 0.30;  // Horizontal spacing (left-right) - tight like reference
+    const spacingV = 0.32;  // Vertical spacing (front-back) - tight like reference
     this.positions = [
-      new THREE.Vector3(0, 0.15, 0.4),     // Player (bottom)
-      new THREE.Vector3(0.55, 0.15, -0.15), // Right
-      new THREE.Vector3(0, 0.15, -0.7),    // Top
-      new THREE.Vector3(-0.55, 0.15, -0.15) // Left
+      new THREE.Vector3(0, 0.2, centerZ + spacingV),       // Player (bottom/front)
+      new THREE.Vector3(spacingH, 0.2, centerZ),           // Right
+      new THREE.Vector3(0, 0.2, centerZ - spacingV),       // Top (back)
+      new THREE.Vector3(-spacingH, 0.2, centerZ)           // Left
     ];
     
     // Load enso texture and create markers
@@ -34,79 +39,57 @@ export class PlayArea {
   }
 
   private loadEnsoTexture() {
-    // Use canvas-drawn enso for guaranteed transparency
-    this.createFallbackEnsoTexture();
-    this.createEnsoMarkers();
-  }
-
-  private createFallbackEnsoTexture() {
-    const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 256;
-    const ctx = canvas.getContext('2d')!;
-    
-    // Transparent background
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    // Draw enso circle with brush-like stroke
-    const centerX = 128;
-    const centerY = 128;
-    const radius = 90;
-    
-    // Create gradient for ink-like effect (thicker at start, fading at end)
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    
-    // Draw the enso as multiple arcs with varying thickness for brush effect
-    const startAngle = Math.PI * 0.6;  // Start from bottom-left
-    const endAngle = Math.PI * 2.4;    // End with slight overlap gap
-    const steps = 60;
-    
-    for (let i = 0; i < steps; i++) {
-      const t = i / steps;
-      const angle1 = startAngle + (endAngle - startAngle) * t;
-      const angle2 = startAngle + (endAngle - startAngle) * (t + 1/steps);
-      
-      // Brush width varies - thick at start, thin at end
-      const width = 18 * (1 - t * 0.7);
-      
-      // Opacity also fades
-      const opacity = 0.95 - t * 0.3;
-      
-      ctx.strokeStyle = `rgba(40, 40, 40, ${opacity})`;
-      ctx.lineWidth = width;
-      ctx.beginPath();
-      ctx.arc(centerX, centerY, radius, angle1, angle2);
-      ctx.stroke();
-    }
-    
-    this.ensoTexture = new THREE.CanvasTexture(canvas);
-    this.ensoTexture.colorSpace = THREE.SRGBColorSpace;
+    // Load the actual enso.png texture for authentic brush stroke appearance
+    const loader = new THREE.TextureLoader();
+    loader.load('/textures/enso.png', (texture) => {
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.premultiplyAlpha = false;
+      this.ensoTexture = texture;
+      this.createEnsoMarkers();
+    });
   }
 
   private createEnsoMarkers() {
     if (!this.ensoTexture) return;
     
-    // Only 2 markers: left and right sides (positioned like in mockup)
-    // Standing upright at mid-height, far to the sides
-    const markerPositions = [
-      new THREE.Vector3(2.5, 0.8, -0.5),   // Right side
-      new THREE.Vector3(-2.5, 0.8, -0.5)   // Left side
+    // Three markers positioned in 3D space representing other players
+    // Positioned to the sides and back, tilted to face the camera naturally
+    const markerData = [
+      { 
+        position: new THREE.Vector3(1.8, 0.05, -0.7),  // Right player
+        rotation: new THREE.Euler(-Math.PI / 2.5, 0, 0),  // Tilted back
+        scale: 1.1
+      },
+      { 
+        position: new THREE.Vector3(-1.8, 0.05, -0.7), // Left player
+        rotation: new THREE.Euler(-Math.PI / 2.5, 0, 0),  // Tilted back
+        scale: 1.1
+      },
+      { 
+        position: new THREE.Vector3(0, 0.05, -2.2),    // Top/back player
+        rotation: new THREE.Euler(-Math.PI / 2.2, 0, 0),  // More tilted (further back)
+        scale: 0.9
+      }
     ];
     
-    markerPositions.forEach((pos) => {
-      const material = new THREE.SpriteMaterial({
+    // Create plane geometry for the enso (square aspect ratio matching texture)
+    const geometry = new THREE.PlaneGeometry(1, 1);
+    
+    markerData.forEach((data) => {
+      const material = new THREE.MeshBasicMaterial({
         map: this.ensoTexture,
         transparent: true,
-        opacity: 0.7,
-        depthWrite: false,
-        sizeAttenuation: true,
-        blending: THREE.NormalBlending
+        opacity: 0.9,
+        alphaTest: 0.5,
+        side: THREE.DoubleSide,
+        depthWrite: false
       });
       
-      const marker = new THREE.Sprite(material);
-      marker.position.copy(pos);
-      marker.scale.set(1.8, 1.8, 1); // Larger size for prominence like mockup
+      const marker = new THREE.Mesh(geometry, material);
+      marker.position.copy(data.position);
+      marker.rotation.copy(data.rotation);
+      marker.scale.set(data.scale, data.scale, 1);
+      marker.userData.baseScale = data.scale;
       
       this.scene.add(marker);
       this.ensoMarkers.push(marker);
@@ -127,8 +110,9 @@ export class PlayArea {
     // Reset previous marker
     if (this.activeMarkerIndex >= 0 && this.activeMarkerIndex < this.ensoMarkers.length) {
       const prevMarker = this.ensoMarkers[this.activeMarkerIndex];
-      prevMarker.scale.set(1.8, 1.8, 1);
-      (prevMarker.material as THREE.SpriteMaterial).opacity = 0.7;
+      const baseScale = prevMarker.userData.baseScale ?? 1.1;
+      prevMarker.scale.set(baseScale, baseScale, 1);
+      (prevMarker.material as THREE.MeshBasicMaterial).opacity = 0.7;
     }
     
     // Map player indices to 2 markers: 1 -> right (0), 3 -> left (1)
@@ -141,11 +125,12 @@ export class PlayArea {
     
     if (markerIndex >= 0 && markerIndex < this.ensoMarkers.length) {
       const marker = this.ensoMarkers[markerIndex];
-      (marker.material as THREE.SpriteMaterial).opacity = 0.9;
+      const baseScale = marker.userData.baseScale ?? 1.1;
+      (marker.material as THREE.MeshBasicMaterial).opacity = 0.95;
       
       // Pulse animation
       this.activePulseTween = new TWEEN.Tween(marker.scale)
-        .to({ x: 2.0, y: 2.0, z: 1 }, 800)
+        .to({ x: baseScale * 1.15, y: baseScale * 1.15, z: 1 }, 900)
         .easing(TWEEN.Easing.Sinusoidal.InOut)
         .yoyo(true)
         .repeat(Infinity)
@@ -164,8 +149,9 @@ export class PlayArea {
     
     if (this.activeMarkerIndex >= 0 && this.activeMarkerIndex < this.ensoMarkers.length) {
       const marker = this.ensoMarkers[this.activeMarkerIndex];
-      marker.scale.set(1.8, 1.8, 1);
-      (marker.material as THREE.SpriteMaterial).opacity = 0.7;
+      const baseScale = marker.userData.baseScale ?? 1.1;
+      marker.scale.set(baseScale, baseScale, 1);
+      (marker.material as THREE.MeshBasicMaterial).opacity = 0.7;
     }
     
     this.activeMarkerIndex = -1;
@@ -181,17 +167,11 @@ export class PlayArea {
 
     const pos = this.positions[playerIndex];
     
-    // Add some randomness to look natural
-    const randomOffset = 0.05;
-    const rx = (Math.random() - 0.5) * randomOffset;
-    const rz = (Math.random() - 0.5) * randomOffset;
-
-    card.setPosition(pos.x + rx, pos.y + (this.playedCards.length * 0.01), pos.z + rz);
+    // Precise positioning - no random offsets for clean cross pattern
+    card.setPosition(pos.x, pos.y + (this.playedCards.length * 0.005), pos.z);
     
-    // Rotate flat on table, face up (front face visible from above)
-    // Card front is +Z face. Rotate to show front face pointing up toward camera
-    const randomRot = (Math.random() - 0.5) * 0.15;
-    card.setRotation(-Math.PI / 2, 0, randomRot);
+    // Cards lie flat, front face up - all same orientation like reference
+    card.setRotation(0, 0, 0);
   }
 
   public clearTable() {

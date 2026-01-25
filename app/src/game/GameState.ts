@@ -34,7 +34,7 @@ export class GameState {
     // Initialize subsystems
     this.lighting = new Lighting(this.sceneManager.scene);
     this.table = new Table(this.sceneManager.scene);
-    this.hand = new Hand(this.sceneManager.scene);
+    this.hand = new Hand(this.sceneManager.scene, this.sceneManager.camera);
     this.playArea = new PlayArea(this.sceneManager.scene);
     this.zenTextures = new ZenCardTextures();
 
@@ -106,12 +106,40 @@ export class GameState {
     }
 
     // Set initial active player indicator
-    this.playArea.setActivePlayer(1);
+    this.playArea.setActivePlayer(0); // Start with player
 
-    // Simulate opponent play after a delay
+    // First play a card from the player (position 0) for demo
     setTimeout(() => {
-      this.simulateOpponentMove(1);
-    }, 2000);
+      this.playDemoPlayerCard();
+      // Then simulate opponent play after player card is placed
+      setTimeout(() => {
+        this.playArea.setActivePlayer(1);
+        this.simulateOpponentMove(1);
+      }, 1200);
+    }, 800);
+  }
+
+  /**
+   * Play a demo card for the player (position 0) to show complete cross pattern
+   */
+  private playDemoPlayerCard() {
+    const suits = ['hearts', 'diamonds', 'clubs', 'spades'];
+    const ranks = ['J', '9', 'A', '10', 'K', 'Q', '8', '7'];
+    
+    const suit = suits[Math.floor(Math.random() * suits.length)];
+    const rank = ranks[Math.floor(Math.random() * ranks.length)];
+    
+    const frontTexture = this.zenTextures.getCardTexture(suit, rank);
+    const backTexture = this.zenTextures.getBackTexture();
+    
+    const card = new Card(suit, rank, frontTexture, backTexture);
+    
+    // Start from player's hand area (bottom)
+    card.setPosition(0, 0.5, 2.5, true);
+    this.sceneManager.scene.add(card.mesh);
+    
+    // Play to position 0 (bottom of cross)
+    this.playArea.playCard(card, 0);
   }
 
   private simulateOpponentMove(playerIndex: number) {
@@ -130,9 +158,9 @@ export class GameState {
     
     // Start from opponent position
     let startPos = new THREE.Vector3();
-    if (playerIndex === 1) startPos.set(1.5, 0.5, 0); // Right
-    else if (playerIndex === 2) startPos.set(0, 0.5, -1.5); // Top
-    else if (playerIndex === 3) startPos.set(-1.5, 0.5, 0); // Left
+    if (playerIndex === 1) startPos.set(2.9, 0.5, -0.3); // Right
+    else if (playerIndex === 2) startPos.set(0, 0.5, -2.4); // Top
+    else if (playerIndex === 3) startPos.set(-2.9, 0.5, -0.3); // Left
     
     card.setPosition(startPos.x, startPos.y, startPos.z, true);
     this.sceneManager.scene.add(card.mesh);
@@ -149,20 +177,31 @@ export class GameState {
     if (playerIndex < 3) {
       setTimeout(() => this.simulateOpponentMove(playerIndex + 1), 1500);
     } else {
-      // End of trick, update scores and clear table
+      // End of trick - keep cards visible longer for demo
       setTimeout(() => {
         // Simulate winning a trick (add 7 points)
         this.tricks += 1;
         this.score += 7;
         this.updateScoreDisplay(this.score, this.tricks);
-        this.playArea.clearTable();
         this.playArea.clearActivePlayer();
         // Start new round logic could go here
-      }, 3000);
+      }, 8000); // Longer delay to appreciate the cross pattern
     }
   }
 
   public update() {
     this.sceneManager.update();
+  }
+
+  public getLighting(): Lighting {
+    return this.lighting;
+  }
+
+  public getHand(): Hand {
+    return this.hand;
+  }
+
+  public getTable(): Table {
+    return this.table;
   }
 }

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&display=swap" rel="stylesheet" />
+    <title>Card Game</title>
+    <style>
+      html, body {
+        height: 100%;
+      }
+      body {
+        margin: 0;
+        overflow: hidden;
+        background-color: #f7f1e7;
+        background-image:
+          radial-gradient(1200px 800px at 50% 30%, #fdfaf3 0%, #f7f1e7 60%, #efe5d8 100%),
+          radial-gradient(1400px 1000px at 50% 45%, rgba(0, 0, 0, 0) 60%, rgba(0, 0, 0, 0.06) 100%);
+        color: #3b2f2a;
+        font-family: "Cormorant Garamond", "Times New Roman", serif;
+        touch-action: none; /* Prevent default touch actions like pull-to-refresh */
+      }
+      canvas {
+        display: block;
+      }
+      #ui-layer {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 10;
+      }
+      #score-display {
+        position: absolute;
+        top: 32px;
+        right: 42px;
+        font-family: "Cormorant Garamond", "Times New Roman", serif;
+        font-size: 24px;
+        color: #3b2f2a;
+        background: none;
+        padding: 0;
+        border-radius: 0;
+        pointer-events: none;
+        letter-spacing: 0.4px;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-variant-numeric: lining-nums;
+      }
+      #score-display .label {
+        opacity: 0.72;
+      }
+      #score-display .value {
+        font-weight: 500;
+      }
+      #score-display .divider {
+        margin: 0 12px;
+        opacity: 0.4;
+      }
+    </style>
+    <script type="module" crossorigin src="/assets/index-67VbvoWU.js"></script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="ui-layer">
+      <div id="score-display">
+        <span class="label">Score:</span><span id="score-value" class="value">0</span>
+        <span class="divider">|</span>
+        <span class="label">Tricks:</span><span id="tricks-value" class="value">0</span>
+      </div>
+    </div>
+  </body>
+</html>

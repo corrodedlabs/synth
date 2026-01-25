@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This repo contains a Racket game server and game logic, plus a Vite + BabylonJS
+This repo contains a Racket game server and game logic, plus a Vite + Three.js
 frontend in `app/`. Use this guide when making changes or running tasks.
 
 ## Repo layout
@@ -8,7 +8,7 @@ frontend in `app/`. Use this guide when making changes or running tasks.
 - `client.rkt`: Racket bot client and simulation helpers.
 - `game.rkt`: Core game rules, cards, bidding, and play loop.
 - `tests.rkt`: RackUnit integration test that boots the server.
-- `app/`: Vite TypeScript client (BabylonJS demo scene).
+- `app/`: Vite TypeScript client (Three.js immersive UI).
 
 ## Commands
 
@@ -49,11 +49,11 @@ frontend in `app/`. Use this guide when making changes or running tasks.
 - Validate message arity before `cadr`/`caddr` access in handlers.
 
 ## Frontend entry points
-- Vite entry is `app/index.html` which loads `app/src/app.ts`.
-- `app/src/app.ts` owns canvas creation, engine setup, and render loop.
-- `app/src/gameScene.ts` hosts the Babylon scene helpers.
-- `app/src/socketService.ts` and `app/src/gameRoom.ts` are placeholders for
-  networking/room helpers; keep code modular when expanding them.
+- Vite entry is `app/index.html` which loads `app/src/main.ts`.
+- `app/src/main.ts` sets up the SceneManager and GameState.
+- `app/src/scene/SceneManager.ts` owns the Three.js renderer, scene, and camera.
+- `app/src/game/GameState.ts` orchestrates game flow and logic.
+- `app/src/interaction/DragControls.ts` handles touch/mouse input.
 
 ## Racket code style
 - Prefer `#lang racket` at top of each file.
@@ -91,55 +91,25 @@ frontend in `app/`. Use this guide when making changes or running tasks.
   - Keep message shapes documented in `server.rkt` dispatch section.
   - Validate message arity before destructuring in handlers.
 
-## TypeScript/BabylonJS code style
-- Use ES module imports; group by:
-  - side-effect imports (Babylon inspector, debug layers)
-  - external packages
-  - local modules
+## TypeScript/Three.js code style
+- Use ES module imports.
 - Use 2-space indentation, semicolons, and double quotes for strings.
-- Favor `const` and `let`; `var` appears in older code but avoid for new code.
-- Prefer named exports; use `export default` only when a file truly owns a
-  single responsibility.
-- Use `import type` when adding new type-only imports.
+- Favor `const` and `let`.
+- Prefer named exports.
 - Naming conventions:
   - `PascalCase` for classes and types.
   - `camelCase` for functions, variables, and file names.
-  - `UPPER_SNAKE_CASE` only for true constants (rare in this codebase).
 - Types:
   - Rely on inference for simple locals.
-  - Add explicit types when interacting with BabylonJS or DOM APIs.
-  - Keep exported function signatures typed.
-- Keep scene objects scoped to the scene builder to avoid global state.
-- Prefer descriptive IDs for meshes (ex: "table", "card-1").
-- Keep rendering setup in `app.ts` and scene construction in `gameScene.ts`.
-- Prefer small scene helpers over monolithic constructors.
-- Avoid unused parameters (TS config has `noUnusedParameters: true`).
-- When adding async logic, avoid top-level `await` in module scope.
+  - Add explicit types when interacting with Three.js or DOM APIs.
+- Modularize logic into `src/scene`, `src/game`, `src/interaction`.
+- Avoid global state; pass dependencies (Scene, Hand, etc.) via constructors.
 - Error handling:
-  - Validate external inputs (websocket messages, DOM presence).
-  - Wrap async or network code with `try/catch` and surface errors.
-  - Prefer explicit user-facing errors over silent failures in the UI.
+  - Validate external inputs.
+  - Wrap async code (like model loading) with error handlers.
 
-## BabylonJS patterns
-- Scene setup is currently minimal; keep `initGameScene` focused on mesh setup.
-- Avoid DOM access inside `gameScene.ts`; leave it to `app.ts`.
-- Pass `Engine`/`Scene` references into helpers if new modules need them.
-- Prefer helper functions for lights, cameras, and materials.
-- Keep inspector/debug toggles centralized in `app.ts`.
-
-## Testing notes
-- `tests.rkt` starts the server and exercises WebSocket flows.
-- Tests assume `server.rkt` defaults to port 8081 and localhost.
-- Keep test timeouts conservative; the suite currently sleeps 3 seconds.
-- If you add more tests, ensure the server is started/stopped once per suite.
-
-## Workflow expectations
-- Keep changes scoped to relevant files; avoid formatting unrelated sections.
-- Update `AGENTS.md` if you add new commands or repo rules.
-- Run `raco test -t tests.rkt` after server changes when practical.
-- Run `npm run build` after frontend changes when practical.
-- Do not commit secrets (tokens, private keys) to the repo.
-
-## Cursor/Copilot rules
-- No `.cursor/rules`, `.cursorrules`, or `copilot-instructions` files found.
-- If new rules are added later, mirror them in this document.
+## Three.js patterns
+- Use `SceneManager` to encapsulate boilerplate (renderer, loop, resize).
+- Use `GLTFLoader` for assets, handling async loading gracefully.
+- Use `Tween.js` for smooth animations (cards, camera).
+- Prioritize mobile performance (shadow map resolution, polycount).

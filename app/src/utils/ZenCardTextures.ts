@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 /**
  * ZenCardTextures - Loads and slices the zen sprite sheet for card textures
- * 
+ *
  * Sprite sheet layout (8x4 grid):
  * - Columns (ranks): J, 9, A, 10, K, Q, 8, 7
  * - Rows (suits): hearts, diamonds, clubs, spades
@@ -14,11 +14,12 @@ export class ZenCardTextures {
   private loadPromise: Promise<void>;
   
   // Sprite sheet dimensions
-  private readonly COLS = 8;  // J, 9, A, 10, K, Q, 8, 7
-  private readonly ROWS = 4;  // hearts, diamonds, clubs, spades
+  private readonly COLS = 10;  // J, 9, A, SUIT, 10, K, Q, 9, 8, 7
+  private readonly ROWS = 4;   // hearts, diamonds, clubs, spades
   
   // Rank order in sprite sheet (left to right)
-  private readonly RANK_ORDER = ['J', '9', 'A', '10', 'K', 'Q', '8', '7'];
+  // Index 3 is the suit symbol (skipped during slicing)
+  private readonly RANK_ORDER = ['J', '9', 'A', null, '10', 'K', 'Q', '9b', '8', '7'];
   
   // Suit order in sprite sheet (top to bottom)
   private readonly SUIT_ORDER = ['hearts', 'diamonds', 'clubs', 'spades'];
@@ -82,32 +83,51 @@ export class ZenCardTextures {
       });
     }
     
-    const cardWidth = img.width / this.COLS;
-    const cardHeight = img.height / this.ROWS;
+    const cellWidth = img.width / this.COLS;
+    const cellHeight = img.height / this.ROWS;
+    
+    // Trim edges to avoid bleeding from adjacent cards
+    // Keep minimal to preserve corner rank/suit indicators
+    const borderSize = 2; // pixels to trim from each edge
+    const cardWidth = cellWidth - borderSize * 2;
+    const cardHeight = cellHeight - borderSize * 2;
 
     for (let row = 0; row < this.ROWS; row++) {
       for (let col = 0; col < this.COLS; col++) {
         const suit = this.SUIT_ORDER[row];
         const rank = this.RANK_ORDER[col];
-        const key = `${suit}-${rank}`;
         
-        // Create canvas and slice the card
+        // Skip suit symbol cells (null entries in RANK_ORDER)
+        if (rank === null) continue;
+        
+        // Normalize rank key (9b -> 9 for second 9 column if needed)
+        const rankKey = rank === '9b' ? '9' : rank;
+        const key = `${suit}-${rankKey}`;
+        
+        // Create canvas and slice the card (excluding borders)
         const canvas = document.createElement('canvas');
         canvas.width = cardWidth;
         canvas.height = cardHeight;
         const ctx = canvas.getContext('2d')!;
         
+        // Source position: offset by borderSize to skip the border
+        const srcX = col * cellWidth + borderSize;
+        const srcY = row * cellHeight + borderSize;
+        
         ctx.drawImage(
           img,
-          col * cardWidth,      // source x
-          row * cardHeight,     // source y
-          cardWidth,            // source width
-          cardHeight,           // source height
+          srcX,                 // source x (skip left border)
+          srcY,                 // source y (skip top border)
+          cardWidth,            // source width (exclude borders)
+          cardHeight,           // source height (exclude borders)
           0,                    // dest x
           0,                    // dest y
           cardWidth,            // dest width
           cardHeight            // dest height
         );
+        
+        // Add rough brush-like edges for zen aesthetic
+        this.addBrushEdges(ctx, cardWidth, cardHeight);
         
         const texture = new THREE.CanvasTexture(canvas);
         texture.colorSpace = THREE.SRGBColorSpace;
@@ -157,6 +177,93 @@ export class ZenCardTextures {
   /**
    * Fallback texture if sprite sheet fails to load
    */
+  /**
+   * Add rough, brush-like edges to give cards a hand-painted washi paper look
+   */
+  private addBrushEdges(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+    const edgeWidth = Math.max(3, Math.floor(width * 0.012));
+    const inkColor = 'rgba(40, 35, 30, 0.7)'; // Dark ink, slightly transparent
+    
+    ctx.save();
+    ctx.strokeStyle = inkColor;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    
+    // Draw rough strokes along each edge with varied thickness
+    const drawBrushStroke = (
+      startX: number, startY: number,
+      endX: number, endY: number,
+      isHorizontal: boolean
+    ) => {
+      const length = isHorizontal ? Math.abs(endX - startX) : Math.abs(endY - startY);
+      const segments = Math.floor(length / 8);
+      
+      for (let i = 0; i < segments; i++) {
+        const t = i / segments;
+        const nextT = (i + 1) / segments;
+        
+        // Add subtle randomness to position
+        const wobble = (Math.random() - 0.5) * 1.5;
+        const nextWobble = (Math.random() - 0.5) * 1.5;
+        
+        let x1, y1, x2, y2;
+        if (isHorizontal) {
+          x1 = startX + t * (endX - startX);
+          y1 = startY + wobble;
+          x2 = startX + nextT * (endX - startX);
+          y2 = startY + nextWobble;
+        } else {
+          x1 = startX + wobble;
+          y1 = startY + t * (endY - startY);
+          x2 = startX + nextWobble;
+          y2 = startY + nextT * (endY - startY);
+        }
+        
+        // Vary line thickness for brush effect
+        ctx.lineWidth = edgeWidth * (0.5 + Math.random() * 0.8);
+        
+        // Occasional gaps for dry brush effect
+        if (Math.random() > 0.1) {
+          ctx.beginPath();
+          ctx.moveTo(x1, y1);
+          ctx.lineTo(x2, y2);
+          ctx.stroke();
+        }
+      }
+    };
+    
+    // Top edge
+    drawBrushStroke(0, edgeWidth / 2, width, edgeWidth / 2, true);
+    // Bottom edge
+    drawBrushStroke(0, height - edgeWidth / 2, width, height - edgeWidth / 2, true);
+    // Left edge
+    drawBrushStroke(edgeWidth / 2, 0, edgeWidth / 2, height, false);
+    // Right edge
+    drawBrushStroke(width - edgeWidth / 2, 0, width - edgeWidth / 2, height, false);
+    
+    // Add corner emphasis with slightly thicker strokes
+    const cornerSize = edgeWidth * 3;
+    ctx.lineWidth = edgeWidth * 1.2;
+    
+    // Small corner accents
+    const corners = [
+      [0, 0, cornerSize, 0, 0, cornerSize],           // top-left
+      [width, 0, width - cornerSize, 0, width, cornerSize], // top-right
+      [0, height, cornerSize, height, 0, height - cornerSize], // bottom-left
+      [width, height, width - cornerSize, height, width, height - cornerSize] // bottom-right
+    ];
+    
+    corners.forEach(([cx, cy, x1, y1, x2, y2]) => {
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(cx, cy);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    });
+    
+    ctx.restore();
+  }
+
   private createFallbackTexture(suit: string, rank: string): THREE.Texture {
     const canvas = document.createElement('canvas');
     canvas.width = 256;
@@ -167,10 +274,8 @@ export class ZenCardTextures {
     ctx.fillStyle = '#faf8f5';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     
-    // Simple border
-    ctx.strokeStyle = '#333';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(8, 8, canvas.width - 16, canvas.height - 16);
+    // Add brush edges instead of simple border
+    this.addBrushEdges(ctx, canvas.width, canvas.height);
     
     // Suit color (ink style)
     const color = (suit === 'hearts' || suit === 'diamonds') ? '#8b0000' : '#1a1a1a';
@@ -217,6 +322,9 @@ export class ZenCardTextures {
     ctx.beginPath();
     ctx.arc(canvas.width / 2, canvas.height / 2, 60, 0.3, Math.PI * 1.9);
     ctx.stroke();
+    
+    // Add brush edges
+    this.addBrushEdges(ctx, canvas.width, canvas.height);
     
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;

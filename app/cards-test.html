@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Card Texture Test</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 20px;
+        background-color: #2a5a3a;
+        font-family: sans-serif;
+        color: white;
+      }
+      h1 {
+        margin-bottom: 20px;
+      }
+      .card-grid {
+        display: grid;
+        grid-template-columns: repeat(8, 1fr);
+        gap: 10px;
+        max-width: 1200px;
+      }
+      .card-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .card-container canvas {
+        border: 1px solid rgba(255,255,255,0.3);
+        border-radius: 4px;
+        max-width: 100%;
+        height: auto;
+      }
+      .card-label {
+        margin-top: 4px;
+        font-size: 12px;
+        opacity: 0.8;
+      }
+      .suit-row {
+        margin-bottom: 30px;
+      }
+      .suit-title {
+        font-size: 18px;
+        margin-bottom: 10px;
+        text-transform: capitalize;
+      }
+      #loading {
+        font-size: 18px;
+        padding: 20px;
+      }
+      .back-section {
+        margin-top: 30px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Card Texture Test</h1>
+    <p>This page renders all cards from the sprite sheet to verify correct slicing.</p>
+    <div id="loading">Loading textures...</div>
+    <div id="cards-container"></div>
+    <script type="module" src="/src/cards-test.ts"></script>
+  </body>
+</html>

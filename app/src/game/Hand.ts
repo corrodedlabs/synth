@@ -4,15 +4,21 @@ import { Card } from './Card';
 export class Hand {
   private cards: Card[] = [];
   private scene: THREE.Scene;
-  private handRadius = 2.4; // Wider arc radius for elegant fan
-  private handCenter = new THREE.Vector3(0, 0.5, 3.2); // Position for prominent hand display
+  private camera: THREE.Camera;
+  private handCenter = new THREE.Vector3(0, 0.3, 2.0);
 
-  constructor(scene: THREE.Scene) {
+  constructor(scene: THREE.Scene, camera: THREE.Camera) {
     this.scene = scene;
+    this.camera = camera;
   }
 
   public addCard(card: Card) {
     this.cards.push(card);
+    card.mesh.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) {
+        obj.castShadow = true;
+      }
+    });
     this.scene.add(card.mesh);
     this.arrangeCards();
   }
@@ -29,36 +35,55 @@ export class Hand {
     const count = this.cards.length;
     if (count === 0) return;
 
-    // Elegant fan spread for zen aesthetic
-    const angleStep = 0.15; // Slightly tighter for elegant fan
-    const totalAngle = (count - 1) * angleStep;
-    const startAngle = -totalAngle / 2;
+    // Bezier curve for elegant fan shape like zen-mockup-reference.png
+    // Target: ~30-40% overlap, pronounced arc, smooth rotation
+    const spreadX = 1.6; // Tighter spread for closer overlap
+    const curveHeight = 0.65; // Higher midpoint for stronger curve
+    
+    const p0 = new THREE.Vector2(-spreadX, this.handCenter.y);
+    const p1 = new THREE.Vector2(0, this.handCenter.y + curveHeight);
+    const p2 = new THREE.Vector2(spreadX, this.handCenter.y);
+
+    // Subtle depth step to reduce z-fighting
+    const depthStep = 0.002;
+    const cameraPosition = this.camera.position;
+    const rampStrength = 0.6;
 
     this.cards.forEach((card, index) => {
-      const angle = startAngle + index * angleStep;
+      const t = count > 1 ? index / (count - 1) : 0.5;
       
-      // Calculate position on the arc
-      // x = r * sin(theta)
-      // z = r * (1 - cos(theta)) -> to curve slightly back
+      // Quadratic bezier position
+      const oneMinusT = 1 - t;
+      const x = oneMinusT * oneMinusT * p0.x + 2 * oneMinusT * t * p1.x + t * t * p2.x;
+      const y = oneMinusT * oneMinusT * p0.y + 2 * oneMinusT * t * p1.y + t * t * p2.y;
+      const z = this.handCenter.z + index * depthStep;
       
-      const x = this.handCenter.x + this.handRadius * Math.sin(angle);
-      const z = this.handCenter.z - this.handRadius * (1 - Math.cos(angle));
-      
-      // Floating height with slight variation for depth
-      const finalY = this.handCenter.y + (index * 0.002);
+      const finalPos = new THREE.Vector3(x, y, z);
+      const toCard = finalPos.clone().sub(cameraPosition);
+      const rayDir = toCard.normalize();
+      const tNorm = count > 1 ? index / (count - 1) : 0.5;
+      const eased = Math.pow(tNorm, 4);
+      const closeOffset = eased * rampStrength;
+      if (closeOffset > 0) {
+        finalPos.addScaledVector(rayDir, -closeOffset);
+      }
 
-      // Position
-      card.setPosition(x, finalY, z);
-
-      // Rotation
-      // Card's front face is +Z. Camera is above and in front looking down.
-      // Tilt card back to show face to camera, rotate for fan effect
-      // Add PI to Z rotation to flip card right-side up (rank at top)
-      const rotZ = angle * 0.7 + Math.PI; // Fan rotation + flip for correct orientation
-      const rotX = -Math.PI / 3.5; // Tilt back to show card face to camera
-      const rotY = 0; // Front face toward camera
+      card.setPosition(finalPos.x, finalPos.y, finalPos.z, true);
       
-      card.setRotation(rotX, rotY, rotZ);
+      const renderOrder = index;
+      card.mesh.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) {
+          obj.renderOrder = renderOrder;
+        }
+      });
+
+      // Gentle rotation for elegant fan
+      const normalizedPos = (t - 0.5) * 2; // -1 to 1
+      const maxRotation = 0.26; // ~15 degrees max for softer edges
+      const rotZ = -normalizedPos * maxRotation;
+      const rotX = Math.PI / 2 + Math.PI - 0.10;
+      
+      card.setRotation(rotX, 0, rotZ);
     });
   }
   
