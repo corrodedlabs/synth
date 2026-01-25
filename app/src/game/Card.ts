@@ -1,0 +1,96 @@
+import * as THREE from 'three';
+import * as TWEEN from '@tweenjs/tween.js';
+
+export class Card {
+  public mesh: THREE.Group;
+  public suit: string;
+  public rank: string;
+  public isSelected: boolean = false;
+  public isDraggable: boolean = true;
+  
+  private frontMaterial: THREE.MeshStandardMaterial;
+  private backMaterial: THREE.MeshStandardMaterial;
+
+  constructor(suit: string, rank: string, frontTexture: THREE.Texture, backTexture: THREE.Texture) {
+    this.suit = suit;
+    this.rank = rank;
+    this.mesh = new THREE.Group();
+
+    // Thin paper-like geometry for zen aesthetic
+    const geometry = new THREE.BoxGeometry(0.6, 0.9, 0.005);
+    
+    // Matte paper materials (roughness=1, metalness=0)
+    this.frontMaterial = new THREE.MeshStandardMaterial({ 
+      map: frontTexture,
+      roughness: 1.0,
+      metalness: 0.0
+    });
+    
+    this.backMaterial = new THREE.MeshStandardMaterial({ 
+      map: backTexture,
+      roughness: 1.0,
+      metalness: 0.0
+    });
+
+    // Cream colored sides to match zen style
+    const sideMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0xf5f0e6,
+      roughness: 1.0,
+      metalness: 0.0
+    });
+
+    // Mesh with multi-material
+    const mesh = new THREE.Mesh(geometry, [
+      sideMaterial, // Right
+      sideMaterial, // Left
+      sideMaterial, // Top
+      sideMaterial, // Bottom
+      this.frontMaterial, // Front
+      this.backMaterial  // Back
+    ]);
+    
+    // Enable shadow casting for floating card effect
+    mesh.castShadow = true;
+    mesh.receiveShadow = false; // Cards don't receive shadows on themselves
+    
+    this.mesh.add(mesh);
+    this.mesh.userData = { card: this }; // Link back to Card instance
+  }
+
+  public setPosition(x: number, y: number, z: number, immediate = false) {
+    if (immediate) {
+      this.mesh.position.set(x, y, z);
+    } else {
+      new TWEEN.Tween(this.mesh.position)
+        .to({ x, y, z }, 500)
+        .easing(TWEEN.Easing.Quadratic.Out)
+        .start();
+    }
+  }
+
+  public setRotation(x: number, y: number, z: number, immediate = false) {
+    if (immediate) {
+      this.mesh.rotation.set(x, y, z);
+    } else {
+      new TWEEN.Tween(this.mesh.rotation)
+        .to({ x, y, z }, 500)
+        .easing(TWEEN.Easing.Quadratic.Out)
+        .start();
+    }
+  }
+
+  public highlight(active: boolean) {
+    if (active) {
+      this.mesh.position.y += 0.15; // Subtle lift
+    } else {
+      this.mesh.position.y -= 0.15;
+    }
+  }
+
+  public flip() {
+    new TWEEN.Tween(this.mesh.rotation)
+      .to({ y: this.mesh.rotation.y + Math.PI }, 600)
+      .easing(TWEEN.Easing.Back.Out)
+      .start();
+  }
+}
