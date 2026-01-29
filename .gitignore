@@ -1,4 +1,5 @@
 *.bak
 compiled/*
 app/node_modules/*
+app/dist
 .lsp
