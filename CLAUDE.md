@@ -6,6 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Real-time 28 card game with a Racket WebSocket server and a Vite + BabylonJS TypeScript frontend.
 
+## Vendored Repositories
+
+External repositories may be vendored under `repos/` for agent reference.
+
+- Treat vendored repositories as read-only unless explicitly asked to edit them.
+- Do not import application code from `repos/`; use normal package dependencies.
+- Prefer examples and patterns from vendored source over guessing from memory.
+- When writing Effect code, inspect `repos/effect/` for idiomatic usage, tests, module structure, and API design.
+- If `repos/effect/LLMS.md` exists, read it before writing Effect code.
+
 ## Commands
 
 ### Racket (from repo root)
@@ -18,6 +28,7 @@ Real-time 28 card game with a Racket WebSocket server and a Vite + BabylonJS Typ
 - `npm run dev` — Vite dev server with HMR
 - `npm run build` — typecheck (tsc) + production build
 - No lint or unit test runner is configured for the frontend
+- Effect is available in the frontend via the `effect` npm package
 
 ## Architecture
 

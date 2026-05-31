@@ -9,6 +9,16 @@ frontend in `app/`. Use this guide when making changes or running tasks.
 - `game.rkt`: Core game rules, cards, bidding, and play loop.
 - `tests.rkt`: RackUnit integration test that boots the server.
 - `app/`: Vite TypeScript client (Three.js immersive UI).
+- `repos/`: vendored upstream repositories used as read-only reference material.
+
+## Vendored repositories
+- External repositories may be vendored under `repos/` for agent reference.
+- Treat vendored repositories as read-only unless explicitly asked to edit them.
+- Do not import application code from `repos/`; use normal package dependencies.
+- Prefer examples and patterns from vendored source over guessing from memory.
+- When writing Effect code, inspect `repos/effect/` for idiomatic usage, tests,
+  module structure, and API design.
+- If `repos/effect/LLMS.md` exists, read it before writing Effect code.
 
 ## Commands
 
@@ -30,6 +40,7 @@ frontend in `app/`. Use this guide when making changes or running tasks.
 - `npm run build`: typecheck with `tsc` and build with Vite.
 - `npm run preview`: preview production build.
 - Lint/test: no lint or unit test runner is configured for the frontend.
+- Effect is available in the frontend via the `effect` npm package.
 
 ## Runtime notes
 - Server expects WebSocket text frames containing s-expressions.
@@ -107,6 +118,12 @@ frontend in `app/`. Use this guide when making changes or running tasks.
 - Error handling:
   - Validate external inputs.
   - Wrap async code (like model loading) with error handlers.
+- Effect code:
+  - Prefer named imports from `effect` for app code, for example
+    `import { Effect } from "effect"`.
+  - Use `Effect` for async orchestration, typed failures, resource lifecycle,
+    and service boundaries; avoid refactoring purely synchronous Three.js math
+    just to use Effect.
 
 ## Three.js patterns
 - Use `SceneManager` to encapsulate boilerplate (renderer, loop, resize).
