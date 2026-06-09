@@ -62,15 +62,193 @@
         margin: 0 12px;
         opacity: 0.4;
       }
+      .hidden {
+        display: none !important;
+      }
+      .panel {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(253, 250, 243, 0.92);
+        border: 1px solid rgba(59, 47, 42, 0.18);
+        border-radius: 6px;
+        padding: 18px 28px;
+        text-align: center;
+        pointer-events: auto;
+        box-shadow: 0 10px 30px rgba(59, 47, 42, 0.12);
+      }
+      .panel button {
+        font-family: inherit;
+        font-size: 20px;
+        color: #3b2f2a;
+        background: transparent;
+        border: 1px solid rgba(59, 47, 42, 0.45);
+        border-radius: 4px;
+        padding: 8px 22px;
+        margin: 6px;
+        cursor: pointer;
+        letter-spacing: 0.4px;
+        transition: background 120ms ease;
+      }
+      .panel button:hover {
+        background: rgba(59, 47, 42, 0.07);
+      }
+      #start-screen {
+        top: 0;
+        left: 0;
+        transform: none;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: rgba(247, 241, 231, 0.85);
+        pointer-events: auto;
+        border: none;
+        border-radius: 0;
+        box-shadow: none;
+        position: absolute;
+      }
+      #start-screen h1 {
+        font-size: 110px;
+        font-weight: 500;
+        margin: 0 0 6px;
+        letter-spacing: 6px;
+      }
+      #start-screen p {
+        margin: 0 0 28px;
+        font-size: 22px;
+        opacity: 0.75;
+      }
+      #start-screen button {
+        font-family: inherit;
+        font-size: 24px;
+        color: #3b2f2a;
+        background: transparent;
+        border: 1px solid rgba(59, 47, 42, 0.5);
+        border-radius: 4px;
+        padding: 10px 46px;
+        cursor: pointer;
+        letter-spacing: 2px;
+      }
+      #status-line {
+        position: absolute;
+        top: 32px;
+        left: 42px;
+        font-size: 22px;
+        opacity: 0;
+        transition: opacity 300ms ease;
+        letter-spacing: 0.4px;
+      }
+      #status-line.visible {
+        opacity: 0.85;
+      }
+      #trump-indicator {
+        position: absolute;
+        top: 64px;
+        right: 42px;
+        font-size: 21px;
+        opacity: 0.85;
+      }
+      #bid-panel {
+        bottom: 220px;
+      }
+      #bid-panel #bid-label {
+        font-size: 21px;
+        margin-bottom: 8px;
+        opacity: 0.8;
+      }
+      #trump-panel {
+        bottom: 220px;
+      }
+      #trump-panel .panel-title {
+        font-size: 21px;
+        margin-bottom: 8px;
+        opacity: 0.8;
+      }
+      #trump-panel button {
+        font-size: 30px;
+        padding: 6px 18px;
+      }
+      .red-suit {
+        color: #a33c2e;
+      }
+      .black-suit {
+        color: #3b2f2a;
+      }
+      #expose-button {
+        position: absolute;
+        bottom: 160px;
+        left: 50%;
+        transform: translateX(-50%);
+        pointer-events: auto;
+        font-family: inherit;
+        font-size: 18px;
+        color: #3b2f2a;
+        background: rgba(253, 250, 243, 0.92);
+        border: 1px solid rgba(59, 47, 42, 0.45);
+        border-radius: 4px;
+        padding: 7px 20px;
+        cursor: pointer;
+        letter-spacing: 0.6px;
+      }
+      #result-panel {
+        top: 50%;
+        transform: translate(-50%, -50%);
+        min-width: 320px;
+        padding: 30px 44px;
+      }
+      #result-panel #result-title {
+        font-size: 52px;
+        margin: 0 0 6px;
+        font-weight: 500;
+      }
+      #result-panel #result-detail {
+        font-size: 21px;
+        margin: 0 0 20px;
+        opacity: 0.8;
+        white-space: pre-line;
+      }
     </style>
   </head>
   <body>
     <div id="app"></div>
     <div id="ui-layer">
       <div id="score-display">
-        <span class="label">Score:</span><span id="score-value" class="value">0</span>
+        <span class="label">You — Them:</span><span id="score-value" class="value">0 — 0</span>
         <span class="divider">|</span>
-        <span class="label">Tricks:</span><span id="tricks-value" class="value">0</span>
+        <span class="label">Tricks:</span><span id="tricks-value" class="value">0 — 0</span>
+      </div>
+      <div id="status-line"></div>
+      <div id="trump-indicator"></div>
+
+      <div id="bid-panel" class="panel hidden">
+        <div id="bid-label"></div>
+        <button id="bid-raise" type="button">Bid</button>
+        <button id="bid-pass" type="button">Pass</button>
+      </div>
+
+      <div id="trump-panel" class="panel hidden">
+        <div class="panel-title">Choose the trump suit</div>
+        <button type="button" data-suit="hearts" class="red-suit">♥</button>
+        <button type="button" data-suit="diamonds" class="red-suit">♦</button>
+        <button type="button" data-suit="clubs" class="black-suit">♣</button>
+        <button type="button" data-suit="spades" class="black-suit">♠</button>
+      </div>
+
+      <button id="expose-button" type="button" class="hidden">Reveal trump</button>
+
+      <div id="result-panel" class="panel hidden">
+        <div id="result-title"></div>
+        <div id="result-detail"></div>
+        <button id="play-again" type="button">Play again</button>
+      </div>
+
+      <div id="start-screen" class="hidden">
+        <h1>28</h1>
+        <p>a trick-taking game</p>
+        <button id="play-button" type="button">Play</button>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>

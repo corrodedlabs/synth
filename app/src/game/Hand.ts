@@ -12,6 +12,12 @@ export class Hand {
     this.camera = camera;
   }
 
+  // Tilt that points a card's face straight at the camera from a position
+  private faceCameraRotX(position: THREE.Vector3): number {
+    const toCamera = this.camera.position.clone().sub(position);
+    return -Math.atan2(toCamera.y, toCamera.z);
+  }
+
   public addCard(card: Card) {
     this.cards.push(card);
     card.mesh.traverse((obj) => {
@@ -19,6 +25,11 @@ export class Hand {
         obj.castShadow = true;
       }
     });
+    // Spawn face-toward-camera just below the fan so dealt cards slide in
+    // instead of flashing their backs while the rotation tween catches up.
+    const spawn = new THREE.Vector3(this.handCenter.x, this.handCenter.y - 0.5, this.handCenter.z + 0.5);
+    card.setPosition(spawn.x, spawn.y, spawn.z, true);
+    card.setRotation(this.faceCameraRotX(spawn), 0, 0, true);
     this.scene.add(card.mesh);
     this.arrangeCards();
   }
@@ -31,45 +42,53 @@ export class Hand {
     }
   }
 
-  public arrangeCards() {
-    const count = this.cards.length;
-    if (count === 0) return;
+  // Canonical fan slot for a card index in a hand of `count` cards.
+  // Fan with near-full card visibility: spacing adapts to hand size so
+  // every rank stays readable (cards are 0.6 wide; leave ~0.07 overlap).
+  private computeLayout(index: number, count: number): { position: THREE.Vector3; rotation: THREE.Euler } {
+    const step = 0.53;
+    const spreadX = Math.min((step * (count - 1)) / 2, 2.4);
+    const curveHeight = 0.4; // gentle arc
 
-    // Bezier curve for elegant fan shape like zen-mockup-reference.png
-    // Target: ~30-40% overlap, pronounced arc, smooth rotation
-    const spreadX = 1.6; // Tighter spread for closer overlap
-    const curveHeight = 0.65; // Higher midpoint for stronger curve
-    
     const p0 = new THREE.Vector2(-spreadX, this.handCenter.y);
     const p1 = new THREE.Vector2(0, this.handCenter.y + curveHeight);
     const p2 = new THREE.Vector2(spreadX, this.handCenter.y);
 
-    // Subtle depth step to reduce z-fighting
-    const depthStep = 0.002;
-    const cameraPosition = this.camera.position;
-    const rampStrength = 0.6;
+    // Step each card slightly toward the camera so render order and
+    // physical order agree without visible depth differences.
+    const depthStep = 0.012;
+    const t = count > 1 ? index / (count - 1) : 0.5;
 
+    // Quadratic bezier position
+    const oneMinusT = 1 - t;
+    const x = oneMinusT * oneMinusT * p0.x + 2 * oneMinusT * t * p1.x + t * t * p2.x;
+    const y = oneMinusT * oneMinusT * p0.y + 2 * oneMinusT * t * p1.y + t * t * p2.y;
+    const z = this.handCenter.z + index * depthStep;
+    const position = new THREE.Vector3(x, y, z);
+
+    // Gentle rotation for elegant fan; cards face the camera head-on so
+    // ranks are never foreshortened.
+    const normalizedPos = (t - 0.5) * 2; // -1 to 1
+    const maxRotation = 0.16; // ~9 degrees max keeps neighbours readable
+    const rotZ = -normalizedPos * maxRotation;
+    const rotX = this.faceCameraRotX(position);
+
+    return { position, rotation: new THREE.Euler(rotX, 0, rotZ) };
+  }
+
+  // Current fan slot of a card, or null if it is not in the hand.
+  public layoutOf(card: Card): { position: THREE.Vector3; rotation: THREE.Euler } | null {
+    const index = this.cards.indexOf(card);
+    if (index < 0) return null;
+    return this.computeLayout(index, this.cards.length);
+  }
+
+  public arrangeCards() {
+    const count = this.cards.length;
     this.cards.forEach((card, index) => {
-      const t = count > 1 ? index / (count - 1) : 0.5;
-      
-      // Quadratic bezier position
-      const oneMinusT = 1 - t;
-      const x = oneMinusT * oneMinusT * p0.x + 2 * oneMinusT * t * p1.x + t * t * p2.x;
-      const y = oneMinusT * oneMinusT * p0.y + 2 * oneMinusT * t * p1.y + t * t * p2.y;
-      const z = this.handCenter.z + index * depthStep;
-      
-      const finalPos = new THREE.Vector3(x, y, z);
-      const toCard = finalPos.clone().sub(cameraPosition);
-      const rayDir = toCard.normalize();
-      const tNorm = count > 1 ? index / (count - 1) : 0.5;
-      const eased = Math.pow(tNorm, 4);
-      const closeOffset = eased * rampStrength;
-      if (closeOffset > 0) {
-        finalPos.addScaledVector(rayDir, -closeOffset);
-      }
+      const layout = this.computeLayout(index, count);
+      card.setPosition(layout.position.x, layout.position.y, layout.position.z, false, 400);
 
-      card.setPosition(finalPos.x, finalPos.y, finalPos.z, true);
-      
       const renderOrder = index;
       card.mesh.traverse((obj) => {
         if (obj instanceof THREE.Mesh) {
@@ -77,13 +96,7 @@ export class Hand {
         }
       });
 
-      // Gentle rotation for elegant fan
-      const normalizedPos = (t - 0.5) * 2; // -1 to 1
-      const maxRotation = 0.26; // ~15 degrees max for softer edges
-      const rotZ = -normalizedPos * maxRotation;
-      const rotX = Math.PI / 2 + Math.PI - 0.10;
-      
-      card.setRotation(rotX, 0, rotZ);
+      card.setRotation(layout.rotation.x, layout.rotation.y, layout.rotation.z);
     });
   }
   

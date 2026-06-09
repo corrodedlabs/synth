@@ -20,6 +20,11 @@ export class ZenCardTextures {
   // Rank order in sprite sheet (left to right)
   // Index 3 is the suit symbol (skipped during slicing)
   private readonly RANK_ORDER = ['J', '9', 'A', null, '10', 'K', 'Q', '9b', '8', '7'];
+
+  // The spades row is laid out differently: there is no J♠ art at all —
+  // cols 0 and 2 are plain pip cards and the ace sits at col 3.
+  // 'J*' marks the pip card used as the base for a painted-on J.
+  private readonly RANK_ORDER_SPADES = ['J*', '9', null, 'A', '10', 'K', 'Q', '9b', '8', '7'];
   
   // Suit order in sprite sheet (top to bottom)
   private readonly SUIT_ORDER = ['hearts', 'diamonds', 'clubs', 'spades'];
@@ -75,14 +80,17 @@ export class ZenCardTextures {
     if (!this.spriteSheet || !this.spriteSheet.image) return;
     
     const img = this.spriteSheet.image as HTMLImageElement;
-    
+
     // Wait for image to be fully loaded
     if (!img.complete) {
       await new Promise<void>((resolve) => {
         img.onload = () => resolve();
       });
     }
-    
+
+    // The painted J♠ uses the page's serif webfont
+    await document.fonts.ready.catch(() => undefined);
+
     const cellWidth = img.width / this.COLS;
     const cellHeight = img.height / this.ROWS;
     
@@ -95,13 +103,14 @@ export class ZenCardTextures {
     for (let row = 0; row < this.ROWS; row++) {
       for (let col = 0; col < this.COLS; col++) {
         const suit = this.SUIT_ORDER[row];
-        const rank = this.RANK_ORDER[col];
-        
+        const rankOrder = suit === 'spades' ? this.RANK_ORDER_SPADES : this.RANK_ORDER;
+        const rank = rankOrder[col];
+
         // Skip suit symbol cells (null entries in RANK_ORDER)
         if (rank === null) continue;
-        
-        // Normalize rank key (9b -> 9 for second 9 column if needed)
-        const rankKey = rank === '9b' ? '9' : rank;
+
+        // Normalize rank key (9b -> 9 for second 9 column, J* -> painted J)
+        const rankKey = rank === '9b' ? '9' : rank === 'J*' ? 'J' : rank;
         const key = `${suit}-${rankKey}`;
         
         // Create canvas and slice the card (excluding borders)
@@ -126,9 +135,14 @@ export class ZenCardTextures {
           cardHeight            // dest height
         );
         
+        // The J♠ has no art in the sheet — paint a rank over the pip card
+        if (rank === 'J*') {
+          this.paintJackOverlay(ctx, cardWidth, cardHeight);
+        }
+
         // Add rough brush-like edges for zen aesthetic
         this.addBrushEdges(ctx, cardWidth, cardHeight);
-        
+
         const texture = new THREE.CanvasTexture(canvas);
         texture.colorSpace = THREE.SRGBColorSpace;
         texture.minFilter = THREE.LinearFilter;
@@ -175,8 +189,35 @@ export class ZenCardTextures {
   }
 
   /**
-   * Fallback texture if sprite sheet fails to load
+   * Turns the spades pip card into a J♠: covers the large centre pip with
+   * the surrounding paper tone and paints an ink-style J, keeping the
+   * hand-painted corner pips from the original art.
    */
+  private paintJackOverlay(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+    // Sample the paper tone from a quiet strip near the top centre
+    const sample = ctx.getImageData(Math.floor(width * 0.45), Math.floor(height * 0.05), 8, 8);
+    let r = 0, g = 0, b = 0;
+    const pixels = sample.data.length / 4;
+    for (let i = 0; i < sample.data.length; i += 4) {
+      r += sample.data[i];
+      g += sample.data[i + 1];
+      b += sample.data[i + 2];
+    }
+    ctx.save();
+    ctx.fillStyle = `rgb(${Math.round(r / pixels)}, ${Math.round(g / pixels)}, ${Math.round(b / pixels)})`;
+    ctx.beginPath();
+    ctx.ellipse(width / 2, height * 0.52, width * 0.34, height * 0.40, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Ink J in the same painterly spirit as the other rank glyphs
+    ctx.fillStyle = 'rgba(32, 29, 26, 0.92)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `italic ${Math.floor(height * 0.55)}px "Cormorant Garamond", "Times New Roman", serif`;
+    ctx.fillText('J', width / 2, height * 0.52);
+    ctx.restore();
+  }
+
   /**
    * Add rough, brush-like edges to give cards a hand-painted washi paper look
    */

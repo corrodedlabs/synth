@@ -4,8 +4,19 @@ import { SceneManager } from "../scene/SceneManager";
 import { Lighting } from "../scene/Lighting";
 import { Table } from "../scene/Table";
 import { ZenCardTextures } from "../utils/ZenCardTextures";
+import { SEAT_NAMES, UiOverlay } from "../ui/UiOverlay";
 import { Card } from "./Card";
-import { GameAction, GameModel, CardModel, PlayerIndex, gameReducer, initialGameModel } from "./GameModel";
+import {
+  GameAction,
+  GameModel,
+  CardModel,
+  PlayerIndex,
+  canExposeTrump,
+  gameReducer,
+  initialGameModel,
+  isLegalPlay,
+} from "./GameModel";
+import { GameSession } from "./GameSession";
 import { Hand } from "./Hand";
 import { mockGameProgram } from "./MockGameProgram";
 import { PlayArea } from "./PlayArea";
@@ -17,10 +28,13 @@ export class GameState {
   private hand: Hand;
   private playArea: PlayArea;
   private zenTextures: ZenCardTextures;
-  // @ts-ignore
+  // @ts-ignore kept alive for event listeners
   private dragControls: DragControls;
+  private ui: UiOverlay;
+  private session: GameSession | null = null;
   private model: GameModel = initialGameModel;
   private mockFiber: Fiber.RuntimeFiber<void, never> | null = null;
+  private mockMode = false;
 
   private scoreElement: HTMLElement | null = null;
   private tricksElement: HTMLElement | null = null;
@@ -31,7 +45,7 @@ export class GameState {
     this.lighting = new Lighting(this.sceneManager.scene);
     this.table = new Table(this.sceneManager.scene);
     this.hand = new Hand(this.sceneManager.scene, this.sceneManager.camera);
-    this.playArea = new PlayArea(this.sceneManager.scene);
+    this.playArea = new PlayArea(this.sceneManager.scene, this.sceneManager.camera);
     this.zenTextures = new ZenCardTextures();
 
     this.dragControls = new DragControls(
@@ -39,27 +53,85 @@ export class GameState {
       this.sceneManager.scene,
       this.sceneManager.renderer.domElement,
       this.hand,
-      this.playArea
+      {
+        canDrag: () => this.mockMode || this.model.pendingRequest?.kind === "play",
+        tryPlay: (card) => this.tryPlayCard(card),
+      }
     );
+
+    this.ui = new UiOverlay({
+      onStart: () => this.startOnline(),
+      onBid: (bid) => this.session?.submitBid(bid),
+      onPass: () => this.session?.submitBid("pass"),
+      onTrump: (suit) => this.session?.chooseTrump(suit),
+      onExpose: () => this.session?.exposeTrump(),
+      onPlayAgain: () => window.location.reload(),
+    });
 
     this.scoreElement = document.getElementById("score-value");
     this.tricksElement = document.getElementById("tricks-value");
-    this.startMockRuntime();
   }
 
-  public setScore(score: number) {
-    this.model = { ...this.model, score };
-    this.renderScore();
+  public showStartScreen() {
+    this.ui.showStartScreen();
   }
 
-  public setTricks(tricks: number) {
-    this.model = { ...this.model, tricks };
-    this.renderScore();
+  public startMock() {
+    this.mockMode = true;
+    const program = Effect.gen(this, function* () {
+      yield* this.loadTextures();
+      yield* mockGameProgram((action) => this.dispatch(action));
+    });
+    this.mockFiber = Effect.runFork(program);
   }
 
-  public updateScoreDisplay(score: number, tricks: number) {
-    this.model = { ...this.model, score, tricks };
-    this.renderScore();
+  public startOnline() {
+    this.mockMode = false;
+    this.session = new GameSession({
+      dispatch: (action) => this.dispatch(action),
+      getModel: () => this.model,
+      status: (text) => this.ui.status(text),
+    });
+
+    const session = this.session;
+    Effect.runFork(
+      Effect.gen(this, function* () {
+        yield* this.loadTextures();
+        session.start();
+      })
+    );
+  }
+
+  public getModel(): GameModel {
+    return this.model;
+  }
+
+  public getSession(): GameSession | null {
+    return this.session;
+  }
+
+  // Plays a card from our hand by model id; used by the debug bridge.
+  public playCardById(cardId: string): boolean {
+    const card = this.model.hand.find((handCard) => handCard.id === cardId);
+    if (!card || !this.session) return false;
+    return this.session.playCard(card);
+  }
+
+  public legalCardIds(): string[] {
+    return this.model.hand.filter((card) => isLegalPlay(this.model, card)).map((card) => card.id);
+  }
+
+  // Screen-space position of a hand card; used by automated UI tests to drive
+  // real pointer gestures.
+  public cardScreenPosition(cardId: string): { x: number; y: number } | null {
+    const card = this.hand.getCards().find((handCard) => handCard.mesh.userData.modelId === cardId);
+    if (!card) return null;
+    const projected = card.mesh.position.clone().project(this.sceneManager.camera);
+    const canvas = this.sceneManager.renderer.domElement;
+    return {
+      x: ((projected.x + 1) / 2) * canvas.clientWidth,
+      y: ((1 - projected.y) / 2) * canvas.clientHeight,
+    };
   }
 
   public update() {
@@ -71,6 +143,8 @@ export class GameState {
       Effect.runFork(Fiber.interrupt(this.mockFiber));
       this.mockFiber = null;
     }
+    this.session?.destroy();
+    this.session = null;
   }
 
   public getLighting(): Lighting {
@@ -85,27 +159,37 @@ export class GameState {
     return this.table;
   }
 
-  private startMockRuntime() {
-    const loadTextures = Effect.tryPromise({
+  private loadTextures() {
+    return Effect.tryPromise({
       try: () => this.zenTextures.waitForLoad(),
       catch: (error) => error,
     }).pipe(Effect.catchAll(() => Effect.void));
-
-    const program = Effect.gen(this, function* () {
-      yield* loadTextures;
-      yield* mockGameProgram((action) => this.dispatch(action));
-    });
-
-    this.mockFiber = Effect.runFork(program);
   }
 
-  private dispatch(action: GameAction) {
+  // Called by DragControls when a card is dropped on the play area.
+  private tryPlayCard(card: Card): boolean {
+    if (this.mockMode) {
+      this.hand.removeCard(card);
+      this.playArea.playCard(card, 0);
+      return true;
+    }
+    const cardId = card.mesh.userData.modelId as string | undefined;
+    const model = cardId ? this.model.hand.find((handCard) => handCard.id === cardId) : undefined;
+    if (!model || !this.session) return false;
+    return this.session.playCard(model);
+  }
+
+  public dispatch(action: GameAction) {
     this.model = gameReducer(this.model, action);
     this.renderAction(action);
   }
 
   private renderAction(action: GameAction) {
     switch (action._tag) {
+      case "PhaseChanged":
+        if (action.phase === "connecting") this.ui.status("Joining a table…");
+        break;
+
       case "HandDealt":
         action.cards.forEach((card) => this.hand.addCard(this.createCard(card)));
         break;
@@ -125,6 +209,79 @@ export class GameState {
       case "TrickScored":
         this.renderScore();
         break;
+
+      case "BidPlaced": {
+        const seat = SEAT_NAMES[action.playerIndex];
+        this.ui.status(action.bid === "pass" ? `${seat} pass${action.playerIndex === 0 ? "" : "es"}` : `${seat} bid${action.playerIndex === 0 ? "" : "s"} ${action.bid}`, true);
+        break;
+      }
+
+      case "BidWon":
+        this.ui.status(`${SEAT_NAMES[action.playerIndex]} won the bid at ${action.bid}`, true);
+        break;
+
+      case "TrumpSet":
+        this.ui.setTrump(this.model.trumpSuit, this.model.trumpExposed);
+        if (this.model.trumpExposed) this.ui.status("Trump is revealed", true);
+        break;
+
+      case "RequestReceived":
+        switch (action.request.kind) {
+          case "bid":
+            this.ui.showBidPanel(action.request.currentBid);
+            break;
+          case "trump":
+            this.ui.showTrumpPanel();
+            this.ui.status("You won the bid — choose trump");
+            break;
+          case "play":
+            this.ui.status("Your turn");
+            this.ui.setExposeVisible(canExposeTrump(this.model));
+            break;
+        }
+        break;
+
+      case "RequestCleared":
+        this.ui.hideBidPanel();
+        this.ui.hideTrumpPanel();
+        this.ui.setExposeVisible(false);
+        break;
+
+      case "TrickCleared":
+        this.playArea.clearTable();
+        break;
+
+      case "TrickEnded": {
+        this.playArea.clearTable(action.winner);
+        this.renderScore();
+        if (action.winner !== null) {
+          const seat = SEAT_NAMES[action.winner];
+          const taker = action.winner === 0 ? "You take" : `${seat} takes`;
+          this.ui.status(
+            action.points > 0 ? `${taker} the trick (+${action.points})` : `${taker} the trick`,
+            true
+          );
+        }
+        break;
+      }
+
+      case "GameFinished": {
+        const points = action.points;
+        const ourPoints = points[0] + points[2];
+        const theirPoints = points[1] + points[3];
+        this.renderScore();
+        let detail = "";
+        if (this.model.finalBid !== null && this.model.bidWinner !== null) {
+          const bidderOurs = this.model.bidWinner === 0 || this.model.bidWinner === 2;
+          const bidderPoints = bidderOurs ? ourPoints : theirPoints;
+          const made = bidderPoints >= this.model.finalBid;
+          const bidderName = this.model.bidWinner === 0 ? "Your" : `${SEAT_NAMES[this.model.bidWinner]}'s`;
+          detail = `${bidderName} team bid ${this.model.finalBid} and took ${bidderPoints} — ${made ? "made it" : "set"}`;
+        }
+        this.ui.status("");
+        this.ui.showResult(ourPoints, theirPoints, detail);
+        break;
+      }
     }
   }
 
@@ -169,10 +326,10 @@ export class GameState {
 
   private renderScore() {
     if (this.scoreElement) {
-      this.scoreElement.textContent = this.model.score.toString();
+      this.scoreElement.textContent = `${this.model.score} — ${this.model.theirScore}`;
     }
     if (this.tricksElement) {
-      this.tricksElement.textContent = this.model.tricks.toString();
+      this.tricksElement.textContent = `${this.model.tricks} — ${this.model.theirTricks}`;
     }
   }
 }

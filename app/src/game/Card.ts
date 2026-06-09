@@ -10,6 +10,8 @@ export class Card {
   
   private frontMaterial: THREE.MeshStandardMaterial;
   private backMaterial: THREE.MeshStandardMaterial;
+  private positionTween: TWEEN.Tween<THREE.Vector3> | null = null;
+  private rotationTween: TWEEN.Tween<THREE.Euler> | null = null;
 
   constructor(suit: string, rank: string, frontTexture: THREE.Texture, backTexture: THREE.Texture) {
     this.suit = suit;
@@ -57,24 +59,39 @@ export class Card {
     this.mesh.userData = { card: this }; // Link back to Card instance
   }
 
-  public setPosition(x: number, y: number, z: number, immediate = false) {
+  public setPosition(x: number, y: number, z: number, immediate = false, duration = 500) {
+    // Cancel any in-flight tween so stale targets can't drag the card back
+    if (this.positionTween) {
+      this.positionTween.stop();
+      this.positionTween = null;
+    }
     if (immediate) {
       this.mesh.position.set(x, y, z);
     } else {
-      new TWEEN.Tween(this.mesh.position)
-        .to({ x, y, z }, 500)
+      this.positionTween = new TWEEN.Tween(this.mesh.position)
+        .to({ x, y, z }, duration)
         .easing(TWEEN.Easing.Quadratic.Out)
+        .onComplete(() => {
+          this.positionTween = null;
+        })
         .start();
     }
   }
 
   public setRotation(x: number, y: number, z: number, immediate = false) {
+    if (this.rotationTween) {
+      this.rotationTween.stop();
+      this.rotationTween = null;
+    }
     if (immediate) {
       this.mesh.rotation.set(x, y, z);
     } else {
-      new TWEEN.Tween(this.mesh.rotation)
+      this.rotationTween = new TWEEN.Tween(this.mesh.rotation)
         .to({ x, y, z }, 500)
         .easing(TWEEN.Easing.Quadratic.Out)
+        .onComplete(() => {
+          this.rotationTween = null;
+        })
         .start();
     }
   }

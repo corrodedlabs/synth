@@ -4,18 +4,20 @@ import { Card } from './Card';
 
 export class PlayArea {
   private scene: THREE.Scene;
+  private camera: THREE.Camera;
   private playedCards: Card[] = [];
   private positions: THREE.Vector3[] = []; // 4 positions for 4 players
-  
+
   // Enso markers for other players (3D meshes positioned in scene)
   private ensoMarkers: THREE.Mesh[] = [];
   private ensoTexture: THREE.Texture | null = null;
   private activePulseTween: TWEEN.Tween<THREE.Vector3> | null = null;
   private activeMarkerIndex: number = -1;
 
-  constructor(scene: THREE.Scene) {
+  constructor(scene: THREE.Scene, camera: THREE.Camera) {
     this.scene = scene;
-    
+    this.camera = camera;
+
     // Define positions for played cards (Center of table)
     // Cards positioned in compact cross/plus pattern centered on play area
     // Matching mockup layout - tight cross with minimal spacing
@@ -25,8 +27,10 @@ export class PlayArea {
     // 2: Top - furthest from camera  
     // 3: Left
     const centerZ = -0.5;
-    const spacingH = 0.30;  // Horizontal spacing (left-right) - tight like reference
-    const spacingV = 0.32;  // Vertical spacing (front-back) - tight like reference
+    // Cards are camera-facing billboards, so the cross needs generous
+    // spacing for the four cards to stay fully separated on screen.
+    const spacingH = 1.15;
+    const spacingV = 0.95;
     this.positions = [
       new THREE.Vector3(0, 0.2, centerZ + spacingV),       // Player (bottom/front)
       new THREE.Vector3(spacingH, 0.2, centerZ),           // Right
@@ -115,11 +119,12 @@ export class PlayArea {
       (prevMarker.material as THREE.MeshBasicMaterial).opacity = 0.7;
     }
     
-    // Map player indices to 2 markers: 1 -> right (0), 3 -> left (1)
-    // playerIndex 0 is local player (no marker), 2 is top (no marker)
+    // Map player indices to markers: 1 -> right (0), 3 -> left (1), 2 -> top (2)
+    // playerIndex 0 is the local player (no marker)
     let markerIndex = -1;
     if (playerIndex === 1) markerIndex = 0; // Right
     else if (playerIndex === 3) markerIndex = 1; // Left
+    else if (playerIndex === 2) markerIndex = 2; // Top (partner)
     
     this.activeMarkerIndex = markerIndex;
     
@@ -166,20 +171,40 @@ export class PlayArea {
     }
 
     const pos = this.positions[playerIndex];
-    
-    // Precise positioning - no random offsets for clean cross pattern
+
     card.setPosition(pos.x, pos.y + (this.playedCards.length * 0.005), pos.z);
-    
-    // Cards lie flat, front face up - all same orientation like reference
-    card.setRotation(0, 0, 0);
+
+    // Face the camera head-on so ranks stay readable, with a slight
+    // per-seat tilt so the trick reads like cards tossed onto a table.
+    const toCamera = this.camera.position.clone().sub(pos);
+    const rotX = -Math.atan2(toCamera.y, toCamera.z);
+    const tilts = [0.05, -0.07, 0.04, 0.08];
+    card.setRotation(rotX, 0, tilts[playerIndex] ?? 0);
   }
 
-  public clearTable() {
-    this.playedCards.forEach(card => {
-      // Animate away or disappear
-      // For now, just remove from scene
-      this.scene.remove(card.mesh);
-    });
+  // Sweeps the trick toward the winning seat, then removes the cards.
+  public clearTable(winnerIndex: number | null = null) {
+    const sweepTargets = [
+      new THREE.Vector3(0, 0.4, 4.0),    // toward us
+      new THREE.Vector3(4.5, 0.4, -0.5), // right
+      new THREE.Vector3(0, 0.4, -4.0),   // top
+      new THREE.Vector3(-4.5, 0.4, -0.5) // left
+    ];
+    const cards = this.playedCards;
     this.playedCards = [];
+
+    if (winnerIndex === null) {
+      cards.forEach(card => this.scene.remove(card.mesh));
+      return;
+    }
+
+    const target = sweepTargets[winnerIndex];
+    cards.forEach(card => {
+      new TWEEN.Tween(card.mesh.position)
+        .to({ x: target.x, y: target.y, z: target.z }, 550)
+        .easing(TWEEN.Easing.Quadratic.In)
+        .onComplete(() => this.scene.remove(card.mesh))
+        .start();
+    });
   }
 }

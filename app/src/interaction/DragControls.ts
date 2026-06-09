@@ -1,8 +1,13 @@
 import * as THREE from 'three';
-import * as TWEEN from '@tweenjs/tween.js';
 import { Card } from '../game/Card';
 import { Hand } from '../game/Hand';
-import { PlayArea } from '../game/PlayArea';
+
+export interface DragGate {
+  // Whether hand cards may be picked up right now.
+  canDrag(): boolean;
+  // Attempt to play the dropped card; false means it returns to the hand.
+  tryPlay(card: Card): boolean;
+}
 
 export class DragControls {
   private camera: THREE.Camera;
@@ -10,8 +15,8 @@ export class DragControls {
   private scene: THREE.Scene;
   private canvas: HTMLCanvasElement;
   private hand: Hand;
-  private playArea: PlayArea;
-  
+  private gate: DragGate;
+
   private raycaster = new THREE.Raycaster();
   private mouse = new THREE.Vector2();
   // @ts-ignore
@@ -22,17 +27,21 @@ export class DragControls {
   private plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // Ground plane for dragging intersection
 
   private hoveredCard: Card | null = null;
-  private hoverOffset = new THREE.Vector3();
-  private savedRenderOrder: number = 0;
-  private hoverTween: TWEEN.Tween<THREE.Vector3> | null = null;
-  private hoverBasePosition = new THREE.Vector3();
+  private downPoint = new THREE.Vector2();
+  private dragMoved = false;
 
-  constructor(camera: THREE.Camera, scene: THREE.Scene, canvas: HTMLCanvasElement, hand: Hand, playArea: PlayArea) {
+  constructor(
+    camera: THREE.Camera,
+    scene: THREE.Scene,
+    canvas: HTMLCanvasElement,
+    hand: Hand,
+    gate: DragGate
+  ) {
     this.camera = camera;
     this.scene = scene;
     this.canvas = canvas;
     this.hand = hand;
-    this.playArea = playArea;
+    this.gate = gate;
 
     this.initEvents();
   }
@@ -71,6 +80,8 @@ export class DragControls {
   private onDown(event: MouseEvent | TouchEvent) {
     event.preventDefault();
 
+    if (!this.gate.canDrag()) return;
+
     // Get all card meshes from the hand
     const cardMeshes = this.hand.getCards().map(c => c.mesh);
     const intersects = this.getIntersects(event, cardMeshes);
@@ -86,10 +97,20 @@ export class DragControls {
         this.selectedObject = obj;
         this.selectedCard = obj.userData.card as Card;
         this.isDragging = true;
-        
+        this.dragMoved = false;
+        this.downPoint.copy(this.pointerPosition(event));
+
         this.clearHover();
       }
     }
+  }
+
+  private pointerPosition(event: MouseEvent | TouchEvent): THREE.Vector2 {
+    if (window.TouchEvent && event instanceof TouchEvent) {
+      const touch = event.touches[0] ?? event.changedTouches[0];
+      return new THREE.Vector2(touch.clientX, touch.clientY);
+    }
+    return new THREE.Vector2((event as MouseEvent).clientX, (event as MouseEvent).clientY);
   }
 
   private onMove(event: MouseEvent | TouchEvent) {
@@ -97,6 +118,11 @@ export class DragControls {
 
     if (!this.isDragging || !this.selectedCard) return;
     event.preventDefault();
+
+    // A press only becomes a drag after the pointer moves a little;
+    // otherwise releasing counts as a tap (click-to-play).
+    if (!this.dragMoved && this.pointerPosition(event).distanceTo(this.downPoint) < 8) return;
+    this.dragMoved = true;
 
     // Raycast to a virtual plane at card height to drag it around
     const rect = this.canvas.getBoundingClientRect();
@@ -125,35 +151,31 @@ export class DragControls {
       target.z = Math.max(-1, Math.min(4, target.z));
       
       this.selectedCard.setPosition(target.x, 0.5, target.z, true);
-      // Flatten rotation while dragging
-      this.selectedCard.setRotation(-Math.PI/2, 0, 0, true);
+      // Keep the card facing the camera while dragging
+      const toCamera = this.camera.position.clone().sub(this.selectedCard.mesh.position);
+      this.selectedCard.setRotation(-Math.atan2(toCamera.y, toCamera.z), 0, 0, true);
+    }
+  }
+
+  // Returns a hovered card to its slot in the fan. The slot is computed
+  // fresh — the hand may have been re-arranged (e.g. by the second deal)
+  // while the card was lifted.
+  private unhover(card: Card) {
+    const layout = this.hand.layoutOf(card);
+    if (layout) {
+      card.setPosition(layout.position.x, layout.position.y, layout.position.z, false, 200);
+      const renderOrder = this.hand.getCards().indexOf(card);
+      card.mesh.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) {
+          obj.renderOrder = renderOrder;
+        }
+      });
     }
   }
 
   private clearHover() {
     if (this.hoveredCard) {
-      // Stop any running hover tween
-      if (this.hoverTween) {
-        this.hoverTween.stop();
-        this.hoverTween = null;
-      }
-
-      // Animate back to base position
-      const card = this.hoveredCard;
-      const targetPos = this.hoverBasePosition.clone();
-
-      new TWEEN.Tween(card.mesh.position)
-        .to({ x: targetPos.x, y: targetPos.y, z: targetPos.z }, 200)
-        .easing(TWEEN.Easing.Quadratic.Out)
-        .start();
-
-      // Restore original render order
-      card.mesh.traverse((obj) => {
-        if (obj instanceof THREE.Mesh) {
-          obj.renderOrder = this.savedRenderOrder;
-        }
-      });
-
+      this.unhover(this.hoveredCard);
       this.hoveredCard = null;
     }
   }
@@ -176,55 +198,24 @@ export class DragControls {
     }
 
     if (newHovered !== this.hoveredCard) {
-      // Clear previous hover with animation
       if (this.hoveredCard) {
-        // Stop any running hover tween
-        if (this.hoverTween) {
-          this.hoverTween.stop();
-          this.hoverTween = null;
-        }
-
-        // Animate previous card back to base position
-        const prevCard = this.hoveredCard;
-        const prevTargetPos = this.hoverBasePosition.clone();
-
-        new TWEEN.Tween(prevCard.mesh.position)
-          .to({ x: prevTargetPos.x, y: prevTargetPos.y, z: prevTargetPos.z }, 200)
-          .easing(TWEEN.Easing.Quadratic.Out)
-          .start();
-
-        prevCard.mesh.traverse((obj) => {
-          if (obj instanceof THREE.Mesh) {
-            obj.renderOrder = this.savedRenderOrder;
-          }
-        });
+        this.unhover(this.hoveredCard);
       }
 
       this.hoveredCard = newHovered;
 
       if (this.hoveredCard) {
-        // Store the base position before animating
-        this.hoverBasePosition.copy(this.hoveredCard.mesh.position);
+        // Lift from the card's canonical fan slot toward the camera
+        const layout = this.hand.layoutOf(this.hoveredCard);
+        const basePos = layout ? layout.position : this.hoveredCard.mesh.position.clone();
+        const toCamera = this.camera.position.clone().sub(basePos).normalize();
+        const targetPos = basePos.clone().addScaledVector(toCamera, 0.4);
 
-        // Calculate direction from card toward camera
-        const cardPos = this.hoveredCard.mesh.position.clone();
-        const cameraPos = this.camera.position.clone();
-        const toCamera = cameraPos.sub(cardPos).normalize();
+        this.hoveredCard.setPosition(targetPos.x, targetPos.y, targetPos.z, false, 200);
 
-        // Calculate target position (pushed toward camera)
-        this.hoverOffset.copy(toCamera).multiplyScalar(0.4);
-        const targetPos = this.hoverBasePosition.clone().add(this.hoverOffset);
-
-        // Animate to hover position
-        this.hoverTween = new TWEEN.Tween(this.hoveredCard.mesh.position)
-          .to({ x: targetPos.x, y: targetPos.y, z: targetPos.z }, 200)
-          .easing(TWEEN.Easing.Quadratic.Out)
-          .start();
-
-        // Save current render order and bump it high so card renders on top
+        // Render on top while lifted
         this.hoveredCard.mesh.traverse((obj) => {
           if (obj instanceof THREE.Mesh) {
-            this.savedRenderOrder = obj.renderOrder;
             obj.renderOrder = 100;
           }
         });
@@ -238,20 +229,24 @@ export class DragControls {
 
     this.isDragging = false;
 
-    // Check if dropped in play area (e.g. z < 1.0)
-    const currentPos = this.selectedCard.mesh.position;
-    
-    if (currentPos.z < 1.5 && currentPos.z > -1.5 && Math.abs(currentPos.x) < 2.0) {
-      // Valid play
-      this.hand.removeCard(this.selectedCard);
-      this.playArea.playCard(this.selectedCard, 0); // Player is index 0
+    if (!this.dragMoved) {
+      // Tap on a card plays it directly (legality is checked by the gate)
+      if (!this.gate.tryPlay(this.selectedCard)) {
+        this.hand.arrangeCards();
+      }
       this.selectedCard = null;
       this.selectedObject = null;
-    } else {
-      // Return to hand
-      this.hand.arrangeCards();
-      this.selectedCard = null;
-      this.selectedObject = null;
+      return;
     }
+
+    // Generous drop zone: anywhere forward of the hand counts as a play
+    const currentPos = this.selectedCard.mesh.position;
+    const inPlayArea = currentPos.z < 2.0 && currentPos.z > -1.8 && Math.abs(currentPos.x) < 2.4;
+    if (!inPlayArea || !this.gate.tryPlay(this.selectedCard)) {
+      // Not a play (or an illegal one) — return the card to the hand
+      this.hand.arrangeCards();
+    }
+    this.selectedCard = null;
+    this.selectedObject = null;
   }
 }
