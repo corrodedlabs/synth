@@ -12,7 +12,9 @@
          connect-user
          get-active-rooms
          create-room
-         join-room)
+         join-room
+         client-lambda
+         spawn-bot)
 
 (define +ws-url+ "ws://localhost:8081/test")
 (define protocol 'rfc6455)
@@ -115,6 +117,11 @@
              (begin (displayln (format "unhandled message ~a" server-msg))
                     (loop client-state (receive-data connection)))))
           (loop client-state (receive-data connection))))))
+
+;; runs the bot AI loop on its own thread for an already-connected user
+(define spawn-bot
+  (lambda (bot-name connection)
+    (thread (λ () (client-lambda (user bot-name connection (make-channel)))))))
 
 (define get-active-rooms
   (lambda (connection)

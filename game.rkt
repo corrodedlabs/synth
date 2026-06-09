@@ -342,8 +342,8 @@
 
              [else (begin
                      (displayln "invalid card played")
-                     (player-func active-player cards-played-in-round trump-suit)
-                     (loop trump-suit
+                     (loop player-cards
+                           trump-suit
                            rounds-to-be-played
                            active-player
                            cards-played-in-round

@@ -75,10 +75,16 @@
   (define get-connected-users-email
     (λ () (hash-keys *connected-users*)))
 
+  (define *bot-counter* (box 0))
+
   (define create-bot-user
-    (lambda (bot-name)
-      (let ((connection (connect-to-ws)))
+    (lambda ()
+      (let* ((n (add1 (unbox *bot-counter*)))
+             (bot-name (string->symbol (format "bot-~a" n)))
+             (connection (connect-to-ws)))
+        (set-box! *bot-counter* n)
         (connect-user connection bot-name)
+        (spawn-bot bot-name connection)
         (get-user-by-email bot-name)))))
 
 
@@ -145,7 +151,7 @@
 
   (define add-bot-to-game-room
     (lambda (room-name)
-      (add-user-to-game-room (find-room-by-name room-name) (create-bot-user 'bot-1)))))
+      (add-user-to-game-room (find-room-by-name room-name) (create-bot-user)))))
 
 
 
@@ -215,9 +221,12 @@
     (λ (players)
       (start-bidding (λ (player-index current-bid-value)
                        (let* ((player (list-ref players player-index)))
-                         (send-datum player `(request-bid ,current-bid-value)) 
-                         (caddr (receive-datum player))))
-                     (λ (player-index error-msg)
+                         (send-datum-to-all players `(turn ,player-index))
+                         (send-datum player `(request-bid ,current-bid-value))
+                         (let ((bid-value (caddr (receive-datum player))))
+                           (send-datum-to-all players `(bid-placed ,player-index ,bid-value))
+                           bid-value)))
+                     (λ (player-index error-msg . args)
                        (send-datum (list-ref players player-index) `(error ,error-msg))))))
 
   
@@ -242,7 +251,8 @@
                  (not (ormap (λ (member)
                                (ws-conn-closed? (user-connection member)))
                              members)))
-            (let* ((players (cons host members))
+            ;; members already includes the host
+            (let* ((players members)
                    (players+deck (distribute-cards-to-players players))
                    (bid-result (perform-bidding players))
                    (trump-suit (choose-trump-suit players (cdr bid-result))))
@@ -257,11 +267,14 @@
                                    (λ (player-index cards-in-round game-state)
                                      (displayln (format "waiting for player ~a " player-index))
                                      (let ((player (list-ref players player-index)))
+                                       (send-datum-to-all players `(turn ,player-index))
                                        (send-datum player
                                                    `(play-card . ((cards-played . ,cards-in-round)
                                                                   (game-state . ,game-state))))
-                                                     
-                                       (caddr (receive-datum player)))))))
+
+                                       (let ((card (caddr (receive-datum player))))
+                                         (send-datum-to-all players `(played ,player-index ,card))
+                                         card))))))
                    (send-datum-to-all players `(points-won ,points-won)))
                  'game-started]
                 (else (error "fuck"))))]
