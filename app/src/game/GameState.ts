@@ -162,7 +162,17 @@ export class GameState {
     this.startSession(playerName, "browse-rooms");
   }
 
-  private startSession(playerName: string, intent: "create-room" | "browse-rooms") {
+  // Page load found an interrupted match in localStorage: reconnect under
+  // the exact email that holds the seat and ask for the snapshot.
+  public rejoinMatch(playerName: string, email: string) {
+    this.startSession(playerName, "rejoin", email);
+  }
+
+  private startSession(
+    playerName: string,
+    intent: "create-room" | "browse-rooms" | "rejoin",
+    rejoinEmail?: string
+  ) {
     if (this.session) {
       // already connected (e.g. browsing) — just issue the new intent
       if (intent === "create-room") this.session.createRoom();
@@ -177,7 +187,8 @@ export class GameState {
         status: (text) => this.ui.status(text),
         rooms: (rooms) => this.ui.showRooms(rooms),
       },
-      playerName
+      playerName,
+      rejoinEmail
     );
 
     const session = this.session;
@@ -202,11 +213,13 @@ export class GameState {
     return this.session;
   }
 
-  // Walk away from a running match: close our socket (the server notices
-  // within a second and aborts the game for the other seats) and reset to
-  // the start screen. The next create/browse builds a fresh session.
+  // Walk away from a running match: tell the server (an explicit leave
+  // aborts for everyone at once — no reconnect grace), close our socket,
+  // and reset to the start screen. The next create/browse builds a fresh
+  // session.
   public leaveMatch() {
     if (!this.session) return;
+    this.session.leaveGame();
     this.session.destroy();
     this.session = null;
     this.dispatch({ _tag: "RoomLeft" });
@@ -476,6 +489,35 @@ export class GameState {
         // the match is decided — the panel's Play again takes it from here
         this.ui.setLeaveMatchVisible(false);
         this.ui.showMatchOver(action.us, action.them, action.winner === "us", action.hands);
+        break;
+      }
+
+      case "SnapshotRestored": {
+        // a reconnect: rebuild the whole scene from the restored model;
+        // any pending request/result is re-dispatched right after and
+        // brings its own panel back up
+        for (const card of [...this.hand.getCards()]) {
+          this.hand.removeCard(card);
+          this.sceneManager.scene.remove(card.mesh);
+        }
+        this.playArea.clearTable();
+        this.playArea.clearActivePlayer();
+        this.ui.hideLobby();
+        this.ui.hideBidPanel();
+        this.ui.hideTrumpPanel();
+        this.ui.setExposeVisible(false);
+        this.ui.hideResult();
+        this.model.hand.forEach((card) => this.hand.addCard(this.createCard(card)));
+        for (const played of this.model.playedCards) {
+          this.playCard(played.card, played.playerIndex);
+        }
+        if (this.model.activePlayer !== null) {
+          this.playArea.setActivePlayer(this.model.activePlayer);
+        }
+        this.ui.setTrump(this.model.trumpSuit, this.model.trumpExposed);
+        this.renderScore();
+        this.positionSeatLabels();
+        this.ui.setLeaveMatchVisible(this.session !== null);
         break;
       }
     }

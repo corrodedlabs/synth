@@ -9,6 +9,7 @@ import {
   PlayerIndex,
   Suit,
   canExposeTrump,
+  initialGameModel,
   isLegalPlay,
 } from "./GameModel";
 
@@ -20,7 +21,54 @@ export interface SessionCallbacks {
 }
 
 // What the session should do once the socket is up.
-export type SessionIntent = "create-room" | "browse-rooms";
+export type SessionIntent = "create-room" | "browse-rooms" | "rejoin";
+
+// Identity persists across refreshes so a reconnecting page presents the
+// same email and gets its seat back; the active-match key tells the next
+// page load that there is a match worth rejoining.
+const PLAYER_ID_KEY = "game28-player-id";
+const PLAYER_NAME_KEY = "game28-player-name";
+const ACTIVE_MATCH_KEY = "game28-active-match";
+
+function persistentPlayerId(): string {
+  const fresh = Math.random().toString(36).slice(2, 8);
+  try {
+    const existing = localStorage.getItem(PLAYER_ID_KEY);
+    if (existing) return existing;
+    localStorage.setItem(PLAYER_ID_KEY, fresh);
+  } catch {
+    // storage unavailable (private mode): identity lasts one page load
+  }
+  return fresh;
+}
+
+// the match (email + display name) the previous page load was playing, if any
+export function storedActiveMatch(): { email: string; name: string } | null {
+  try {
+    const email = localStorage.getItem(ACTIVE_MATCH_KEY);
+    if (!email) return null;
+    return { email, name: localStorage.getItem(PLAYER_NAME_KEY) ?? "Player" };
+  } catch {
+    return null;
+  }
+}
+
+export function storedPlayerName(): string | null {
+  try {
+    return localStorage.getItem(PLAYER_NAME_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function rememberActiveMatch(email: string | null) {
+  try {
+    if (email === null) localStorage.removeItem(ACTIVE_MATCH_KEY);
+    else localStorage.setItem(ACTIVE_MATCH_KEY, email);
+  } catch {
+    // refresh-rejoin simply won't be offered
+  }
+}
 
 // Server endpoint resolution, most specific wins:
 // ?server=ws://… → ?port=9000 (localhost) → VITE_SERVER_URL (production build)
@@ -64,14 +112,20 @@ export class GameSession {
   readonly displayName: string;
   readonly roomName: string;
 
-  constructor(private callbacks: SessionCallbacks, playerName: string) {
-    const id = Math.random().toString(36).slice(2, 8);
+  constructor(private callbacks: SessionCallbacks, playerName: string, rejoinEmail?: string) {
+    const id = persistentPlayerId();
     const slug =
       playerName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") ||
       "player";
     this.displayName = playerName.trim() || "Player";
-    this.email = `${slug}-${id}@game.local`;
+    // a rejoining page must present exactly the email that holds the seat
+    this.email = rejoinEmail ?? `${slug}-${id}@game.local`;
     this.roomName = `${this.displayName}'s table #${id.slice(0, 3)}`;
+    try {
+      localStorage.setItem(PLAYER_NAME_KEY, this.displayName);
+    } catch {
+      // fine — the name just won't be prefilled next time
+    }
   }
 
   start(intent: SessionIntent) {
@@ -189,9 +243,17 @@ export class GameSession {
     this.socket.send({ _tag: "NextHand", email: this.email });
   }
 
+  // Walking out on purpose: the server aborts the match for everyone at
+  // once instead of granting our seat a reconnect grace window.
+  leaveGame() {
+    rememberActiveMatch(null);
+    this.socket?.send({ _tag: "LeaveGame", email: this.email });
+  }
+
   // Back to the start screen: reset lobby state and refresh the table list
   // so the user can immediately join or host again on the same connection.
   private exitRoom(message: string) {
+    rememberActiveMatch(null);
     this.inRoom = false;
     this.joinedRoomName = null;
     this.myServerIndex = 0;
@@ -243,6 +305,9 @@ export class GameSession {
 
       if (intent === "create-room") {
         this.createRoom();
+      } else if (intent === "rejoin") {
+        this.callbacks.status("Rejoining your match…");
+        socket.send({ _tag: "Rejoin", email: this.email });
       } else {
         this.refreshRooms();
       }
@@ -333,6 +398,8 @@ export class GameSession {
           return false;
 
         case "HandDealt": {
+          // mark the match rejoinable for a future page load
+          rememberActiveMatch(this.email);
           // A deal landing between hands starts the next hand of the match:
           // clear the per-hand session state before the model reset. Played
           // card ids recur across hands, so a stale locallyPlayed entry
@@ -449,6 +516,7 @@ export class GameSession {
         }
 
         case "MatchOver": {
+          rememberActiveMatch(null);
           const usEvens = this.myServerIndex % 2 === 0;
           dispatch({
             _tag: "MatchOver",
@@ -458,6 +526,101 @@ export class GameSession {
             hands: event.hands,
           });
           return true;
+        }
+
+        case "PlayerDisconnected":
+          // our own drop notice can only reach us after we reconnected
+          if (event.email !== this.email) {
+            this.callbacks.status(
+              `${memberDisplayName(event.email)} lost connection — holding their seat ` +
+                `up to ${event.graceSeconds}s…`
+            );
+          }
+          return false;
+
+        case "PlayerReconnected":
+          if (event.email !== this.email) {
+            this.callbacks.status(`${memberDisplayName(event.email)} is back.`);
+          }
+          return false;
+
+        case "NoRunningGame":
+          // the match we tried to rejoin is gone — back to a fresh start
+          rememberActiveMatch(null);
+          this.callbacks.status("That match has ended.");
+          dispatch({ _tag: "PhaseChanged", phase: "idle" });
+          return true;
+
+        case "GameSnapshot": {
+          const s = event.snapshot;
+          this.inRoom = true;
+          this.myServerIndex = s.yourSeat;
+          this.cardsInTrick = s.trick.length;
+          this.trickPoints = s.trick.reduce((sum, play) => sum + cardPoints(play.card), 0);
+          this.pointsTaken = [0, 1, 2, 3].map(
+            (view) => s.points.get(this.toServer(view)) ?? 0
+          );
+          this.locallyPlayed.clear();
+          this.chosenTrump = null;
+          this.justExposed = false;
+          rememberActiveMatch(this.email);
+
+          const phase =
+            s.stage === "between-hands" ? "hand-finished"
+            : s.stage === "choosing-trump" ? "choosing-trump"
+            : s.stage === "playing" ? "playing"
+            : "bidding";
+          const seatNames = [0, 1, 2, 3].map((view) =>
+            memberDisplayName(s.members[this.toServer(view)] ?? "")
+          );
+          const tricksByView = [0, 1, 2, 3].map(
+            (view) => s.tricks.get(this.toServer(view)) ?? 0
+          );
+          const usEvens = s.yourSeat % 2 === 0;
+          dispatch({
+            _tag: "SnapshotRestored",
+            model: {
+              ...initialGameModel,
+              phase,
+              roomName: s.room,
+              members: s.members,
+              // the host created the room first, so they sit at the end of
+              // the server's newest-first member list
+              isHost: s.members[s.members.length - 1] === this.email,
+              seatNames,
+              hand: [...s.yourHand],
+              playedCards: s.trick.map((play) => ({
+                card: play.card,
+                playerIndex: this.toView(play.seat),
+              })),
+              activePlayer: s.awaiting !== null ? this.toView(s.awaiting) : null,
+              score: this.pointsTaken[0] + this.pointsTaken[2],
+              tricks: tricksByView[0] + tricksByView[2],
+              theirScore: this.pointsTaken[1] + this.pointsTaken[3],
+              theirTricks: tricksByView[1] + tricksByView[3],
+              currentBid: s.bidResult?.value ?? s.highBid?.value ?? 16,
+              bidsPlaced: s.bidResult || s.highBid ? 1 : 0,
+              bidWinner: s.bidResult ? this.toView(s.bidResult.seat) : null,
+              finalBid: s.bidResult?.value ?? null,
+              trumpSuit: s.trumpSuit,
+              trumpExposed: s.trumpExposed,
+              matchUs: usEvens ? s.evens : s.odds,
+              matchThem: usEvens ? s.odds : s.evens,
+              matchTarget: s.target,
+              handNumber: s.handNumber,
+            },
+          });
+          this.callbacks.status("Reconnected — back at the table.");
+          // between hands, the verdict panel comes back up
+          if (s.lastResult && phase === "hand-finished") {
+            yield* this.handleEvent(s.lastResult);
+          }
+          // and if the server was waiting on us, the original request re-arms
+          // the bid/trump/play UI exactly as if it had just arrived
+          if (s.request) {
+            yield* this.handleEvent(s.request);
+          }
+          return false;
         }
 
         case "ServerError": {

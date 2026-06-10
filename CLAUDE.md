@@ -54,6 +54,7 @@ suites, headless — on each push.
    HEADED=1 node scripts/play-game.mjs           "http://localhost:5179/?port=8082"
    HEADED=1 node scripts/play-multiplayer.mjs    "http://localhost:5179/?port=8082"
    HEADED=1 node scripts/test-match.mjs          "http://localhost:5179/?port=8082"
+   HEADED=1 node scripts/test-reconnect.mjs      "http://localhost:5179/?port=8082"
    HEADED=1 node scripts/test-lobby-controls.mjs "http://localhost:5179/?port=8082"
    HEADED=1 node scripts/test-multi-tables.mjs   "http://localhost:5179/?port=8082"
    HEADED=1 node scripts/test-mobile.mjs         "http://localhost:5179/?port=8082"
@@ -67,6 +68,9 @@ suites, headless — on each push.
      between-hands panel (host deal button vs guest waiting note), match
      scores mirroring, dealer rotation, and the leave-match button (two-step
      confirm; leaver gets a fresh start screen, the rest are aborted).
+   - `test-reconnect.mjs` — mid-hand page reload: localStorage identity
+     auto-rejoins the seat, the snapshot restores hand/trick/scores/labels,
+     and the hand plays out; leaving clears the stored match.
    - `test-lobby-controls.mjs` — kick bot/human, leave, close table,
      disconnect cleanup.
    - `test-multi-tables.mjs` — several concurrent tables, room browser, join.
@@ -109,7 +113,7 @@ Three main files with clear responsibilities:
 - **`server.rkt`** — WebSocket service with three internal modules:
   - **User module**: `user` struct (connection, email, hand, comm-channel, pic-url), global `*connected-users*` hash
   - **Room module**: `game-room` serializable struct (host, name, members), global `*game-rooms*` hash keyed by host email
-  - **Game module**: orchestrates a whole match per table — hand N's opener/leader is seat (N−1) mod 4, `hand-result` broadcasts game points after every hand, the game thread then blocks until the host sends `(next-hand <email>)`, and `match-over` ends it (target 6; the `MATCH-TARGET` env var shortens matches in tests). Any disconnect — mid-hand or at the gate — aborts the match via `game-aborted`. Spawns threads for long-running game operations, uses Racket channels for async player communication
+  - **Game module**: orchestrates a whole match per table — hand N's opener/leader is seat (N−1) mod 4, `hand-result` broadcasts game points after every hand, the game thread then blocks until the host sends `(next-hand <email>)`, and `match-over` ends it (target 6; the `MATCH-TARGET` env var shortens matches in tests). A dropped player keeps their seat for `RECONNECT-GRACE` seconds (default 45): `connect-user` with the same email rebinds the seat's socket, `(rejoin <email>)` returns a `game-snapshot` built from the live `match-state` shadow the game thread maintains, and `player-disconnected`/`player-reconnected` keep the table informed. Grace expiry, a dead bot, or an explicit `(leave-game <email>)` aborts via `game-aborted`. Spawns threads for long-running game operations, uses Racket channels for async player communication
 
 - **`client.rkt`** — Bot client with `state` struct (user, hand, bid-value, selected-trump). `client-lambda` is the main bot AI loop. `simulate-game` runs a full 4-player game for testing.
 

@@ -1,5 +1,6 @@
 import { SceneManager } from './scene/SceneManager';
 import { GameState } from './game/GameState';
+import { storedActiveMatch, storedPlayerName } from './game/GameSession';
 import { DebugUI } from './debug/DebugUI';
 
 const container = document.getElementById('app')!;
@@ -16,8 +17,19 @@ if (params.has('debug')) {
     gameState.getHand()
   );
 }
+
+// returning players get their name prefilled
+const playerNameInput = document.getElementById('player-name') as HTMLInputElement | null;
+const rememberedName = storedPlayerName();
+if (playerNameInput && rememberedName) playerNameInput.value = rememberedName;
+
+const interrupted = storedActiveMatch();
 if (params.has('mock')) {
   gameState.startMock();
+} else if (interrupted) {
+  // the previous page load was mid-match: reconnect straight into it
+  // (the server answers no-running-game if it has since ended)
+  gameState.rejoinMatch(interrupted.name, interrupted.email);
 } else {
   gameState.showStartScreen();
 }

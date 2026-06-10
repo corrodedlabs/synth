@@ -79,6 +79,31 @@ export interface RoomInfo {
   readonly members: readonly string[];
 }
 
+// Mid-match view for a reconnecting client, straight from the server's
+// shadow of the running game. Seats are *server* indices throughout.
+export interface MatchSnapshot {
+  readonly room: string;
+  readonly members: readonly string[];
+  readonly yourSeat: number;
+  readonly handNumber: number;
+  readonly evens: number;
+  readonly odds: number;
+  readonly target: number;
+  readonly stage: "bidding" | "choosing-trump" | "playing" | "between-hands";
+  readonly highBid: { readonly value: number; readonly seat: number } | null;
+  readonly bidResult: { readonly value: number; readonly seat: number } | null;
+  readonly trumpSuit: Suit | null; // only revealed to the bidder pre-exposure
+  readonly trumpExposed: boolean;
+  readonly yourHand: readonly CardModel[];
+  readonly trickLeader: number;
+  readonly trick: ReadonlyArray<{ readonly seat: number; readonly card: CardModel }>;
+  readonly points: ReadonlyMap<number, number>; // seat → card points taken
+  readonly tricks: ReadonlyMap<number, number>; // seat → tricks taken
+  readonly lastResult: ServerEvent | null; // hand-result, between hands
+  readonly awaiting: number | null; // whose answer the server wants
+  readonly request: ServerEvent | null; // the pending request, when it is ours
+}
+
 export type ServerEvent =
   | { readonly _tag: "RoomCreated" }
   | { readonly _tag: "RoomJoined" }
@@ -125,6 +150,10 @@ export type ServerEvent =
       readonly odds: number;
       readonly hands: number;
     }
+  | { readonly _tag: "PlayerDisconnected"; readonly email: string; readonly graceSeconds: number }
+  | { readonly _tag: "PlayerReconnected"; readonly email: string }
+  | { readonly _tag: "GameSnapshot"; readonly snapshot: MatchSnapshot }
+  | { readonly _tag: "NoRunningGame" }
   | { readonly _tag: "ServerError"; readonly message: string }
   | { readonly _tag: "Disconnected" }
   | { readonly _tag: "Ignored"; readonly raw: string };
@@ -145,7 +174,12 @@ export function decodeServerEvent(frame: string): ServerEvent | null {
   } catch {
     return { _tag: "Ignored", raw: trimmed };
   }
+  return decodeServerExpr(expr, trimmed);
+}
 
+// Also used to decode messages embedded inside a game-snapshot (the pending
+// request, the between-hands result).
+export function decodeServerExpr(expr: SExpr, trimmed = writeSExpr(expr)): ServerEvent | null {
   if (isSym(expr, "room-created")) return { _tag: "RoomCreated" };
   if (isSym(expr, "room-joined")) return { _tag: "RoomJoined" };
   if (isSym(expr, "room-left")) return { _tag: "RoomLeft" };
@@ -283,6 +317,35 @@ export function decodeServerEvent(frame: string): ServerEvent | null {
       };
     }
 
+    case "player-disconnected": {
+      const email = rest[0];
+      const grace = rest[1];
+      if (!(typeof email === "string" || email instanceof Sym)) {
+        return { _tag: "Ignored", raw: trimmed };
+      }
+      return {
+        _tag: "PlayerDisconnected",
+        email: memberName(email),
+        graceSeconds: typeof grace === "number" ? grace : 0,
+      };
+    }
+
+    case "player-reconnected": {
+      const email = rest[0];
+      if (!(typeof email === "string" || email instanceof Sym)) {
+        return { _tag: "Ignored", raw: trimmed };
+      }
+      return { _tag: "PlayerReconnected", email: memberName(email) };
+    }
+
+    case "no-running-game":
+      return { _tag: "NoRunningGame" };
+
+    case "game-snapshot": {
+      const snapshot = decodeSnapshot(rest[0]);
+      return snapshot ? { _tag: "GameSnapshot", snapshot } : { _tag: "Ignored", raw: trimmed };
+    }
+
     case "match-over": {
       const body = rest[0];
       const winner = assocValue(body, "winner") ?? false;
@@ -306,6 +369,108 @@ export function decodeServerEvent(frame: string): ServerEvent | null {
   }
 }
 
+// (17 . 1) → { value, seat }; anything else → null
+function decodeBidPair(value: SExpr | undefined): { value: number; seat: number } | null {
+  if (value instanceof Pair && typeof value.car === "number" && typeof value.cdr === "number") {
+    return { value: value.car, seat: value.cdr };
+  }
+  return null;
+}
+
+// ((0 . 5) (1 . 0) …) → Map seat → number
+function decodeSeatMap(value: SExpr | undefined): Map<number, number> {
+  const map = new Map<number, number>();
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      if (entry instanceof Pair && typeof entry.car === "number" && typeof entry.cdr === "number") {
+        map.set(entry.car, entry.cdr);
+      }
+    }
+  }
+  return map;
+}
+
+function decodeSnapshot(body: SExpr | undefined): MatchSnapshot | null {
+  if (!Array.isArray(body)) return null;
+  const num = (key: string): number | null => {
+    const value = assocValue(body, key);
+    return typeof value === "number" ? value : null;
+  };
+  const room = assocValue(body, "room");
+  const members = assocValue(body, "members");
+  const stage = assocValue(body, "stage");
+  const yourSeat = num("your-seat");
+  const handNumber = num("hand-number");
+  const evens = num("evens");
+  const odds = num("odds");
+  const target = num("target");
+  const trickLeader = num("trick-leader");
+  if (
+    !(typeof room === "string" || room instanceof Sym) ||
+    !Array.isArray(members) || !(stage instanceof Sym) ||
+    yourSeat === null || handNumber === null || evens === null ||
+    odds === null || target === null || trickLeader === null
+  ) {
+    return null;
+  }
+  const stageName = stage.name;
+  if (
+    stageName !== "bidding" && stageName !== "choosing-trump" &&
+    stageName !== "playing" && stageName !== "between-hands"
+  ) {
+    return null;
+  }
+
+  const yourHandRaw = assocValue(body, "your-hand");
+  const yourHand: CardModel[] = [];
+  if (Array.isArray(yourHandRaw)) {
+    for (const card of yourHandRaw) yourHand.push(decodeCard(card));
+  }
+
+  const trickRaw = assocValue(body, "trick");
+  const trick: Array<{ seat: number; card: CardModel }> = [];
+  if (Array.isArray(trickRaw)) {
+    for (const play of trickRaw) {
+      if (play instanceof Pair && typeof play.car === "number") {
+        trick.push({ seat: play.car, card: decodeCard(play.cdr) });
+      }
+    }
+  }
+
+  const lastResultRaw = assocValue(body, "last-result");
+  const lastResult = Array.isArray(lastResultRaw)
+    ? decodeServerExpr([sym("hand-result"), lastResultRaw])
+    : null;
+
+  const requestRaw = assocValue(body, "request");
+  const request = Array.isArray(requestRaw) ? decodeServerExpr(requestRaw) : null;
+
+  const awaitingRaw = assocValue(body, "awaiting");
+
+  return {
+    room: memberName(room),
+    members: members.map(memberName),
+    yourSeat,
+    handNumber,
+    evens,
+    odds,
+    target,
+    stage: stageName,
+    highBid: decodeBidPair(assocValue(body, "high-bid")),
+    bidResult: decodeBidPair(assocValue(body, "bid-result")),
+    trumpSuit: decodeSuit(assocValue(body, "trump") ?? false),
+    trumpExposed: assocValue(body, "trump-exposed") === true,
+    yourHand,
+    trickLeader,
+    trick,
+    points: decodeSeatMap(assocValue(body, "points")),
+    tricks: decodeSeatMap(assocValue(body, "tricks")),
+    lastResult: lastResult && lastResult._tag !== "Ignored" ? lastResult : null,
+    awaiting: typeof awaitingRaw === "number" ? awaitingRaw : null,
+    request: request && request._tag !== "Ignored" ? request : null,
+  };
+}
+
 // --- client commands ---
 
 export type ClientCommand =
@@ -327,7 +492,9 @@ export type ClientCommand =
   | { readonly _tag: "SelectTrump"; readonly email: string; readonly suit: Suit }
   | { readonly _tag: "PlayCard"; readonly email: string; readonly card: CardModel }
   | { readonly _tag: "ExposeTrump"; readonly email: string }
-  | { readonly _tag: "NextHand"; readonly email: string };
+  | { readonly _tag: "NextHand"; readonly email: string }
+  | { readonly _tag: "LeaveGame"; readonly email: string }
+  | { readonly _tag: "Rejoin"; readonly email: string };
 
 export function encodeCommand(command: ClientCommand): string {
   switch (command._tag) {
@@ -368,5 +535,9 @@ export function encodeCommand(command: ClientCommand): string {
       return writeSExpr([sym("card-played"), command.email, sym("expose-trump")]);
     case "NextHand":
       return writeSExpr([sym("next-hand"), command.email]);
+    case "LeaveGame":
+      return writeSExpr([sym("leave-game"), command.email]);
+    case "Rejoin":
+      return writeSExpr([sym("rejoin"), command.email]);
   }
 }

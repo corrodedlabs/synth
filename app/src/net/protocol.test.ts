@@ -168,6 +168,85 @@ describe("decodeServerEvent", () => {
     });
   });
 
+  it("decodes the reconnection flow", () => {
+    expect(decodeServerEvent('(player-disconnected "a@x" 45)')).toEqual({
+      _tag: "PlayerDisconnected",
+      email: "a@x",
+      graceSeconds: 45,
+    });
+    expect(decodeServerEvent('(player-reconnected "a@x")')).toEqual({
+      _tag: "PlayerReconnected",
+      email: "a@x",
+    });
+    expect(decodeServerEvent("(no-running-game)")).toEqual({ _tag: "NoRunningGame" });
+  });
+
+  it("decodes a mid-hand snapshot", () => {
+    // exact shape the server's rejoin-snapshot prints (verified via racket)
+    const frame =
+      '(game-snapshot ((room . my-room) (members "j3" "j2" "me@x" "host@x") (your-seat . 2)' +
+      " (hand-number . 2) (evens . -2) (odds . 1) (target . 6) (stage . playing)" +
+      " (high-bid . #f) (bid-result 17 . 1) (trump . #f) (trump-exposed . #f)" +
+      " (your-hand #s(card jack 7 club 3) #s(card seven 0 heart 0)) (trick-leader . 0)" +
+      " (trick (0 . #s(card ace 5 heart 1))) (points (0 . 3) (1 . 0) (2 . 4) (3 . 0))" +
+      " (tricks (0 . 1) (1 . 0) (2 . 1) (3 . 0)) (last-result . #f) (awaiting . 2)" +
+      " (request play-card (cards-played #s(card ace 5 heart 1))" +
+      " (game-state (trump-suit . #f) (first-suit . heart)))))";
+    const event = decodeServerEvent(frame);
+    expect(event?._tag).toBe("GameSnapshot");
+    if (event?._tag !== "GameSnapshot") return;
+    const s = event.snapshot;
+    expect(s.room).toBe("my-room");
+    expect(s.members).toEqual(["j3", "j2", "me@x", "host@x"]);
+    expect(s.yourSeat).toBe(2);
+    expect(s.handNumber).toBe(2);
+    expect(s.evens).toBe(-2);
+    expect(s.odds).toBe(1);
+    expect(s.stage).toBe("playing");
+    expect(s.highBid).toBeNull();
+    expect(s.bidResult).toEqual({ value: 17, seat: 1 });
+    expect(s.trumpSuit).toBeNull();
+    expect(s.trumpExposed).toBe(false);
+    expect(s.yourHand.map((card) => card.id)).toEqual(["clubs-J", "hearts-7"]);
+    expect(s.trick).toEqual([{ seat: 0, card: { id: "hearts-A", suit: "hearts", rank: "A" } }]);
+    expect(s.points.get(0)).toBe(3);
+    expect(s.points.get(2)).toBe(4);
+    expect(s.tricks.get(0)).toBe(1);
+    expect(s.lastResult).toBeNull();
+    expect(s.awaiting).toBe(2);
+    expect(s.request).toEqual({
+      _tag: "PlayRequested",
+      cardsPlayed: [{ id: "hearts-A", suit: "hearts", rank: "A" }],
+      trumpSuit: null,
+      firstSuit: "hearts",
+    });
+  });
+
+  it("decodes a between-hands snapshot with its result", () => {
+    const frame =
+      '(game-snapshot ((room . my-room) (members "j3" "j2" "me@x" "host@x") (your-seat . 3)' +
+      " (hand-number . 1) (evens . 1) (odds . 0) (target . 6) (stage . between-hands)" +
+      " (high-bid 16 . 0) (bid-result 16 . 0) (trump . diamond) (trump-exposed . #t)" +
+      " (your-hand) (trick-leader . 3) (trick) (points (0 . 10) (1 . 6) (2 . 9) (3 . 3))" +
+      " (tricks (0 . 3) (1 . 2) (2 . 2) (3 . 1))" +
+      " (last-result (hand . 1) (bidder . 0) (bid . 16) (made . #t) (delta . 1)" +
+      " (evens . 1) (odds . 0) (target . 6)) (awaiting . #f) (request . #f)))";
+    const event = decodeServerEvent(frame);
+    expect(event?._tag).toBe("GameSnapshot");
+    if (event?._tag !== "GameSnapshot") return;
+    const s = event.snapshot;
+    expect(s.stage).toBe("between-hands");
+    expect(s.yourHand).toEqual([]);
+    expect(s.trick).toEqual([]);
+    expect(s.trumpSuit).toBe("diamonds");
+    expect(s.awaiting).toBeNull();
+    expect(s.request).toBeNull();
+    expect(s.lastResult).toEqual({
+      _tag: "HandResult",
+      hand: 1, bidder: 0, bid: 16, made: true, delta: 1, evens: 1, odds: 0, target: 6,
+    });
+  });
+
   it("passes unknown frames through as Ignored", () => {
     expect(decodeServerEvent("(done)")).toEqual({ _tag: "Ignored", raw: "(done)" });
     expect(decodeServerEvent("invalid-request")).toEqual({ _tag: "Ignored", raw: "invalid-request" });
@@ -215,6 +294,8 @@ describe("encodeCommand", () => {
     ).toBe('(card-played "a@b" #s(card jack 7 club 3))');
     expect(encodeCommand({ _tag: "ExposeTrump", email: "a@b" })).toBe('(card-played "a@b" expose-trump)');
     expect(encodeCommand({ _tag: "NextHand", email: "a@b" })).toBe('(next-hand "a@b")');
+    expect(encodeCommand({ _tag: "LeaveGame", email: "a@b" })).toBe('(leave-game "a@b")');
+    expect(encodeCommand({ _tag: "Rejoin", email: "a@b" })).toBe('(rejoin "a@b")');
   });
 
   it("uses sym helper consistently", () => {

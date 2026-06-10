@@ -115,7 +115,10 @@ export type GameAction =
       readonly us: number;
       readonly them: number;
       readonly hands: number;
-    };
+    }
+  // a reconnect: the session rebuilds the entire model from the server's
+  // mid-match snapshot and swaps it in wholesale
+  | { readonly _tag: "SnapshotRestored"; readonly model: GameModel };
 
 export const initialGameModel: GameModel = {
   phase: "idle",
@@ -303,6 +306,9 @@ export function gameReducer(state: GameModel, action: GameAction): GameModel {
         activePlayer: null,
         pendingRequest: null,
       };
+
+    case "SnapshotRestored":
+      return action.model;
   }
 }
 

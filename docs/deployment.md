@@ -84,10 +84,17 @@ cd app && VITE_SERVER_URL=ws://localhost:8080/test npm run build && npm run prev
   kicked, or when their table closes.
 - There is still no auth: identity is the self-reported email the client
   generates. Fine for a friendly game server; do not store anything sensitive.
-- No reconnection mid-game yet — a refresh abandons the match. The server
-  notices the dead socket within ~1s (every wait watches all four seats),
-  aborts the game (`game-aborted`), releases the bots, and the remaining
-  humans are returned to the start screen.
-- Leaving deliberately works the same way: the in-game "leave match" corner
-  button (two-step confirm) closes the leaver's socket and resets their page
-  to a working start screen — no protocol message involved.
+- Mid-game reconnection: a refreshed or briefly dropped player has
+  `RECONNECT-GRACE` seconds (default 45) to come back. Their identity lives
+  in localStorage, so the reloaded page auto-rejoins: the server rebinds the
+  seat's socket and replies to `(rejoin <email>)` with a live snapshot
+  (hand, trick, scores, whose turn, pending request). Everyone else sees
+  "X lost connection… / X is back" in the status line and play simply
+  resumes. The server notices a dead socket within ~1s (every wait watches
+  all four seats); only when the grace expires does it abort the game
+  (`game-aborted`), release the bots, and return the remaining humans to
+  the start screen.
+- Leaving deliberately skips the grace: the in-game "leave match" corner
+  button (two-step confirm) sends `(leave-game <email>)`, which aborts the
+  match for the whole table at once, then resets the leaver's page to a
+  working start screen.
