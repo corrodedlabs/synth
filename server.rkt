@@ -279,18 +279,22 @@
            (cons players1 remaining-deck))])))
 
   ;; next message of the expected kind from this player's channel; other
-  ;; messages are dropped. Raises if the player's socket dies while we wait,
-  ;; which aborts the running game instead of hanging it forever.
+  ;; messages are dropped. Raises if any watched player's socket dies while
+  ;; we wait — not just the one we are waiting on, so a player who leaves
+  ;; or drops while someone else is thinking aborts the game within a
+  ;; second instead of when their own turn comes round.
   (define receive-datum
-    (λ (player expected-tag)
+    (λ (player expected-tag (watched (list player)))
       (let loop ()
         (let ([message (sync/timeout 1 (user-comm player))])
           (cond
             [(not message)
-             (if (ws-conn-closed? (user-connection player))
-                 (error 'receive-datum
-                        (format "player ~a disconnected" (user-email player)))
-                 (loop))]
+             (let ([gone (findf (λ (p) (ws-conn-closed? (user-connection p)))
+                                watched)])
+               (if gone
+                   (error 'receive-datum
+                          (format "player ~a disconnected" (user-email gone)))
+                   (loop)))]
             [(and (pair? message) (equal? (car message) expected-tag))
              message]
             [else
@@ -305,7 +309,7 @@
                        (let ((player (list-ref players player-index)))
                          (send-datum-to-all players `(turn ,player-index))
                          (send-datum player `(request-bid ,min-bid))
-                         (caddr (receive-datum player 'put-bid))))
+                         (caddr (receive-datum player 'put-bid players))))
                      (λ (player-index bid-value)
                        (send-datum-to-all players
                                           `(bid-placed ,player-index ,bid-value)))
@@ -319,7 +323,8 @@
     (λ (players player-index)
       (let* ((bidder (list-ref players player-index)))
         (send-datum bidder '(choose-trump))
-        (let ([selected-trump-suit (caddr (receive-datum bidder 'selected-trump))])
+        (let ([selected-trump-suit
+               (caddr (receive-datum bidder 'selected-trump players))])
           (send-datum-to-all players '(trump-selected))
           selected-trump-suit))))
 
@@ -343,7 +348,7 @@
                                  (send-datum player
                                              `(play-card . ((cards-played . ,cards-in-round)
                                                             (game-state . ,game-state))))
-                                 (caddr (receive-datum player 'card-played))))
+                                 (caddr (receive-datum player 'card-played players))))
                              ;; broadcast accepted plays only — clients
                              ;; render every played message they see
                              #:notify-play

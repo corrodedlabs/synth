@@ -33,10 +33,11 @@
 ;; A deterministic human stand-in: bids 16 when opening and passes every
 ;; raise, picks diamond as trump, always plays the first valid card. Every
 ;; parsed server message lands in `events` (oldest first) for assertions.
+;; Tags in `mute` are recorded but never answered — a player gone AFK.
 
 (struct scripted (email connection events))
 
-(define (spawn-scripted email connection)
+(define (spawn-scripted email connection #:mute (mute '()))
   (define events (box '()))
   (define hand (box '()))
   (define (record! message)
@@ -50,7 +51,7 @@
            ((not message) (loop))
            (else
             (record! message)
-            (when (pair? message)
+            (when (and (pair? message) (not (memq (car message) mute)))
               (case (car message)
                 ((hand)
                  (set-box! hand (append (unbox hand) (caddr message))))
@@ -78,8 +79,8 @@
 
 ;; connects four scripted users and seats them at a new table; returns them
 ;; in *seat order* — the server seats the newest joiner first and the host
-;; last, so (list seat0 seat1 seat2 host)
-(define (seat-scripted-table table-name emails)
+;; last, so (list seat0 seat1 seat2 host). mute maps email -> muted tags.
+(define (seat-scripted-table table-name emails #:mute (mute (hash)))
   (match-let (((list host-email join1 join2 join3) emails))
     (define (fresh email)
       (let ((connection (connect-to-ws)))
@@ -96,7 +97,8 @@
                              joiner))
                          (list join1 join2 join3))))
         ;; seats: 0 = last joiner … 3 = host
-        (map (λ (pair) (spawn-scripted (car pair) (cdr pair)))
+        (map (λ (pair) (spawn-scripted (car pair) (cdr pair)
+                                       #:mute (hash-ref mute (car pair) '())))
              (reverse (cons host joined)))))))
 
 (define (close-scripted! player)
@@ -247,6 +249,30 @@
                                   (findf (tagged 'game-aborted) events))
                           #:label 'host-game-aborted))
        (for-each close-scripted! (remove host players))
+       (sleep 1.5)))
+
+   ;; leaving (= closing the socket) while someone ELSE is being waited on
+   ;; must still abort promptly: every wait watches all four seats, not
+   ;; just the player whose turn it is
+   (test-begin
+     (let* ((players (seat-scripted-table
+                      'leave-room
+                      '(leave-host leave-j1 leave-j2 leave-j3)
+                      ;; seat 0 (the last joiner) goes AFK on the opening
+                      ;; bid, parking the game thread on their channel
+                      #:mute (hash 'leave-j3 '(request-bid))))
+            (host (last players))
+            (afk (first players))
+            (leaver (caddr players))) ; seat 2, never the active player here
+       (send-msg (scripted-connection host) '(start-game leave-room))
+       (await afk (λ (events) (findf (tagged 'request-bid) events))
+              #:label 'afk-asked)
+       (close-scripted! leaver)
+       (check-pred pair?
+                   (await host (λ (events) (findf (tagged 'game-aborted) events))
+                          #:timeout 10
+                          #:label 'leaver-aborts-promptly))
+       (for-each close-scripted! (remove leaver players))
        (sleep 1.5)))
 
    ;; MATCH-TARGET=0 ends the match after exactly one hand, whatever the
