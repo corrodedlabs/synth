@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Real-time 28 card game with a Racket WebSocket server and a Vite + BabylonJS TypeScript frontend.
+Real-time 28 card game with a Racket WebSocket server and a Vite + Three.js TypeScript frontend. Deployed: frontend on Netlify (`netlify deploy --build --prod` from repo root), backend on fly.io (`fly deploy --remote-only`) — see `docs/deployment.md`.
 
 ## Vendored Repositories
 
@@ -27,8 +27,60 @@ External repositories may be vendored under `repos/` for agent reference.
 ### Frontend (from `app/`)
 - `npm run dev` — Vite dev server with HMR
 - `npm run build` — typecheck (tsc) + production build
-- No lint or unit test runner is configured for the frontend
+- `npm test` — vitest unit suite (s-expression codec, protocol)
 - Effect is available in the frontend via the `effect` npm package
+
+## Testing
+
+Three layers; run all of them after non-trivial changes.
+
+1. **Unit** — `cd app && npm test` (vitest: sexpr/protocol codecs).
+2. **Server integration** — `raco test -t tests.rkt` (boots a server on port
+   18081 so it never collides with a dev server).
+3. **Browser end-to-end** — Playwright scripts under `app/scripts/`, run from
+   `app/` with both servers up (`racket server.rkt --port 8082` and
+   `npm run dev -- --port 5179`; pass the page URL as the argument).
+   **Run these headed (`HEADED=1`) by default** — a visible browser window —
+   so layout/positioning problems are actually seen; drop the flag only in
+   CI or sandboxes without a display:
+
+   ```sh
+   HEADED=1 node scripts/play-game.mjs           "http://localhost:5179/?port=8082"
+   HEADED=1 node scripts/play-multiplayer.mjs    "http://localhost:5179/?port=8082"
+   HEADED=1 node scripts/test-lobby-controls.mjs "http://localhost:5179/?port=8082"
+   HEADED=1 node scripts/test-multi-tables.mjs   "http://localhost:5179/?port=8082"
+   ```
+
+   - `play-game.mjs` — one human + 3 bots: lobby → bid → trump → all 8 tricks
+     → result; first plays use real drag/click gestures.
+   - `play-multiplayer.mjs` — two browser pages play one table to completion.
+   - `test-lobby-controls.mjs` — kick bot/human, leave, close table,
+     disconnect cleanup.
+   - `test-multi-tables.mjs` — several concurrent tables, room browser, join.
+   - All four honour `HEADED=1`. Screenshots land in `/tmp/game-shots*`;
+     scripts exit non-zero on console errors. Any new test script must follow
+     the same pattern (`headless: !process.env.HEADED`).
+   - Inspect the screenshots after a run — they're the positioning record
+     (hand fan, trick cross, seat name labels, overlays).
+
+### Multi-user testing pattern
+
+Simulate N users by opening N pages from one `chromium` instance — each page
+is an independent user (own websocket, own identity):
+
+```js
+const page = await browser.newPage();
+await page.goto(url);
+await page.fill("#player-name", "Asha");
+await page.click("#create-button");        // or #browse-button + .room-row button
+```
+
+Drive decisions through the `window.__game` debug bridge instead of 3D
+gestures: `state()` (the reducer model — poll it with `waitForFunction`),
+`legalCards()`, `play(id)`, `bid(n)`, `pass()`, `trump(suit)`, `expose()`,
+`addBot()`, `startGame()`, `leaveTable()`, `kick(member)`, `roomName()`.
+Launch with `channel: "chrome"` locally (`/usr/bin/chromium` in CI sandboxes)
+and `--enable-unsafe-swiftshader --use-angle=swiftshader` for headless WebGL.
 
 ## Architecture
 
@@ -57,11 +109,23 @@ All communication uses s-expressions over WebSocket text frames:
 - Dispatch in `server.rkt` uses `case` on the leading symbol
 - User-scoped messages include email as first argument
 
-### Frontend (TypeScript/BabylonJS)
+### Frontend (TypeScript/Three.js)
 
-- `app/src/app.ts` — Canvas creation, Babylon engine/scene init, render loop, debug inspector toggle (Shift+Ctrl+Alt+I)
-- `app/src/gameScene.ts` — Scene mesh construction (currently minimal)
-- `app/src/socketService.ts`, `app/src/gameRoom.ts` — Placeholders for WebSocket client and room state
+Server events drive a pure reducer; rendering reacts to dispatched actions
+(no rules are implemented client-side — the server is the authority):
+
+- `app/src/net/` — `sexpr.ts` (s-expression codec), `protocol.ts` (typed
+  `ServerEvent`/`ClientCommand` ↔ s-expr), `SocketService.ts` (Effect-based
+  WebSocket client exposing an event `Queue`)
+- `app/src/game/` — `GameModel.ts` (reducer + model), `GameSession.ts`
+  (Effect program: lobby ops, event loop, seat translation, heartbeat),
+  `GameState.ts` (dispatch → Three.js/DOM rendering), `Card.ts`/`Hand.ts`/
+  `PlayArea.ts` (scene objects), `MockGameProgram.ts` (`?mock=1` offline mode)
+- `app/src/ui/UiOverlay.ts` — DOM overlay: start screen, room browser, lobby,
+  bid/trump panels, help overlay
+- `app/src/main.ts` — bootstrapping plus the `window.__game` debug bridge
+  used by the Playwright suites
+- URL params: `?port=`/`?server=` (game server), `?mock=1`, `?debug`
 
 ## Code Style
 
