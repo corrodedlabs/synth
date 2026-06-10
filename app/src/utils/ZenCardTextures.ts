@@ -18,13 +18,15 @@ export class ZenCardTextures {
   private readonly ROWS = 4;   // hearts, diamonds, clubs, spades
   
   // Rank order in sprite sheet (left to right)
-  // Index 3 is the suit symbol (skipped during slicing)
-  private readonly RANK_ORDER = ['J', '9', 'A', null, '10', 'K', 'Q', '9b', '8', '7'];
+  // Index 3 is the suit symbol (skipped during slicing).
+  // Index 7 holds a second 9 — corrupted in the hearts row (its corner
+  // indices read "8") and digit-less elsewhere, so it is never sliced.
+  private readonly RANK_ORDER = ['J', '9', 'A', null, '10', 'K', 'Q', null, '8', '7'];
 
   // The spades row is laid out differently: there is no J♠ art at all —
   // cols 0 and 2 are plain pip cards and the ace sits at col 3.
   // 'J*' marks the pip card used as the base for a painted-on J.
-  private readonly RANK_ORDER_SPADES = ['J*', '9', null, 'A', '10', 'K', 'Q', '9b', '8', '7'];
+  private readonly RANK_ORDER_SPADES = ['J*', '9', null, 'A', '10', 'K', 'Q', null, '8', '7'];
   
   // Suit order in sprite sheet (top to bottom)
   private readonly SUIT_ORDER = ['hearts', 'diamonds', 'clubs', 'spades'];
@@ -140,6 +142,12 @@ export class ZenCardTextures {
           this.paintJackOverlay(ctx, cardWidth, cardHeight);
         }
 
+        // Only the hearts 9 has corner rank digits in the sheet; the other
+        // suits' 9s carry bare pips — ink the missing digits in.
+        if (rankKey === '9' && suit !== 'hearts') {
+          this.paintNineIndices(ctx, cardWidth, cardHeight);
+        }
+
         // Add rough brush-like edges for zen aesthetic
         this.addBrushEdges(ctx, cardWidth, cardHeight);
 
@@ -215,6 +223,24 @@ export class ZenCardTextures {
     ctx.textBaseline = 'middle';
     ctx.font = `italic ${Math.floor(height * 0.55)}px "Cormorant Garamond", "Times New Roman", serif`;
     ctx.fillText('J', width / 2, height * 0.52);
+    ctx.restore();
+  }
+
+  /**
+   * Paints corner "9" digits next to the bare corner pips, in the same
+   * hand-inked style as the rest of the deck: below the top-left pip, and
+   * rotated 180° above the bottom-right pip (standard card index convention).
+   */
+  private paintNineIndices(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+    ctx.save();
+    ctx.fillStyle = 'rgba(32, 29, 26, 0.92)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `${Math.floor(height * 0.16)}px "Cormorant Garamond", "Times New Roman", serif`;
+    ctx.fillText('9', width * 0.13, height * 0.285);
+    ctx.translate(width * 0.87, height * 0.715);
+    ctx.rotate(Math.PI);
+    ctx.fillText('9', 0, 0);
     ctx.restore();
   }
 
