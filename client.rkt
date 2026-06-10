@@ -92,10 +92,14 @@
                                   (hand (append (state-hand client-state) new-cards)))
                      (receive-data connection))))
             ((request-bid)
-             (let ((current-bid (cadr server-msg)))
+             ;; the server sends the lowest acceptable bid (16 when opening).
+             ;; Take it while it is modest, pass once the auction runs hot —
+             ;; chasing every raise used to guarantee the bot team got set,
+             ;; which made matches against bots unwinnable *and* unlosable.
+             (let ((min-bid (cadr server-msg)))
                (send-data (state-user client-state)
                           (list 'put-bid
-                                (if (< current-bid 27) (+ current-bid 1) 'pass)))
+                                (if (<= min-bid 20) min-bid 'pass)))
                (loop client-state
                      (receive-data connection))))
             ((bid-result)
