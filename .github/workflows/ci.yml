@@ -28,6 +28,8 @@ jobs:
         run: raco pkg install --auto --batch --no-docs rfc6455
       - name: Game logic unit tests
         run: raco test game.rkt
+      - name: Bot heuristic unit tests
+        run: raco test client.rkt
       - name: Server integration tests
         run: raco test -t tests.rkt
 

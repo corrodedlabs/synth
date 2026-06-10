@@ -118,6 +118,15 @@
 
   (define *bot-counter* (box 0))
 
+  ;; every dispatch runs on its own thread, so two "add a bot" requests can
+  ;; race; a compare-and-set keeps the names unique
+  (define (next-bot-number!)
+    (let retry ()
+      (let ((n (unbox *bot-counter*)))
+        (if (box-cas! *bot-counter* n (add1 n))
+            (add1 n)
+            (retry)))))
+
   ;; bots dial back into the server as clients. Their sockets and AI threads
   ;; are created while dispatching a message from the host's websocket, and
   ;; web-server shuts down each connection's custodian on disconnect — so
@@ -127,10 +136,8 @@
   (define create-bot-user
     (lambda ()
       (parameterize ((current-custodian *bot-custodian*))
-        (let* ((n (add1 (unbox *bot-counter*)))
-               (bot-name (string->symbol (format "bot-~a" n)))
+        (let* ((bot-name (string->symbol (format "bot-~a" (next-bot-number!))))
                (connection (connect-to-ws)))
-          (set-box! *bot-counter* n)
           (connect-user connection bot-name)
           (spawn-bot bot-name connection)
           (get-user-by-email bot-name))))))
@@ -188,17 +195,25 @@
                (equal? room-name (game-room-name room)))
              (hash-values *game-rooms*))))
 
-  ;; adds user to room's member controlled by host
-  ;; returns the members of the game room
+  ;; concurrent joins (three "add a bot" clicks land on three dispatch
+  ;; threads) must not lose each other's seat: the read-modify-write is
+  ;; serialized and always reads the room's current members
+  (define *join-lock* (make-semaphore 1))
+
+  ;; adds user to room's member list; returns the updated members
   (define add-user-to-game-room
     (λ (room user)
       (match room
-        [(game-room host name members)
-         (let ((new-members (cons user members)))
-           (hash-update! *game-rooms* (user-email host)
-                         (λ (room-details)
-                           (game-room host name new-members)))
-           new-members)])))
+        [(game-room host _ _)
+         (call-with-semaphore
+          *join-lock*
+          (λ ()
+            (hash-update! *game-rooms* (user-email host)
+                          (λ (current)
+                            (match current
+                              ((game-room host name members)
+                               (game-room host name (cons user members))))))
+            (game-room-members (hash-ref *game-rooms* (user-email host)))))])))
 
   (define add-bot-to-game-room
     (lambda (room-name)

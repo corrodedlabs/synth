@@ -22,6 +22,7 @@ External repositories may be vendored under `repos/` for agent reference.
 - `racket server.rkt` — start WebSocket server on port 8081
 - `racket server.rkt --port 9000` — custom port
 - `raco test game.rkt` — run game-logic unit tests (rackunit submodule)
+- `raco test client.rkt` — run bot-heuristic unit tests
 - `raco test -t tests.rkt` — run integration tests
 - `racket client.rkt` — run bot simulation helpers
 
@@ -38,7 +39,8 @@ Four layers; run all of them after non-trivial changes. CI
 suites, headless — on each push.
 
 1. **Game logic unit** — `raco test game.rkt` (rackunit: dealing, bidding,
-   trick resolution incl. trump-exposure timing, scoring).
+   trick resolution incl. trump-exposure timing, scoring) and
+   `raco test client.rkt` (bot bidding/trump/play heuristics).
 2. **Frontend unit** — `cd app && npm test` (vitest: sexpr/protocol codecs,
    game model reducer and play-legality rules).
 3. **Server integration** — `raco test -t tests.rkt` (boots a server on port
@@ -115,7 +117,7 @@ Three main files with clear responsibilities:
   - **Room module**: `game-room` serializable struct (host, name, members), global `*game-rooms*` hash keyed by host email
   - **Game module**: orchestrates a whole match per table — hand N's opener/leader is seat (N−1) mod 4, `hand-result` broadcasts game points after every hand, the game thread then blocks until the host sends `(next-hand <email>)`, and `match-over` ends it (target 6; the `MATCH-TARGET` env var shortens matches in tests). A dropped player keeps their seat for `RECONNECT-GRACE` seconds (default 45): `connect-user` with the same email rebinds the seat's socket, `(rejoin <email>)` returns a `game-snapshot` built from the live `match-state` shadow the game thread maintains, and `player-disconnected`/`player-reconnected` keep the table informed. Grace expiry, a dead bot, or an explicit `(leave-game <email>)` aborts via `game-aborted`. Spawns threads for long-running game operations, uses Racket channels for async player communication
 
-- **`client.rkt`** — Bot client with `state` struct (user, hand, bid-value, selected-trump). `client-lambda` is the main bot AI loop. `simulate-game` runs a full 4-player game for testing.
+- **`client.rkt`** — Bot client. `client-lambda` is the AI loop; per-hand memory lives in the `state` struct (hand, known trump, exposure, cards seen, must-trump obligation). The heuristics are pure, unit-tested helpers: `bid-appetite`/`choose-bid` (expected team points ≈ 14 + P/2 from the first four cards, long-suit bonus, never past 21; the opener always bids), `choose-trump-suit` (longest suit, points break ties), and `choose-play` (cheapest sufficient winner, feed a winning partner, dump low value saving tens, ruff rich tricks, call the exposure when void on a worthwhile trick, lead boss cards tracked against `seen`). `simulate-game` runs a full 4-player game for testing.
 
 ### Concurrency Model
 

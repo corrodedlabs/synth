@@ -39,7 +39,8 @@
 
 (define (spawn-scripted email connection
                         #:mute (mute '())
-                        #:initial-hand (initial-hand '()))
+                        #:initial-hand (initial-hand '())
+                        #:auto-next? (auto-next? #f))
   (define events (box '()))
   (define hand (box initial-hand))
   (define (record! message)
@@ -57,6 +58,10 @@
               (case (car message)
                 ((hand)
                  (set-box! hand (append (unbox hand) (caddr message))))
+                ((hand-result)
+                 ;; a hosting script can keep the match moving by itself
+                 (when auto-next?
+                   (send-msg connection `(next-hand ,email))))
                 ((request-bid)
                  (let ((min-bid (cadr message)))
                    (send-msg connection
@@ -378,6 +383,36 @@
          (check-equal? (cdr (assoc 'evens body)) (result-ref result 'evens))
          (check-equal? (cdr (assoc 'odds body)) (result-ref result 'odds)))
        (for-each close-scripted! players))
+     (putenv "MATCH-TARGET" ""))
+
+   ;; a match against real bots must actually END now that they bid by
+   ;; hand strength — the old always-chase bots were set every hand, so
+   ;; their score only fell and no target was ever reached
+   (test-begin
+     (putenv "MATCH-TARGET" "2")
+     (let ((connection (connect-to-ws)))
+       (connect-user connection 'botmatch-host)
+       (check-equal? (create-room connection 'botmatch-host 'botmatch-room)
+                     'room-created)
+       (let ((host (spawn-scripted 'botmatch-host connection #:auto-next? #t)))
+         (for-each (λ (_) (send-msg connection '(add-bot-to-room botmatch-room)))
+                   '(1 2 3))
+         (await host
+                (λ (events)
+                  (findf (λ (m) (and (pair? m)
+                                     (eq? (car m) 'room-members)
+                                     (= (length (caddr m)) 4)))
+                         events))
+                #:label 'bots-seated)
+         (send-msg connection '(start-game botmatch-room))
+         (let ((over (await host
+                            (λ (events) (findf (tagged 'match-over) events))
+                            #:timeout 120
+                            #:label 'bot-match-over)))
+           (check-true (<= (cdr (assoc 'hands (cadr over))) 30)
+                       "a target-2 bot match ends within 30 hands"))
+         (close-scripted! host)
+         (sleep 1)))
      (putenv "MATCH-TARGET" ""))
 
    ;; stop server after tests
