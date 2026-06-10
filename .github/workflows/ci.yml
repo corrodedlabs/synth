@@ -1,0 +1,120 @@
+# All four test layers (CLAUDE.md "Testing"): game-logic unit, frontend
+# unit + build, server integration, and the headless browser end-to-end
+# suites against real servers.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Racket unit + integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Bogdanp/setup-racket@v1.14
+        with:
+          architecture: x64
+          distribution: full
+          variant: CS
+          version: "8.11"
+      - name: Install server dependencies
+        run: raco pkg install --auto --batch --no-docs rfc6455
+      - name: Game logic unit tests
+        run: raco test game.rkt
+      - name: Server integration tests
+        run: raco test -t tests.rkt
+
+  frontend:
+    name: Frontend unit + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+        working-directory: app
+      - run: npm test
+        working-directory: app
+      - run: npm run build
+        working-directory: app
+
+  e2e:
+    name: Browser end-to-end
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Bogdanp/setup-racket@v1.14
+        with:
+          architecture: x64
+          distribution: full
+          variant: CS
+          version: "8.11"
+      - name: Install server dependencies
+        run: raco pkg install --auto --batch --no-docs rfc6455
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+        working-directory: app
+      # The scripts launch /usr/bin/chromium when it exists, else Playwright's
+      # "chrome" channel. Guarantee the first path on any runner image.
+      - name: Ensure a browser the scripts can find
+        run: |
+          if [ ! -e /usr/bin/chromium ]; then
+            if command -v google-chrome >/dev/null 2>&1; then
+              sudo ln -s "$(command -v google-chrome)" /usr/bin/chromium
+            else
+              (cd app && npx playwright install --with-deps chromium)
+              sudo ln -s "$(cd app && node -e 'console.log(require("playwright").chromium.executablePath())')" /usr/bin/chromium
+            fi
+          fi
+      - name: Boot the game and dev servers
+        run: |
+          racket server.rkt --port 8082 > /tmp/game-server.log 2>&1 &
+          npm --prefix app run dev -- --port 5179 --strictPort > /tmp/vite.log 2>&1 &
+          for i in $(seq 1 60); do nc -z localhost 8082 && break; sleep 1; done
+          for i in $(seq 1 60); do curl -sf http://localhost:5179/ > /dev/null && break; sleep 1; done
+          nc -z localhost 8082
+          curl -sf http://localhost:5179/ > /dev/null
+      - name: play-game
+        working-directory: app
+        run: node scripts/play-game.mjs "http://localhost:5179/?port=8082"
+      - name: play-multiplayer
+        working-directory: app
+        run: node scripts/play-multiplayer.mjs "http://localhost:5179/?port=8082"
+      - name: test-match
+        working-directory: app
+        run: node scripts/test-match.mjs "http://localhost:5179/?port=8082"
+      - name: test-lobby-controls
+        working-directory: app
+        run: node scripts/test-lobby-controls.mjs "http://localhost:5179/?port=8082"
+      - name: test-multi-tables
+        working-directory: app
+        run: node scripts/test-multi-tables.mjs "http://localhost:5179/?port=8082"
+      - name: test-mobile
+        working-directory: app
+        run: node scripts/test-mobile.mjs "http://localhost:5179/?port=8082"
+      - name: Upload screenshots and server logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-debug
+          path: |
+            /tmp/game-shots*
+            /tmp/game-server.log
+            /tmp/vite.log

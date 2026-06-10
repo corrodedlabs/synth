@@ -33,7 +33,9 @@ External repositories may be vendored under `repos/` for agent reference.
 
 ## Testing
 
-Four layers; run all of them after non-trivial changes.
+Four layers; run all of them after non-trivial changes. CI
+(`.github/workflows/ci.yml`) runs every layer — including the browser
+suites, headless — on each push.
 
 1. **Game logic unit** — `raco test game.rkt` (rackunit: dealing, bidding,
    trick resolution incl. trump-exposure timing, scoring).
