@@ -116,7 +116,7 @@ let shotTrick = false;
 const deadline = Date.now() + 180_000;
 while (Date.now() < deadline) {
   const snapshot = await state();
-  if (snapshot.phase === "finished") break;
+  if (snapshot.phase === "hand-finished") break;
 
   if (snapshot.hand.length === 8 && !shotHand) {
     await page.waitForTimeout(700);
@@ -168,7 +168,7 @@ while (Date.now() < deadline) {
 }
 
 const final = await state();
-check("game finished on mobile", final.phase === "finished");
+check("hand finished on mobile", final.phase === "hand-finished");
 check(`cards played by real taps (${tappedPlays}/8)`, tappedPlays >= 6);
 await checkFits("#result-panel", "result panel");
 await shot("06-result");

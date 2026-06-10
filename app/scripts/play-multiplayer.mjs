@@ -101,7 +101,8 @@ const playLoop = async (label, page) => {
       console.log(line);
       lastLog = line;
     }
-    if (snapshot.phase === "finished") return snapshot;
+    // the first hand ends at the match gate; test-match.mjs goes further
+    if (snapshot.phase === "hand-finished") return snapshot;
 
     if (snapshot.pending === "bid") {
       await page.evaluate(() => window.__game.pass());

@@ -51,20 +51,25 @@ Four layers; run all of them after non-trivial changes.
    ```sh
    HEADED=1 node scripts/play-game.mjs           "http://localhost:5179/?port=8082"
    HEADED=1 node scripts/play-multiplayer.mjs    "http://localhost:5179/?port=8082"
+   HEADED=1 node scripts/test-match.mjs          "http://localhost:5179/?port=8082"
    HEADED=1 node scripts/test-lobby-controls.mjs "http://localhost:5179/?port=8082"
    HEADED=1 node scripts/test-multi-tables.mjs   "http://localhost:5179/?port=8082"
    HEADED=1 node scripts/test-mobile.mjs         "http://localhost:5179/?port=8082"
    ```
 
    - `play-game.mjs` — one human + 3 bots: lobby → bid → trump → all 8 tricks
-     → result; first plays use real drag/click gestures.
-   - `play-multiplayer.mjs` — two browser pages play one table to completion.
+     → the between-hands result; first plays use real drag/click gestures.
+   - `play-multiplayer.mjs` — two browser pages play one table through the
+     first hand.
+   - `test-match.mjs` — host + guest + 2 bots play a two-hand match: the
+     between-hands panel (host deal button vs guest waiting note), match
+     scores mirroring, dealer rotation, host-page close aborting the guest.
    - `test-lobby-controls.mjs` — kick bot/human, leave, close table,
      disconnect cleanup.
    - `test-multi-tables.mjs` — several concurrent tables, room browser, join.
    - `test-mobile.mjs` — phone viewport (390×844, touch emulation): panels and
-     hand must fit the screen, full game played with real taps.
-   - All four honour `HEADED=1`. Screenshots land in `/tmp/game-shots*`;
+     hand must fit the screen, full hand played with real taps.
+   - All scripts honour `HEADED=1`. Screenshots land in `/tmp/game-shots*`;
      scripts exit non-zero on console errors. Any new test script must follow
      the same pattern (`headless: !process.env.HEADED`).
    - Inspect the screenshots after a run — they're the positioning record
@@ -85,7 +90,8 @@ await page.click("#create-button");        // or #browse-button + .room-row butt
 Drive decisions through the `window.__game` debug bridge instead of 3D
 gestures: `state()` (the reducer model — poll it with `waitForFunction`),
 `legalCards()`, `play(id)`, `bid(n)`, `pass()`, `trump(suit)`, `expose()`,
-`addBot()`, `startGame()`, `leaveTable()`, `kick(member)`, `roomName()`.
+`nextHand()`, `addBot()`, `startGame()`, `leaveTable()`, `kick(member)`,
+`roomName()`.
 Launch with `channel: "chrome"` locally (`/usr/bin/chromium` in CI sandboxes)
 and `--enable-unsafe-swiftshader --use-angle=swiftshader` for headless WebGL.
 
@@ -95,12 +101,12 @@ and `--enable-unsafe-swiftshader --use-angle=swiftshader` for headless WebGL.
 
 Three main files with clear responsibilities:
 
-- **`game.rkt`** — Pure game logic: card definitions (`card` prefab struct with name/rank/suit/point; the numeric rank doubles as trick strength J>9>A>10>K>Q>8>7), per-game shuffled decks (`fresh-deck`), card distribution, the auction (opener must bid ≥16, raises strictly higher, three consecutive passes end it), play validation (follow suit; must trump right after calling for the exposure), trick resolution honouring trump-exposure timing, and team scoring (`score-game`). No external dependencies; rackunit tests live in its `test` submodule.
+- **`game.rkt`** — Pure game logic: card definitions (`card` prefab struct with name/rank/suit/point; the numeric rank doubles as trick strength J>9>A>10>K>Q>8>7), per-game shuffled decks (`fresh-deck`), card distribution, the auction (opener must bid ≥16, raises strictly higher, three consecutive passes end it; `#:first-player` rotates the opener), play validation (follow suit; must trump right after calling for the exposure), trick resolution honouring trump-exposure timing (`#:first-leader` rotates the lead), team scoring (`score-game`), and match scoring (`hand-game-points`: +1/−2 under bid 20, +2/−4 from 20; `match-winner` against `+match-target+` 6). No external dependencies; rackunit tests live in its `test` submodule.
 
 - **`server.rkt`** — WebSocket service with three internal modules:
   - **User module**: `user` struct (connection, email, hand, comm-channel, pic-url), global `*connected-users*` hash
   - **Room module**: `game-room` serializable struct (host, name, members), global `*game-rooms*` hash keyed by host email
-  - **Game module**: orchestrates gameplay, spawns threads for long-running game operations, uses Racket channels for async player communication
+  - **Game module**: orchestrates a whole match per table — hand N's opener/leader is seat (N−1) mod 4, `hand-result` broadcasts game points after every hand, the game thread then blocks until the host sends `(next-hand <email>)`, and `match-over` ends it (target 6; the `MATCH-TARGET` env var shortens matches in tests). Any disconnect — mid-hand or at the gate — aborts the match via `game-aborted`. Spawns threads for long-running game operations, uses Racket channels for async player communication
 
 - **`client.rkt`** — Bot client with `state` struct (user, hand, bid-value, selected-trump). `client-lambda` is the main bot AI loop. `simulate-game` runs a full 4-player game for testing.
 

@@ -137,9 +137,11 @@ while (Date.now() < deadline) {
     shotTrickEnd = true;
   }
 
-  if (state.phase === "finished") {
+  // one full hand is this script's scope; the match gate (hand-finished)
+  // is where it ends — test-match.mjs covers multi-hand play
+  if (state.phase === "hand-finished") {
     await shot("07-result");
-    console.log("FINISHED", JSON.stringify({ points: state.points, finalBid: state.finalBid, bidWinner: state.bidWinner }));
+    console.log("HAND FINISHED", JSON.stringify({ points: state.points, finalBid: state.finalBid, bidWinner: state.bidWinner }));
     break;
   }
 
@@ -213,7 +215,7 @@ while (Date.now() < deadline) {
 
 const finalState = await getState();
 console.log("gesture results:", gestureResults.join(", ") || "none");
-if (finalState.phase !== "finished") {
+if (finalState.phase !== "hand-finished") {
   console.log("TIMED OUT — final state:", JSON.stringify(finalState));
   await shot("99-timeout");
 }
@@ -223,4 +225,4 @@ if (errors.length) {
 }
 
 await browser.close();
-process.exit(finalState.phase === "finished" && errors.length === 0 ? 0 : 1);
+process.exit(finalState.phase === "hand-finished" && errors.length === 0 ? 0 : 1);
