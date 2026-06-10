@@ -230,38 +230,27 @@
        (for-each close-scripted! (remove guest players))
        (sleep 1.5)))
 
-   ;; with MATCH-TARGET=1 the first made hand ends the match
+   ;; MATCH-TARGET=0 ends the match after exactly one hand, whatever the
+   ;; cards: a made bid lifts the bidders to the target, a set leaves the
+   ;; defenders already on it. (Target 1 would be probabilistic — under
+   ;; +1/−2 scoring a team of random players may never climb to +1.)
    (test-begin
-     (putenv "MATCH-TARGET" "1")
+     (putenv "MATCH-TARGET" "0")
      (let* ((players (seat-scripted-table 'target-room
                                           '(target-host target-j1 target-j2 target-j3)))
             (host (last players)))
        (send-msg (scripted-connection host) '(start-game target-room))
-       (let loop ((hand-number 1))
-         (check-true (<= hand-number 25)
-                     "a target-1 match should end within 25 hands")
-         (await host (λ (events) (nth-hand-result events hand-number))
-                #:label 'target-hand)
-         (sleep 0.3) ; match-over follows hand-result immediately when due
-         (let ((over (findf (tagged 'match-over)
-                            (unbox (scripted-events host)))))
-           (cond
-             (over
-              (let ((winner (cdr (assoc 'winner (cadr over))))
-                    (evens (cdr (assoc 'evens (cadr over))))
-                    (odds (cdr (assoc 'odds (cadr over)))))
-                (check-not-false (memq winner '(evens odds)) "winner is a team")
-                (check-equal? (cdr (assoc 'hands (cadr over))) hand-number)
-                (check-true (>= (if (eq? winner 'evens) evens odds) 1)
-                            "the winner reached the target")
-                ;; the hand-result that ended it reports the same totals
-                (let ((final (nth-hand-result (unbox (scripted-events host))
-                                              hand-number)))
-                  (check-equal? (result-ref final 'evens) evens)
-                  (check-equal? (result-ref final 'odds) odds))))
-             (else
-              (send-msg (scripted-connection host) '(next-hand target-host))
-              (loop (add1 hand-number))))))
+       (let* ((over (await host (λ (events) (findf (tagged 'match-over) events))
+                           #:label 'match-over))
+              (body (cadr over))
+              (result (nth-hand-result (unbox (scripted-events host)) 1))
+              (made (result-ref result 'made)))
+         (check-equal? (result-ref result 'target) 0)
+         (check-equal? (cdr (assoc 'hands body)) 1)
+         (check-equal? (cdr (assoc 'winner body)) (if made 'evens 'odds))
+         ;; match-over repeats the totals the final hand-result reported
+         (check-equal? (cdr (assoc 'evens body)) (result-ref result 'evens))
+         (check-equal? (cdr (assoc 'odds body)) (result-ref result 'odds)))
        (for-each close-scripted! players))
      (putenv "MATCH-TARGET" ""))
 
