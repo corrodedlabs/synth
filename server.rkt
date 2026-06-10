@@ -105,15 +105,22 @@
 
   (define *bot-counter* (box 0))
 
+  ;; bots dial back into the server as clients. Their sockets and AI threads
+  ;; are created while dispatching a message from the host's websocket, and
+  ;; web-server shuts down each connection's custodian on disconnect — so
+  ;; without a detached custodian every bot would die with the host.
+  (define *bot-custodian* (make-custodian))
+
   (define create-bot-user
     (lambda ()
-      (let* ((n (add1 (unbox *bot-counter*)))
-             (bot-name (string->symbol (format "bot-~a" n)))
-             (connection (connect-to-ws)))
-        (set-box! *bot-counter* n)
-        (connect-user connection bot-name)
-        (spawn-bot bot-name connection)
-        (get-user-by-email bot-name)))))
+      (parameterize ((current-custodian *bot-custodian*))
+        (let* ((n (add1 (unbox *bot-counter*)))
+               (bot-name (string->symbol (format "bot-~a" n)))
+               (connection (connect-to-ws)))
+          (set-box! *bot-counter* n)
+          (connect-user connection bot-name)
+          (spawn-bot bot-name connection)
+          (get-user-by-email bot-name))))))
 
 
 ;; Game rooms
@@ -476,6 +483,9 @@
 (require 'room)
 (require 'game)
 
+;; home for threads that outlive the connection whose message spawned them
+(define *game-custodian* (make-custodian))
+
 (define (email=? a b)
   (equal? (format "~a" a) (format "~a" b)))
 
@@ -633,14 +643,19 @@
 
       ;; game messages
       ((start-game)
-       (begin (thread (λ ()
-                        ;; start-game runs the whole hand; only failures need
-                        ;; reporting back (success is visible as dealt hands)
-                        (let ((result (start-game (cadr message))))
-                          (when (memq result '(room-not-ready game-already-started))
-                            (ws-send! connection
-                                      (with-output-to-string
-                                        (λ () (write `(start-game-failed ,result)))))))))
+       ;; the match thread must survive any single player's websocket:
+       ;; web-server kills each connection's custodian on disconnect, and
+       ;; this dispatch runs under the custodian of whoever clicked start
+       (begin (parameterize ((current-custodian *game-custodian*))
+                (thread (λ ()
+                          ;; start-game runs the whole match; only failures need
+                          ;; reporting back (success is visible as dealt hands)
+                          (let ((result (start-game (cadr message))))
+                            (when (memq result '(room-not-ready game-already-started))
+                              (with-handlers ((exn:fail? void)) ; requester may be gone
+                                (ws-send! connection
+                                          (with-output-to-string
+                                            (λ () (write `(start-game-failed ,result)))))))))))
               '(game-started)))
 
       ((put-bid selected-trump card-played next-hand)

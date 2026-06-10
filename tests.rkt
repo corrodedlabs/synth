@@ -230,6 +230,25 @@
        (for-each close-scripted! (remove guest players))
        (sleep 1.5)))
 
+   ;; the HOST disconnecting at the gate must abort too — regression test:
+   ;; the match thread is spawned while dispatching the host's start-game,
+   ;; so without a detached custodian the host's connection teardown would
+   ;; silently kill it and strand the guests at the gate forever
+   (test-begin
+     (let* ((players (seat-scripted-table 'host-abort-room
+                                          '(habort-host habort-j1 habort-j2 habort-j3)))
+            (host (last players))
+            (guest (first players)))
+       (send-msg (scripted-connection host) '(start-game host-abort-room))
+       (await host (λ (events) (nth-hand-result events 1)) #:label 'habort-hand-1)
+       (close-scripted! host)
+       (check-pred pair?
+                   (await guest (λ (events)
+                                  (findf (tagged 'game-aborted) events))
+                          #:label 'host-game-aborted))
+       (for-each close-scripted! (remove host players))
+       (sleep 1.5)))
+
    ;; MATCH-TARGET=0 ends the match after exactly one hand, whatever the
    ;; cards: a made bid lifts the bidders to the target, a set leaves the
    ;; defenders already on it. (Target 1 would be probabilistic — under
