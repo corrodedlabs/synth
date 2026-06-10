@@ -342,6 +342,26 @@
       #help-button:hover {
         opacity: 1;
       }
+      #sound-button {
+        position: absolute;
+        bottom: 18px;
+        left: 22px;
+        z-index: 30; /* clickable above the full-screen start overlay */
+        pointer-events: auto;
+        font-family: inherit;
+        font-size: 17px;
+        color: #3b2f2a;
+        background: transparent;
+        border: none;
+        border-bottom: 1px solid rgba(59, 47, 42, 0.35);
+        padding: 2px 2px;
+        cursor: pointer;
+        letter-spacing: 0.8px;
+        opacity: 0.6;
+      }
+      #sound-button:hover {
+        opacity: 1;
+      }
       #help-panel {
         top: 50%;
         transform: translate(-50%, -50%);
@@ -545,6 +565,11 @@
           right: 14px;
           font-size: 15px;
         }
+        #sound-button {
+          bottom: 12px;
+          left: 14px;
+          font-size: 15px;
+        }
         .seat-name-label {
           font-size: 15px;
         }
@@ -603,6 +628,7 @@
       <div id="seat-label-3" class="seat-name-label"></div>
 
       <button id="help-button" type="button">how to play</button>
+      <button id="sound-button" type="button">sound on</button>
       <div id="help-panel" class="panel hidden">
         <div class="panel-title">Twenty-Eight</div>
         <ul id="help-rules">

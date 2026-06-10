@@ -3,6 +3,7 @@ import { DragControls } from "../interaction/DragControls";
 import { SceneManager } from "../scene/SceneManager";
 import { Lighting } from "../scene/Lighting";
 import { Table } from "../scene/Table";
+import { SoundService } from "../utils/Sound";
 import { ZenCardTextures } from "../utils/ZenCardTextures";
 import { SEAT_NAMES, UiOverlay } from "../ui/UiOverlay";
 import { Card } from "./Card";
@@ -31,6 +32,7 @@ export class GameState {
   // @ts-ignore kept alive for event listeners
   private dragControls: DragControls;
   private ui: UiOverlay;
+  private sound = new SoundService();
   private session: GameSession | null = null;
   private model: GameModel = initialGameModel;
   private mockFiber: Fiber.RuntimeFiber<void, never> | null = null;
@@ -77,6 +79,7 @@ export class GameState {
 
     this.scoreElement = document.getElementById("score-value");
     this.tricksElement = document.getElementById("tricks-value");
+    this.sound.bindToggle(document.getElementById("sound-button"));
 
     this.applyViewportLayout();
     window.addEventListener("resize", () => {
@@ -184,6 +187,11 @@ export class GameState {
 
   public getModel(): GameModel {
     return this.model;
+  }
+
+  // sound attempt counters + mute state, for the debug bridge and UI tests
+  public soundState(): Record<string, number | boolean> {
+    return { ...this.sound.played, muted: this.sound.isMuted() };
   }
 
   public getSession(): GameSession | null {
@@ -300,10 +308,12 @@ export class GameState {
 
       case "HandDealt":
         this.ui.hideLobby();
+        this.sound.deal(action.cards.length);
         action.cards.forEach((card) => this.hand.addCard(this.createCard(card)));
         break;
 
       case "CardPlayed":
+        this.sound.cardPlay();
         this.playCard(action.card, action.playerIndex);
         break;
 
@@ -321,6 +331,7 @@ export class GameState {
 
       case "BidPlaced": {
         const seat = this.seatName(action.playerIndex);
+        this.sound.bidTick();
         this.ui.status(action.bid === "pass" ? `${seat} pass${action.playerIndex === 0 ? "" : "es"}` : `${seat} bid${action.playerIndex === 0 ? "" : "s"} ${action.bid}`, true);
         break;
       }
@@ -330,11 +341,15 @@ export class GameState {
         break;
 
       case "TrumpSet":
+        // suit:null + exposed is the one-time exposure broadcast; the later
+        // TrumpSet dispatches from play requests repeat the suit
+        if (action.exposed && action.suit === null) this.sound.trumpReveal();
         this.ui.setTrump(this.model.trumpSuit, this.model.trumpExposed);
         if (this.model.trumpExposed) this.ui.status("Trump is revealed", true);
         break;
 
       case "RequestReceived":
+        this.sound.yourTurn();
         switch (action.request.kind) {
           case "bid":
             this.ui.showBidPanel(action.request.minBid, this.model.bidsPlaced === 0);
@@ -364,6 +379,7 @@ export class GameState {
         this.playArea.clearTable(action.winner);
         this.renderScore();
         if (action.winner !== null) {
+          this.sound.trickSweep();
           const seat = this.seatName(action.winner);
           const taker = action.winner === 0 ? "You take" : `${seat} takes`;
           this.ui.status(
@@ -380,13 +396,16 @@ export class GameState {
         const theirPoints = points[1] + points[3];
         this.renderScore();
         let detail = "";
+        let weWon = ourPoints > theirPoints;
         if (this.model.finalBid !== null && this.model.bidWinner !== null) {
           const bidderOurs = this.model.bidWinner === 0 || this.model.bidWinner === 2;
           const bidderPoints = bidderOurs ? ourPoints : theirPoints;
           const made = bidderPoints >= this.model.finalBid;
           const bidderName = this.model.bidWinner === 0 ? "Your" : `${this.seatName(this.model.bidWinner)}'s`;
           detail = `${bidderName} team bid ${this.model.finalBid} and took ${bidderPoints} — ${made ? "made it" : "set"}`;
+          weWon = bidderOurs ? made : !made;
         }
+        this.sound.result(weWon);
         this.ui.status("");
         this.ui.showResult(ourPoints, theirPoints, detail);
         break;

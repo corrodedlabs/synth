@@ -130,6 +130,9 @@ Server events drive a pure reducer; rendering reacts to dispatched actions
   `PlayArea.ts` (scene objects), `MockGameProgram.ts` (`?mock=1` offline mode)
 - `app/src/ui/UiOverlay.ts` — DOM overlay: start screen, room browser, lobby,
   bid/trump panels, help overlay
+- `app/src/utils/Sound.ts` — synthesized Web Audio effects (card swishes,
+  turn chimes, results) reacting to dispatched actions in `GameState`; mute
+  toggle persisted in localStorage; `__game.sounds()` exposes attempt counters
 - `app/src/main.ts` — bootstrapping plus the `window.__game` debug bridge
   used by the Playwright suites
 - URL params: `?port=`/`?server=` (game server), `?mock=1`, `?debug`

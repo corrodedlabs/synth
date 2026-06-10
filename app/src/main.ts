@@ -41,6 +41,7 @@ if (params.has('mock')) {
   leaveTable: () => gameState.getSession()?.leaveRoom(),
   kick: (member: string) => gameState.getSession()?.kick(member),
   roomName: () => gameState.getSession()?.roomName,
+  sounds: () => gameState.soundState(),
 };
 
 function animate() {
