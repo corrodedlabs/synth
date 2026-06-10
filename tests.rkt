@@ -7,6 +7,9 @@
 
 (define *service* #f)
 
+;; off the default port so tests don't collide with a dev server
+(define test-port 18081)
+
 (define user1-id 'user1-email)
 (define room-name 'my-test-room)
 
@@ -14,20 +17,22 @@
   (around
    ;; start server before tests
    (begin (displayln "starting server")
-          (set! *service* (start-service))
+          (putenv "GAME-PORT" (number->string test-port))
+          (set! *service* (start-service test-port))
           (sleep 3))
 
    ;; test cases
    (test-begin
      (let ((connection (connect-to-ws)))
-       (check-pred null? (get-active-rooms connection))
+       ;; replies are tagged: (active-rooms <rooms>)
+       (check-pred null? (cadr (get-active-rooms connection)))
 
        (connect-user connection user1-id)
 
        (check-equal? (create-room connection user1-id room-name)
                      'room-created)
 
-       (let ((rooms (get-active-rooms connection)))
+       (let ((rooms (cadr (get-active-rooms connection))))
          (check-equal? (length rooms) 1))))
 
    ;; stop server after tests

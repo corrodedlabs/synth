@@ -16,12 +16,15 @@
          client-lambda
          spawn-bot)
 
-(define +ws-url+ "ws://localhost:8081/test")
+;; resolved lazily so server.rkt can set GAME-PORT from its --port flag
+;; before the first bot connects
+(define (+ws-url+)
+  (format "ws://localhost:~a/test" (or (getenv "GAME-PORT") "8081")))
 (define protocol 'rfc6455)
 
 (define connect-to-ws
   (λ ()
-    (ws-connect (string->url +ws-url+) #:protocol protocol)))
+    (ws-connect (string->url (+ws-url+)) #:protocol protocol)))
 
 (define (recv/print c)
   (let ((msg (ws-recv c)))
@@ -52,10 +55,11 @@
 (define receive-data
   (lambda (connection)
     (let ((data (ws-recv connection)))
-      (if (or (eof-object? data) (equal? "#<void>" data))
-          #f
-          (begin (displayln (format "received data is ~a" data))
-                 (read (open-input-string data)))))))
+      (cond
+        ((eof-object? data) 'connection-closed)
+        ((equal? "#<void>" data) #f)
+        (else (displayln (format "received data is ~a" data))
+              (read (open-input-string data)))))))
 
 (define send-data
   (lambda (user data)
@@ -76,7 +80,11 @@
     
     (let loop ((client-state (default-state user))
                (server-msg (receive-data connection)))
-      (if server-msg
+      (cond
+        ;; server hung up (kicked, room closed, game over) — stop the bot
+        ((eq? server-msg 'connection-closed)
+         (displayln (format "bot ~a: connection closed, stopping" (user-id user))))
+        (server-msg
           (case (car server-msg)
             ((hand)
              (let ((new-cards (caddr server-msg)))
@@ -115,8 +123,8 @@
                      (receive-data connection))))
             (else
              (begin (displayln (format "unhandled message ~a" server-msg))
-                    (loop client-state (receive-data connection)))))
-          (loop client-state (receive-data connection))))))
+                    (loop client-state (receive-data connection))))))
+        (else (loop client-state (receive-data connection)))))))
 
 ;; runs the bot AI loop on its own thread for an already-connected user
 (define spawn-bot

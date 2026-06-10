@@ -16,30 +16,33 @@
               ["--timeout" SECONDS "Set per-connection idle timeout"
                            (set! idle-timeout (string->number SECONDS))]
               ["--port" PORT "Set service port"
-                        (set! port (string->number PORT))])
+                        (set! port (string->number PORT))
+                        ;; bots in client.rkt dial back into this server
+                        (putenv "GAME-PORT" PORT)])
 
 (define (connection-handler c state)
   (displayln  (format "handler called ~a" c))
   (let loop ()
     (sync
-     ;; (handle-evt (alarm-evt (+ (current-inexact-milliseconds) 1000))
-     ;;             (lambda _
-     ;;               (ws-send! c "Waited another second")
-     ;;               (loop)))
      (handle-evt
       (ws-recv-evt c #:payload-type 'text)
       (lambda (m)
-        (if (eof-object? m)
-            (loop)
-            (begin
-              (thread
-               (λ ()
-                 (displayln (format "m is ~a" m))
-                 (let ((data (dispatch c m)))
-                   (ws-send! c
-                             (with-output-to-string (λ () (write data)))))))
-              (loop)))))))
-  (ws-close! c))
+        (cond
+          ;; eof means the peer is gone: clean up instead of spinning
+          ((eof-object? m)
+           (displayln "connection closed")
+           (handle-disconnect c))
+          (else
+           (thread
+            (λ ()
+              (displayln (format "m is ~a" m))
+              (let ((data (dispatch c m)))
+                (with-handlers ((exn:fail? void)) ; peer may be gone by now
+                  (ws-send! c
+                            (with-output-to-string (λ () (write data))))))))
+           (loop)))))))
+  (with-handlers ((exn:fail? void))
+    (ws-close! c)))
 
 ;; Users
 
@@ -52,8 +55,13 @@
            user-hand
            user-comm
            get-user-by-email
+           remove-user
+           users-with-connection
+           bot-user?
+           release-user
            create-bot-user)
 
+  (require net/rfc6455)
   (require "./client.rkt")
 
   ;; represents a connected user
@@ -71,9 +79,27 @@
 
   (define (get-user-by-email email)
     (hash-ref *connected-users* email #f))
-  
+
   (define get-connected-users-email
     (λ () (hash-keys *connected-users*)))
+
+  (define (remove-user email)
+    (hash-remove! *connected-users* email))
+
+  ;; all users registered over a given websocket connection
+  (define (users-with-connection connection)
+    (filter (λ (u) (eq? (user-connection u) connection))
+            (hash-values *connected-users*)))
+
+  (define (bot-user? u)
+    (regexp-match? #rx"^bot-[0-9]+$" (format "~a" (user-email u))))
+
+  ;; closes a user's connection (bots only have a server-side one) and
+  ;; forgets them entirely
+  (define (release-user u)
+    (with-handlers ((exn:fail? void))
+      (ws-close! (user-connection u)))
+    (remove-user (user-email u)))
 
   (define *bot-counter* (box 0))
 
@@ -100,6 +126,9 @@
            find-room-by-name
            add-user-to-game-room
            add-bot-to-game-room
+           room-update-members!
+           close-room!
+           rooms-with-member
            game-room)
   
   ;; game room is always public
@@ -151,7 +180,25 @@
 
   (define add-bot-to-game-room
     (lambda (room-name)
-      (add-user-to-game-room (find-room-by-name room-name) (create-bot-user)))))
+      (add-user-to-game-room (find-room-by-name room-name) (create-bot-user))))
+
+  (define (room-update-members! room new-members)
+    (match room
+      ((game-room host name _)
+       (hash-set! *game-rooms* (user-email host) (game-room host name new-members)))))
+
+  (define (close-room! room)
+    (match room
+      ((game-room host _ _) (hash-remove! *game-rooms* (user-email host)))))
+
+  ;; every room a user (by email, symbol or string) is currently seated in
+  (define (rooms-with-member email)
+    (define (same? a b) (equal? (format "~a" a) (format "~a" b)))
+    (filter (λ (room)
+              (match room
+                ((game-room _ _ members)
+                 (findf (λ (m) (same? (user-email m) email)) members))))
+            (hash-values *game-rooms*))))
 
 
 
@@ -176,12 +223,16 @@
 
   (define +max-players+ 4)
 
-  ;; send data over connection
+  ;; send data over connection; a dead member must not break a broadcast
 (define send-datum
   (λ (player data)
     (displayln (format "sending datum ~a to player ~a" (user-email player) data))
-    (ws-send! (user-connection player)
-              (with-output-to-string (λ () (write data))))))
+    (with-handlers ((exn:fail? (λ (e)
+                                 (displayln (format "send to ~a failed: ~a"
+                                                    (user-email player)
+                                                    (exn-message e))))))
+      (ws-send! (user-connection player)
+                (with-output-to-string (λ () (write data)))))))
 
 (define send-datum-to-all
   (λ (players data)
@@ -242,60 +293,159 @@
   (define start-game
     (λ (room-name)
       (match (find-room-by-name room-name)
-        [(game-room host name members)
+        [#f (if (hash-ref *running-games* room-name #f)
+                'game-already-started
+                'room-not-ready)]
+        [(and room (game-room host name members))
          (cond
            [(hash-ref *running-games* name #f)
             'game-already-started]
-           
+
            [(and (equal? (length members) +max-players+)
                  (not (ormap (λ (member)
                                (ws-conn-closed? (user-connection member)))
                              members)))
-            ;; members already includes the host
-            (let* ((players members)
-                   (players+deck (distribute-cards-to-players players))
-                   (bid-result (perform-bidding players))
-                   (trump-suit (choose-trump-suit players (cdr bid-result))))
-              (for-each (λ (player)
-                          (send-datum player `(bid-result ,bid-result)))
-                        players)
-              (match (distribute-cards-to-players (car players+deck) (cdr players+deck))
-                [(cons players deck)
-                 (let ((points-won
-                        (play-game (map user-hand players)
-                                   trump-suit
-                                   (λ (player-index cards-in-round game-state)
-                                     (displayln (format "waiting for player ~a " player-index))
-                                     (let ((player (list-ref players player-index)))
-                                       (send-datum-to-all players `(turn ,player-index))
-                                       (send-datum player
-                                                   `(play-card . ((cards-played . ,cards-in-round)
-                                                                  (game-state . ,game-state))))
+            ;; the table is in play now: delist it so it stops showing as
+            ;; joinable, and remember the running game by name
+            (hash-set! *running-games* name #t)
+            (close-room! room)
+            (with-handlers ((exn:fail? (λ (e)
+                                         (hash-remove! *running-games* name)
+                                         (raise e))))
+              ;; members already includes the host
+              (let* ((players members)
+                     (players+deck (distribute-cards-to-players players))
+                     (bid-result (perform-bidding players))
+                     (trump-suit (choose-trump-suit players (cdr bid-result))))
+                (for-each (λ (player)
+                            (send-datum player `(bid-result ,bid-result)))
+                          players)
+                (match (distribute-cards-to-players (car players+deck) (cdr players+deck))
+                  [(cons players deck)
+                   (let ((points-won
+                          (play-game (map user-hand players)
+                                     trump-suit
+                                     (λ (player-index cards-in-round game-state)
+                                       (displayln (format "waiting for player ~a " player-index))
+                                       (let ((player (list-ref players player-index)))
+                                         (send-datum-to-all players `(turn ,player-index))
+                                         (send-datum player
+                                                     `(play-card . ((cards-played . ,cards-in-round)
+                                                                    (game-state . ,game-state))))
 
-                                       (let ((card (caddr (receive-datum player))))
-                                         (send-datum-to-all players `(played ,player-index ,card))
-                                         card))))))
-                   (send-datum-to-all players `(points-won ,points-won)))
-                 'game-started]
-                (else (error "fuck"))))]
-           
+                                         (let ((card (caddr (receive-datum player))))
+                                           (send-datum-to-all players `(played ,player-index ,card))
+                                           card))))))
+                     (send-datum-to-all players `(points-won ,points-won)))
+                   (hash-remove! *running-games* name)
+                   ;; bots are single-use: free their connections and slots
+                   (for-each (λ (player)
+                               (when (bot-user? player) (release-user player)))
+                             members)
+                   'game-started]
+                  (else (error "card distribution failed")))))]
+
            [else 'room-not-ready])]))))
 
 (require 'user)
 (require 'room)
 (require 'game)
 
+(define (email=? a b)
+  (equal? (format "~a" a) (format "~a" b)))
+
+(define (find-member room email)
+  (match room
+    ((game-room _ _ members)
+     (findf (λ (m) (email=? (user-email m) email)) members))))
+
+;; Tears a room down: bots are released, humans are told the table is gone.
+;; except: email of the member who triggered the close (no note to self).
+(define (close-room-and-notify! room #:except (except #f))
+  (match room
+    ((game-room host name members)
+     (close-room! room)
+     (for-each (λ (member)
+                 (cond
+                   ((bot-user? member) (release-user member))
+                   ((and except (email=? (user-email member) except)) (void))
+                   (else (send-datum member `(room-closed ,name)))))
+               members))))
+
+;; Removes one member from a room, broadcasting the new seat list. The host
+;; leaving closes the whole table. Returns a result symbol for the caller.
+(define (depart-room! room email)
+  (match room
+    ((game-room host name members)
+     (cond
+       ((email=? (user-email host) email)
+        (close-room-and-notify! room #:except email)
+        'room-left)
+       ((find-member room email)
+        => (λ (target)
+             (let ((new-members (remove target members)))
+               (room-update-members! room new-members)
+               (when (bot-user? target) (release-user target))
+               (send-datum-to-all new-members
+                                  `(room-members ,name ,(map user-email new-members)))
+               'room-left)))
+       (else '(error not-a-member))))))
+
+(define (leave-room message)
+  (match message
+    ((list _ room-name email)
+     (let ((room (find-room-by-name room-name)))
+       (if room
+           (depart-room! room email)
+           '(error no-such-room))))
+    (_ '(error invalid-message))))
+
+(define (kick-from-room message)
+  (match message
+    ((list _ room-name requester-email target-email)
+     (let ((room (find-room-by-name room-name)))
+       (match room
+         (#f '(error no-such-room))
+         ((game-room host name _)
+          (cond
+            ((not (email=? (user-email host) requester-email)) '(error not-host))
+            ((email=? requester-email target-email) '(error cannot-kick-host))
+            ((find-member room target-email)
+             => (λ (target)
+                  (unless (bot-user? target)
+                    (send-datum target `(removed-from-room ,name)))
+                  (depart-room! room target-email)
+                  'user-kicked))
+            (else '(error not-a-member)))))))
+    (_ '(error invalid-message))))
+
+;; A websocket dropped: unseat every user behind it (closing their tables if
+;; they were hosting) and forget them.
+(define (handle-disconnect connection)
+  (for-each
+   (λ (u)
+     (let ((email (user-email u)))
+       (displayln (format "cleaning up disconnected user ~a" email))
+       (for-each (λ (room) (depart-room! room email))
+                 (rooms-with-member email))
+       (remove-user email)))
+   (users-with-connection connection)))
+
 (define (join-room message)
   (match message
     ((list _ room-name email)
      (let ([room (find-room-by-name room-name)])
        (cond
-         ((member email (get-connected-users-email))
+         ((not room) '(error no-such-room))
+         ((not (member email (get-connected-users-email))) '(error user-not-connected))
+         (else
           (let ((members (add-user-to-game-room room (get-user-by-email email))))
+            ;; same shape as the add-bot-to-room broadcast so clients have
+            ;; one code path for member updates
             (send-datum-to-all members
-                               (map user-email members))))
-         (else (error "user not connected")))))
-    (_ (error "message is invalid"))))
+                               `(room-members ,room-name ,(map user-email members)))
+            'room-joined)))))
+    (_ '(error invalid-message))))
 
 (define add-bot-to-room
   (lambda (room-name)
@@ -330,22 +480,38 @@
 ;; [selected-trump <user-email> <trump-suit>] => select a trump suit
 ;; 
 (define (dispatch connection message)
-  (let ((message (read (open-input-string message))))
-    (displayln (format "message is ~a" message))
-    (case (car message)
+  (with-handlers ((exn:fail? (λ (e)
+                               (displayln (format "dispatch error: ~a" (exn-message e)))
+                               `(error ,(exn-message e)))))
+    (let ((message (read (open-input-string message))))
+      (displayln (format "message is ~a" message))
+      (case (car message)
+      ;; liveness probe (keeps proxies from culling idle sockets)
+      ((ping) 'pong)
+
       ;; user messages
       ((connect-user) (connect-new-user connection (cadr message) (caddr message)))
 
       ;; room messages
       ((make-room) (add-game-room (cadr message) (caddr message)))
       ((join-room) (join-room message))
-      ((get-active-rooms) (get-active-rooms))
+      ((leave-room) (leave-room message))
+      ((kick-from-room) (kick-from-room message))
+      ;; tagged so clients can tell the reply apart from other lists
+      ((get-active-rooms) `(active-rooms ,(get-active-rooms)))
       ((get-room-details) (get-room-details (cadr message)))
       ((add-bot-to-room) (add-bot-to-room (cadr message)))
 
       ;; game messages
       ((start-game)
-       (begin (thread (λ () (start-game (cadr message))))
+       (begin (thread (λ ()
+                        ;; start-game runs the whole hand; only failures need
+                        ;; reporting back (success is visible as dealt hands)
+                        (let ((result (start-game (cadr message))))
+                          (when (memq result '(room-not-ready game-already-started))
+                            (ws-send! connection
+                                      (with-output-to-string
+                                        (λ () (write `(start-game-failed ,result)))))))))
               '(game-started)))
 
       ((put-bid selected-trump card-played)
@@ -354,20 +520,25 @@
               '(done)))
 
       ;; catch all
-      (else 'invalid-request))))
+      (else 'invalid-request)))))
 
 (when idle-timeout
   (ws-idle-timeout idle-timeout))
 
 (define start-service
-  (λ ()
-    (displayln (format "port is ~a" port))
-    (ws-serve connection-handler #:port port)))
+  (case-lambda
+    [() (start-service port)]
+    [(service-port)
+     (displayln (format "port is ~a" service-port))
+     (ws-serve connection-handler #:port service-port)]))
 
 
 (module+ main
   (define stop-service (start-service))
   (printf "Server running. Hit enter to stop service.\n")
-  (void (read-line))
+  (let ((line (read-line)))
+    ;; under a container/supervisor there is no stdin: serve forever
+    (when (eof-object? line)
+      (sync never-evt)))
   (stop-service))
  
