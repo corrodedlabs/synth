@@ -54,6 +54,7 @@
            user-connection
            user-email
            user-hand
+           set-user-hand!
            user-comm
            get-user-by-email
            remove-user
@@ -66,18 +67,30 @@
   (require racket/async-channel)
   (require "./client.rkt")
 
-  ;; represents a connected user
-  ;; connection => connection corres to the user connected
-  ;; email => email of the users
-  ;; hand => list of cards that the player has
+  ;; represents a connected user — one struct per identity, shared by the
+  ;; room and any running match, so rebinding the connection in place is
+  ;; visible everywhere at once
+  ;; connection => websocket; rebound when the same email reconnects
+  ;; email => stable identity (the client persists it across refreshes)
+  ;; hand => cards the player currently holds (reset every hand)
   ;; comm => async channel for game messages (puts never block the listener)
-  (struct user (connection email hand comm pic-url))
+  (struct user ([connection #:mutable] email [hand #:mutable] comm pic-url))
 
   (define *connected-users* (make-hash))
 
+  ;; first contact creates the user; the same email connecting again (a
+  ;; refreshed page, a dropped link re-established) rebinds the existing
+  ;; seat to the new socket — hand, channel, and any running match survive
   (define (connect-new-user connection email pic-url)
-    (hash-set! *connected-users* email
-               (user connection email '() (make-async-channel) pic-url)))
+    (let ((existing (get-user-by-email email)))
+      (cond
+        (existing
+         (set-user-connection! existing connection)
+         'user-reconnected)
+        (else
+         (hash-set! *connected-users* email
+                    (user connection email '() (make-async-channel) pic-url))
+         'user-connected))))
 
   (define (get-user-by-email email)
     (hash-ref *connected-users* email #f))
@@ -216,19 +229,21 @@
 (module game racket
   (provide start-game
            send-datum
-           send-datum-to-all)
+           send-datum-to-all
+           request-leave!
+           user-in-running-game?
+           rejoin-snapshot)
 
   (require net/rfc6455)
   (require racket/async-channel)
   (require racket/control)
+  (require racket/list)
 
   (require (submod ".." user))
   (require (submod ".." room))
   (require "./game.rkt")
 
-  (struct game-data (players deck game-state trump-suit))
-
-  ;; contains running games keyed against room name
+  ;; running games: room name → players in seat order
   (define *running-games* (make-hash))
 
   (define +max-players+ 4)
@@ -238,6 +253,137 @@
   (define (match-target)
     (let ([configured (getenv "MATCH-TARGET")])
       (or (and configured (string->number configured)) +match-target+)))
+
+  ;; how long a dead socket may wait for its owner to come back before the
+  ;; match is abandoned; RECONNECT-GRACE (seconds) is the test hook
+  (define (grace-seconds)
+    (let ([configured (getenv "RECONNECT-GRACE")])
+      (or (and configured (string->number configured)) 45)))
+
+  (define (email=? a b)
+    (equal? (format "~a" a) (format "~a" b)))
+
+  (define (user-in-running-game? email)
+    (for/first ([(name players) (in-hash *running-games*)]
+                #:when (findf (λ (p) (email=? (user-email p) email)) players))
+      name))
+
+  ;; email → ms timestamp when the socket was first seen dead
+  (define *gone-since* (make-hash))
+  ;; emails that asked to leave: no grace, the match aborts at once
+  (define *leavers* (make-hash))
+
+  (define (request-leave! email)
+    (hash-set! *leavers* email #t))
+
+  (define (forget-liveness! players)
+    (for-each (λ (player)
+                (hash-remove! *gone-since* (user-email player))
+                (hash-remove! *leavers* (user-email player)))
+              players))
+
+  ;; called from every 1s wait poll. Raises when a seat is lost for good —
+  ;; its owner left, or stayed dead past the grace window — and otherwise
+  ;; tracks drops and returns, telling the table about both. Bots get no
+  ;; grace: their sockets only close when the server releases them.
+  (define (check-liveness! players)
+    (for-each
+     (λ (player)
+       (let ((email (user-email player)))
+         (cond
+           ((hash-ref *leavers* email #f)
+            (error 'check-liveness (format "player ~a left the match" email)))
+           ((ws-conn-closed? (user-connection player))
+            (cond
+              ((bot-user? player)
+               (error 'check-liveness (format "bot ~a died" email)))
+              ((hash-ref *gone-since* email #f)
+               => (λ (since)
+                    (when (> (- (current-inexact-milliseconds) since)
+                             (* 1000 (grace-seconds)))
+                      (error 'check-liveness
+                             (format "player ~a disconnected" email)))))
+              (else
+               (hash-set! *gone-since* email (current-inexact-milliseconds))
+               (send-datum-to-all players
+                                  `(player-disconnected ,email ,(grace-seconds))))))
+           ((hash-ref *gone-since* email #f)
+            ;; the seat's socket is alive again (connect-user rebound it)
+            (hash-remove! *gone-since* email)
+            (send-datum-to-all players `(player-reconnected ,email))))))
+     players))
+
+  ;; --- live match view, for reconnecting clients ---
+  ;;
+  ;; The game thread keeps this current as it plays; rejoin-snapshot reads
+  ;; it from a dispatch thread. stage: bidding | choosing-trump | playing |
+  ;; between-hands. awaiting: (seat . request-message) while the game waits
+  ;; on someone. trick entries: (list seat card counts-as-trump?).
+  (struct match-state (players
+                       [hand-number #:mutable]
+                       [evens #:mutable]
+                       [odds #:mutable]
+                       [stage #:mutable]
+                       [high-bid #:mutable]   ; (value . seat) or #f
+                       [bid-result #:mutable] ; (value . seat) once the auction ends
+                       [trump-suit #:mutable]
+                       [trump-exposed? #:mutable]
+                       [trick #:mutable]
+                       [trick-leader #:mutable]
+                       [points #:mutable]       ; alist seat → card points taken
+                       [tricks-taken #:mutable] ; alist seat → tricks taken
+                       [last-result #:mutable]  ; hand-result body, between hands
+                       [awaiting #:mutable]))
+
+  ;; room name → match-state
+  (define *match-states* (make-hash))
+
+  (define (fresh-seat-alist)
+    (map (λ (seat) (cons seat 0)) (range +max-players+)))
+
+  (define (reset-state-for-hand! state hand-number first-seat)
+    (set-match-state-hand-number! state hand-number)
+    (set-match-state-stage! state 'bidding)
+    (set-match-state-high-bid! state #f)
+    (set-match-state-bid-result! state #f)
+    (set-match-state-trump-suit! state #f)
+    (set-match-state-trump-exposed?! state #f)
+    (set-match-state-trick! state '())
+    (set-match-state-trick-leader! state first-seat)
+    (set-match-state-points! state (fresh-seat-alist))
+    (set-match-state-tricks-taken! state (fresh-seat-alist))
+    (set-match-state-last-result! state #f)
+    (set-match-state-awaiting! state #f))
+
+  (define (alist-add alist key delta)
+    (map (λ (entry)
+           (if (equal? (car entry) key)
+               (cons key (+ (cdr entry) delta))
+               entry))
+         alist))
+
+  ;; a completed trick folds into points/tricks and the winner leads next
+  (define (note-play! state seat card)
+    (cond
+      ((eq? card 'expose-trump)
+       (set-match-state-trump-exposed?! state #t))
+      (else
+       (let* ((trump? (and (match-state-trump-exposed? state)
+                           (equal? (card-suit card)
+                                   (match-state-trump-suit state))))
+              (trick (append (match-state-trick state)
+                             (list (list seat card trump?)))))
+         (cond
+           ((= (length trick) +max-players+)
+            (let ((winner (trick-winner trick))
+                  (trick-points (apply + (map (compose1 card-point second) trick))))
+              (set-match-state-points!
+               state (alist-add (match-state-points state) winner trick-points))
+              (set-match-state-tricks-taken!
+               state (alist-add (match-state-tricks-taken state) winner 1))
+              (set-match-state-trick-leader! state winner)
+              (set-match-state-trick! state '())))
+           (else (set-match-state-trick! state trick)))))))
 
   ;; send data over connection; a dead member must not break a broadcast
 (define send-datum
@@ -256,45 +402,34 @@
                 (send-datum player data))
               players)))
 
+  ;; deals four cards to everyone, mutating the shared user structs so the
+  ;; rejoin snapshot always sees live hands. Sends are best-effort: a player
+  ;; inside their reconnect grace window misses the live deal and is caught
+  ;; up by the snapshot instead.
   (define distribute-cards-to-players
     (λ (players deck)
       (match/values
           (distribute-cards deck 4)
         [(new-cards-for-players remaining-deck)
-         (let ([players1
-                (map (λ (new-cards player)
-                       (let ([conn (user-connection player)])
-                         (cond
-                           [(ws-conn-closed? conn)
-                            (error "connection closed for player" player)]
-                           [else
-                            (begin
-                              (send-datum player
-                                          `(hand ,(user-email player) ,new-cards))
-                              (struct-copy user player
-                                           (hand (append (user-hand player)
-                                                         new-cards))))])))
-                     new-cards-for-players
-                     players)])
-           (cons players1 remaining-deck))])))
+         (for-each (λ (new-cards player)
+                     (send-datum player `(hand ,(user-email player) ,new-cards))
+                     (set-user-hand! player (append (user-hand player) new-cards)))
+                   new-cards-for-players
+                   players)
+         remaining-deck])))
 
   ;; next message of the expected kind from this player's channel; other
-  ;; messages are dropped. Raises if any watched player's socket dies while
-  ;; we wait — not just the one we are waiting on, so a player who leaves
-  ;; or drops while someone else is thinking aborts the game within a
-  ;; second instead of when their own turn comes round.
+  ;; messages are dropped. Every 1s poll runs the liveness check over the
+  ;; whole table, so leavers abort at once and dropped players get their
+  ;; grace window whether or not it is their turn.
   (define receive-datum
     (λ (player expected-tag (watched (list player)))
       (let loop ()
         (let ([message (sync/timeout 1 (user-comm player))])
           (cond
             [(not message)
-             (let ([gone (findf (λ (p) (ws-conn-closed? (user-connection p)))
-                                watched)])
-               (if gone
-                   (error 'receive-datum
-                          (format "player ~a disconnected" (user-email gone)))
-                   (loop)))]
+             (check-liveness! watched)
+             (loop)]
             [(and (pair? message) (equal? (car message) expected-tag))
              message]
             [else
@@ -304,13 +439,18 @@
 
   ;; runs the auction; first-seat opens. returns (cons winning-bid winner-index)
   (define perform-bidding
-    (λ (players first-seat)
+    (λ (players first-seat state)
       (start-bidding (λ (player-index min-bid)
-                       (let ((player (list-ref players player-index)))
+                       (let ((player (list-ref players player-index))
+                             (request `(request-bid ,min-bid)))
+                         (set-match-state-awaiting! state (cons player-index request))
                          (send-datum-to-all players `(turn ,player-index))
-                         (send-datum player `(request-bid ,min-bid))
+                         (send-datum player request)
                          (caddr (receive-datum player 'put-bid players))))
                      (λ (player-index bid-value)
+                       (set-match-state-awaiting! state #f)
+                       (unless (equal? bid-value 'pass)
+                         (set-match-state-high-bid! state (cons bid-value player-index)))
                        (send-datum-to-all players
                                           `(bid-placed ,player-index ,bid-value)))
                      (λ (player-index error-msg offending-value)
@@ -320,11 +460,13 @@
 
   ;; player index is the index of the player who won the bid and will choose the trump
   (define choose-trump-suit
-    (λ (players player-index)
+    (λ (players player-index state)
       (let* ((bidder (list-ref players player-index)))
+        (set-match-state-awaiting! state (cons player-index '(choose-trump)))
         (send-datum bidder '(choose-trump))
         (let ([selected-trump-suit
                (caddr (receive-datum bidder 'selected-trump players))])
+          (set-match-state-awaiting! state #f)
           (send-datum-to-all players '(trump-selected))
           selected-trump-suit))))
 
@@ -332,37 +474,47 @@
   ;; tricks. first-seat opens the bidding and leads the first trick.
   ;; returns (values points-won bid-value bid-winner)
   (define play-one-hand
-    (λ (players first-seat)
-      (let* ((players+deck (distribute-cards-to-players players (fresh-deck)))
-             (bid-result (perform-bidding players first-seat))
-             (trump-suit (choose-trump-suit players (cdr bid-result))))
-        (send-datum-to-all players `(bid-result ,bid-result))
-        (match (distribute-cards-to-players (car players+deck) (cdr players+deck))
-          [(cons players deck)
-           (let ((points-won
-                  (play-game (map user-hand players)
-                             trump-suit
-                             (λ (player-index cards-in-round game-state)
-                               (let ((player (list-ref players player-index)))
-                                 (send-datum-to-all players `(turn ,player-index))
-                                 (send-datum player
-                                             `(play-card . ((cards-played . ,cards-in-round)
-                                                            (game-state . ,game-state))))
-                                 (caddr (receive-datum player 'card-played players))))
-                             ;; broadcast accepted plays only — clients
-                             ;; render every played message they see
-                             #:notify-play
-                             (λ (player-index card)
-                               (send-datum-to-all players
-                                                  `(played ,player-index ,card)))
-                             #:error-func
-                             (λ (player-index error-msg)
-                               (send-datum (list-ref players player-index)
-                                           `(error ,error-msg)))
-                             #:first-leader first-seat)))
-             (send-datum-to-all players `(points-won ,points-won))
-             (values points-won (car bid-result) (cdr bid-result)))]
-          (else (error "card distribution failed"))))))
+    (λ (players first-seat state)
+      (let* ((deck (distribute-cards-to-players players (fresh-deck)))
+             (bid-result (perform-bidding players first-seat state)))
+        (set-match-state-bid-result! state bid-result)
+        (set-match-state-stage! state 'choosing-trump)
+        (let ((trump-suit (choose-trump-suit players (cdr bid-result) state)))
+          (set-match-state-trump-suit! state trump-suit)
+          (send-datum-to-all players `(bid-result ,bid-result))
+          (distribute-cards-to-players players deck)
+          (set-match-state-stage! state 'playing)
+          (let ((points-won
+                 (play-game (map user-hand players)
+                            trump-suit
+                            (λ (player-index cards-in-round game-state)
+                              (let ((player (list-ref players player-index))
+                                    (request `(play-card . ((cards-played . ,cards-in-round)
+                                                            (game-state . ,game-state)))))
+                                (set-match-state-awaiting!
+                                 state (cons player-index request))
+                                (send-datum-to-all players `(turn ,player-index))
+                                (send-datum player request)
+                                (caddr (receive-datum player 'card-played players))))
+                            ;; broadcast accepted plays only — clients
+                            ;; render every played message they see
+                            #:notify-play
+                            (λ (player-index card)
+                              (set-match-state-awaiting! state #f)
+                              (note-play! state player-index card)
+                              (unless (eq? card 'expose-trump)
+                                (let ((player (list-ref players player-index)))
+                                  (set-user-hand! player
+                                                  (remove card (user-hand player)))))
+                              (send-datum-to-all players
+                                                 `(played ,player-index ,card)))
+                            #:error-func
+                            (λ (player-index error-msg)
+                              (send-datum (list-ref players player-index)
+                                          `(error ,error-msg)))
+                            #:first-leader first-seat)))
+            (send-datum-to-all players `(points-won ,points-won))
+            (values points-won (car bid-result) (cdr bid-result)))))))
 
   ;; empty a player's channel of stale messages (e.g. the second half of a
   ;; double-clicked "next hand")
@@ -373,7 +525,7 @@
   ;; between-hands gate: block until the host asks for the next deal. The
   ;; host channel was drained *before* hand-result went out (a genuine
   ;; next-hand can only follow that broadcast), so whatever arrives now is a
-  ;; real click. Any player's socket closing raises, aborting the match.
+  ;; real click. The liveness check gives dropped players their grace.
   (define wait-for-next-hand
     (λ (host members)
       (let loop ()
@@ -385,13 +537,21 @@
              (when message
                (displayln (format "ignoring unexpected ~a from ~a at the gate"
                                   message (user-email host))))
-             (for-each (λ (member)
-                         (when (ws-conn-closed? (user-connection member))
-                           (error 'wait-for-next-hand
-                                  (format "player ~a disconnected"
-                                          (user-email member)))))
-                       members)
+             (check-liveness! members)
              (loop)])))))
+
+  ;; a match is over, won or abandoned: free the table name, the state
+  ;; views, the bots, and any seat whose owner is no longer connected
+  (define (end-match! name members)
+    (hash-remove! *running-games* name)
+    (hash-remove! *match-states* name)
+    (forget-liveness! members)
+    (for-each (λ (member)
+                (cond
+                  ((bot-user? member) (release-user member))
+                  ((ws-conn-closed? (user-connection member))
+                   (remove-user (user-email member)))))
+              members))
 
   (define start-game
     (λ (room-name)
@@ -409,80 +569,125 @@
                                (ws-conn-closed? (user-connection member)))
                              members)))
             ;; the table is in play now: delist it so it stops showing as
-            ;; joinable, and remember the running game by name
-            (hash-set! *running-games* name #t)
+            ;; joinable, and remember who is seated for rejoins
+            (hash-set! *running-games* name members)
             (close-room! room)
-            ;; a failure anywhere in the match (typically a disconnect, caught
-            ;; mid-hand by receive-datum or between hands by the gate)
-            ;; abandons it: free the table name and the bots, tell the humans
-            (with-handlers ((exn:fail?
-                             (λ (e)
-                               (displayln (format "game ~a aborted: ~a"
-                                                  name (exn-message e)))
-                               (hash-remove! *running-games* name)
-                               (for-each (λ (member)
-                                           (if (bot-user? member)
-                                               (release-user member)
+            (let ((state (match-state members 1 0 0 'bidding #f #f #f #f
+                                      '() 0 (fresh-seat-alist)
+                                      (fresh-seat-alist) #f #f)))
+              (hash-set! *match-states* name state)
+              ;; a lost seat anywhere in the match (a leaver, or a dropped
+              ;; player whose grace ran out) abandons it: free the table
+              ;; and the bots, tell the surviving humans
+              (with-handlers ((exn:fail?
+                               (λ (e)
+                                 (displayln (format "game ~a aborted: ~a"
+                                                    name (exn-message e)))
+                                 (end-match! name members)
+                                 (for-each (λ (member)
+                                             (unless (bot-user? member)
                                                (send-datum member
                                                            `(game-aborted ,name))))
-                                         members)
-                               'game-aborted)))
-              ;; members already includes the host. Hand N's opener and first
-              ;; leader sit at seat (N-1) mod 4, so the deal rotates.
-              (let match-loop ((hand-number 1) (evens 0) (odds 0))
-                ;; a player gone between hands must abort before the deal
-                (for-each (λ (member)
-                            (when (ws-conn-closed? (user-connection member))
-                              (error "connection closed for player"
-                                     (user-email member))))
-                          members)
-                ;; fresh per-hand player copies: every hand starts empty
-                (let* ((players (map (λ (member)
-                                       (struct-copy user member (hand '())))
-                                     members))
-                       (first-seat (remainder (sub1 hand-number) +max-players+))
-                       (target (match-target)))
-                  (let-values (((points-won bid-value bid-winner)
-                                (play-one-hand players first-seat)))
-                    (match (score-game points-won bid-value bid-winner)
-                      [(list made? _ _)
-                       (let* ((delta (hand-game-points bid-value made?))
-                              (evens (if (even? bid-winner) (+ evens delta) evens))
-                              (odds (if (odd? bid-winner) (+ odds delta) odds)))
-                         ;; drain the host channel *before* the broadcast: a
-                         ;; genuine next-hand can only be sent after
-                         ;; hand-result lands, so anything in there is stale
-                         (drain-comm! host)
-                         (send-datum-to-all members
-                                            `(hand-result ((hand . ,hand-number)
-                                                           (bidder . ,bid-winner)
-                                                           (bid . ,bid-value)
-                                                           (made . ,made?)
-                                                           (delta . ,delta)
-                                                           (evens . ,evens)
-                                                           (odds . ,odds)
-                                                           (target . ,target))))
-                         (cond
-                           [(match-winner evens odds #:target target)
-                            => (λ (winner)
-                                 (send-datum-to-all members
-                                                    `(match-over ((winner . ,winner)
-                                                                  (evens . ,evens)
-                                                                  (odds . ,odds)
-                                                                  (hands . ,hand-number))))
-                                 (hash-remove! *running-games* name)
-                                 ;; bots are single-use: free their
-                                 ;; connections and seats with the match
-                                 (for-each (λ (member)
-                                             (when (bot-user? member)
-                                               (release-user member)))
                                            members)
-                                 'game-started)]
-                           [else
-                            (wait-for-next-hand host members)
-                            (match-loop (add1 hand-number) evens odds)]))])))))]
+                                 'game-aborted)))
+                ;; members already includes the host. Hand N's opener and
+                ;; first leader sit at seat (N-1) mod 4, so the deal rotates.
+                (let match-loop ((hand-number 1) (evens 0) (odds 0))
+                  (check-liveness! members)
+                  ;; the shared user structs carry live hands: empty them
+                  ;; and reset the state view for the new hand
+                  (for-each (λ (member) (set-user-hand! member '())) members)
+                  (let ((first-seat (remainder (sub1 hand-number) +max-players+))
+                        (target (match-target)))
+                    (reset-state-for-hand! state hand-number first-seat)
+                    (let-values (((points-won bid-value bid-winner)
+                                  (play-one-hand members first-seat state)))
+                      (match (score-game points-won bid-value bid-winner)
+                        [(list made? _ _)
+                         (let* ((delta (hand-game-points bid-value made?))
+                                (evens (if (even? bid-winner) (+ evens delta) evens))
+                                (odds (if (odd? bid-winner) (+ odds delta) odds))
+                                (result-body `((hand . ,hand-number)
+                                               (bidder . ,bid-winner)
+                                               (bid . ,bid-value)
+                                               (made . ,made?)
+                                               (delta . ,delta)
+                                               (evens . ,evens)
+                                               (odds . ,odds)
+                                               (target . ,target))))
+                           (set-match-state-evens! state evens)
+                           (set-match-state-odds! state odds)
+                           (set-match-state-stage! state 'between-hands)
+                           (set-match-state-last-result! state result-body)
+                           ;; drain the host channel *before* the broadcast: a
+                           ;; genuine next-hand can only be sent after
+                           ;; hand-result lands, so anything in there is stale
+                           (drain-comm! host)
+                           (send-datum-to-all members `(hand-result ,result-body))
+                           (cond
+                             [(match-winner evens odds #:target target)
+                              => (λ (winner)
+                                   (send-datum-to-all members
+                                                      `(match-over ((winner . ,winner)
+                                                                    (evens . ,evens)
+                                                                    (odds . ,odds)
+                                                                    (hands . ,hand-number))))
+                                   (end-match! name members)
+                                   'game-started)]
+                             [else
+                              (wait-for-next-hand host members)
+                              (match-loop (add1 hand-number) evens odds)]))]))))))]
 
-           [else 'room-not-ready])]))))
+           [else 'room-not-ready])])))
+
+  ;; everything a reconnecting client needs to redraw mid-match; #f fields
+  ;; mean "not known/decided yet". Trump stays hidden from everyone but the
+  ;; bidder until the exposure.
+  (define (rejoin-snapshot email)
+    (let ((name (user-in-running-game? email)))
+      (cond
+        ((not name) '(no-running-game))
+        (else
+         (let ((players (hash-ref *running-games* name))
+               (state (hash-ref *match-states* name #f)))
+           (cond
+             ((not state) '(no-running-game))
+             (else
+              (let* ((seat (index-where players
+                                        (λ (p) (email=? (user-email p) email))))
+                     (me (list-ref players seat))
+                     (bid-result (match-state-bid-result state))
+                     (exposed? (match-state-trump-exposed? state))
+                     (trump (match-state-trump-suit state))
+                     (awaiting (match-state-awaiting state)))
+                `(game-snapshot
+                  ((room . ,name)
+                   (members . ,(map user-email players))
+                   (your-seat . ,seat)
+                   (hand-number . ,(match-state-hand-number state))
+                   (evens . ,(match-state-evens state))
+                   (odds . ,(match-state-odds state))
+                   (target . ,(match-target))
+                   (stage . ,(match-state-stage state))
+                   (high-bid . ,(match-state-high-bid state))
+                   (bid-result . ,bid-result)
+                   (trump . ,(and trump
+                                  (or exposed?
+                                      (and bid-result
+                                           (equal? seat (cdr bid-result))))
+                                  trump))
+                   (trump-exposed . ,exposed?)
+                   (your-hand . ,(user-hand me))
+                   (trick-leader . ,(match-state-trick-leader state))
+                   (trick . ,(map (λ (play) (cons (first play) (second play)))
+                                  (match-state-trick state)))
+                   (points . ,(match-state-points state))
+                   (tricks . ,(match-state-tricks-taken state))
+                   (last-result . ,(match-state-last-result state))
+                   (awaiting . ,(and awaiting (car awaiting)))
+                   (request . ,(and awaiting
+                                    (equal? seat (car awaiting))
+                                    (cdr awaiting))))))))))))))
 
 (require 'user)
 (require 'room)
@@ -559,16 +764,25 @@
             (else '(error not-a-member)))))))
     (_ '(error invalid-message))))
 
-;; A websocket dropped: unseat every user behind it (closing their tables if
-;; they were hosting) and forget them.
+;; A websocket dropped. Users seated in a running match keep their seat —
+;; the match gives them a grace window to reconnect (the same email rebinds
+;; the seat, so a user already rebound to a newer socket is not matched
+;; here), and end-match! forgets them if they never come back. Everyone
+;; else is unseated (closing their tables if they were hosting) and
+;; forgotten.
 (define (handle-disconnect connection)
   (for-each
    (λ (u)
      (let ((email (user-email u)))
-       (displayln (format "cleaning up disconnected user ~a" email))
-       (for-each (λ (room) (depart-room! room email))
-                 (rooms-with-member email))
-       (remove-user email)))
+       (cond
+         ((user-in-running-game? email)
+          (displayln (format "user ~a dropped mid-match — holding their seat"
+                             email)))
+         (else
+          (displayln (format "cleaning up disconnected user ~a" email))
+          (for-each (λ (room) (depart-room! room email))
+                    (rooms-with-member email))
+          (remove-user email)))))
    (users-with-connection connection)))
 
 (define (join-room message)
@@ -623,6 +837,13 @@
 ;;   the host's channel is read at the between-hands gate, so anyone else
 ;;   sending this is ignored
 ;;
+;; (leave-game <email>) => walk out of a running match: it aborts for the
+;;   whole table at once (no reconnect grace)
+;;
+;; (rejoin <email>) => after reconnecting (connect-user with the same email
+;;   rebinds the seat), fetch the full mid-match snapshot; replies
+;;   (game-snapshot <alist>) or (no-running-game)
+;;
 (define (dispatch connection message)
   (with-handlers ((exn:fail? (λ (e)
                                (displayln (format "dispatch error: ~a" (exn-message e)))
@@ -670,6 +891,16 @@
               (async-channel-put (user-comm (get-user-by-email (cadr message)))
                                  message)
               '(done)))
+
+      ((leave-game)
+       (let ((email (cadr message)))
+         (cond
+           ((user-in-running-game? email)
+            (request-leave! email)
+            '(leaving))
+           (else '(no-running-game)))))
+
+      ((rejoin) (rejoin-snapshot (cadr message)))
 
       ;; catch all
       (else 'invalid-request)))))

@@ -37,9 +37,11 @@
 
 (struct scripted (email connection events))
 
-(define (spawn-scripted email connection #:mute (mute '()))
+(define (spawn-scripted email connection
+                        #:mute (mute '())
+                        #:initial-hand (initial-hand '()))
   (define events (box '()))
-  (define hand (box '()))
+  (define hand (box initial-hand))
   (define (record! message)
     (set-box! events (append (unbox events) (list message))))
   (thread
@@ -130,11 +132,23 @@
 (define (result-ref result key)
   (cdr (assoc key (cadr result))))
 
+;; reads frames off a raw connection until one satisfies pred
+(define (recv-until connection pred #:attempts (attempts 10))
+  (let loop ((n attempts))
+    (when (zero? n)
+      (error 'recv-until "expected frame never arrived"))
+    (let ((message (recv-msg connection)))
+      (if (and message (pred message))
+          message
+          (loop (sub1 n))))))
+
 (define-test-suite game-tests
   (around
-   ;; start server before tests
+   ;; start server before tests; a short reconnect grace keeps the
+   ;; disconnect-abort scenarios fast (production default is much longer)
    (begin (displayln "starting server")
           (putenv "GAME-PORT" (number->string test-port))
+          (putenv "RECONNECT-GRACE" "2")
           (set! *service* (start-service test-port))
           (sleep 3))
 
@@ -274,6 +288,73 @@
                           #:label 'leaver-aborts-promptly))
        (for-each close-scripted! (remove leaver players))
        (sleep 1.5)))
+
+   ;; a dropped player reconnects mid-hand: the seat survives, the snapshot
+   ;; restores their view, the match plays on — and a deliberate leave
+   ;; afterwards ignores the grace window entirely
+   (test-begin
+     (putenv "RECONNECT-GRACE" "30")
+     (let* ((players (seat-scripted-table
+                      'resume-room
+                      '(resume-host resume-j1 resume-j2 resume-j3)
+                      ;; park the game on seat 0's opening bid so the drop
+                      ;; and the rejoin happen at a known point
+                      #:mute (hash 'resume-j3 '(request-bid))))
+            (host (last players))
+            (afk (first players))
+            (dropper (caddr players)) ; seat 2 = resume-j1
+            (rejoined #f))
+       (send-msg (scripted-connection host) '(start-game resume-room))
+       (await afk (λ (events) (findf (tagged 'request-bid) events))
+              #:label 'resume-asked)
+       (close-scripted! dropper)
+       (check-pred pair?
+                   (await host (λ (events)
+                                 (findf (tagged 'player-disconnected) events))
+                          #:label 'drop-noticed))
+
+       ;; reconnect: same email on a fresh socket rebinds the seat
+       (let* ((connection (connect-to-ws)))
+         (check-equal? (connect-user connection 'resume-j1) 'user-reconnected)
+         (send-msg connection '(rejoin resume-j1))
+         (let* ((snapshot (recv-until connection (tagged 'game-snapshot)))
+                (body (cadr snapshot)))
+           (check-equal? (cdr (assoc 'your-seat body)) 2)
+           (check-equal? (cdr (assoc 'stage body)) 'bidding)
+           (check-equal? (cdr (assoc 'hand-number body)) 1)
+           (check-equal? (cdr (assoc 'awaiting body)) 0)
+           (check-equal? (cdr (assoc 'request body)) #f)
+           (check-equal? (length (cdr (assoc 'your-hand body))) 4)
+           (check-equal? (cdr (assoc 'trump body)) #f)
+           ;; live again, playing from the restored hand
+           (set! rejoined
+                 (spawn-scripted 'resume-j1 connection
+                                 #:initial-hand (cdr (assoc 'your-hand body))))))
+       (check-pred pair?
+                   (await host (λ (events)
+                                 (findf (tagged 'player-reconnected) events))
+                          #:label 'return-noticed))
+
+       ;; wake the parked opener; the hand must now play out normally for
+       ;; everyone, the reconnected seat included
+       (send-msg (scripted-connection afk) '(put-bid resume-j3 16))
+       (check-pred pair?
+                   (await host (λ (events) (nth-hand-result events 1))
+                          #:label 'resumed-hand-result))
+       (check-pred pair?
+                   (await rejoined (λ (events) (nth-hand-result events 1))
+                          #:label 'rejoiner-sees-result))
+
+       ;; leaving on purpose aborts at once, long grace notwithstanding
+       (send-msg (scripted-connection host) '(leave-game resume-host))
+       (check-pred pair?
+                   (await afk (λ (events) (findf (tagged 'game-aborted) events))
+                          #:timeout 10
+                          #:label 'leave-aborts-immediately))
+       (close-scripted! rejoined)
+       (for-each close-scripted! players)
+       (sleep 1.5))
+     (putenv "RECONNECT-GRACE" "2"))
 
    ;; MATCH-TARGET=0 ends the match after exactly one hand, whatever the
    ;; cards: a made bid lifts the bidders to the target, a set leaves the
