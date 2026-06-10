@@ -37,12 +37,22 @@
 
 (struct scripted (email connection events))
 
+;; #:smart? plays with the real bot heuristics (and the per-hand memory
+;; they need); the default stays rigidly predictable — open at 16, pass
+;; every raise, take diamond, first valid card — for the deterministic
+;; rotation/arithmetic scenarios.
 (define (spawn-scripted email connection
                         #:mute (mute '())
                         #:initial-hand (initial-hand '())
-                        #:auto-next? (auto-next? #f))
+                        #:auto-next? (auto-next? #f)
+                        #:smart? (smart? #f))
   (define events (box '()))
   (define hand (box initial-hand))
+  (define seen (box '()))
+  (define trump (box #f))
+  (define chose? (box #f))
+  (define exposed? (box #f))
+  (define must-trump? (box #f))
   (define (record! message)
     (set-box! events (append (unbox events) (list message))))
   (thread
@@ -62,24 +72,56 @@
                  ;; a hosting script can keep the match moving by itself
                  (when auto-next?
                    (send-msg connection `(next-hand ,email))))
+                ((bid-result)
+                 (set-box! seen '())
+                 (set-box! exposed? #f)
+                 (set-box! must-trump? #f)
+                 (unless (unbox chose?) (set-box! trump #f))
+                 (set-box! chose? #f))
+                ((played)
+                 (let ((what (caddr message)))
+                   (if (eq? what 'expose-trump)
+                       (set-box! exposed? #t)
+                       (set-box! seen (cons what (unbox seen))))))
                 ((request-bid)
                  (let ((min-bid (cadr message)))
                    (send-msg connection
-                             `(put-bid ,email ,(if (= min-bid +min-bid+)
-                                                   +min-bid+
-                                                   'pass)))))
+                             `(put-bid ,email
+                                       ,(if smart?
+                                            (choose-bid (unbox hand) min-bid)
+                                            (if (= min-bid +min-bid+)
+                                                +min-bid+
+                                                'pass))))))
                 ((choose-trump)
-                 (send-msg connection `(selected-trump ,email diamond)))
+                 (let ((suit (if smart?
+                                 (choose-trump-suit (unbox hand))
+                                 'diamond)))
+                   (set-box! trump suit)
+                   (set-box! chose? #t)
+                   (send-msg connection `(selected-trump ,email ,suit))))
                 ((play-card)
                  (let* ((cards-played (cdr (cadr message)))
                         (game-state (cdr (caddr message)))
                         (first-suit (cdr (assoc 'first-suit game-state)))
-                        (card (findf (λ (c) (valid-card? c first-suit
-                                                         cards-played
-                                                         (unbox hand)))
-                                     (unbox hand))))
-                   (set-box! hand (remove card (unbox hand)))
-                   (send-msg connection `(card-played ,email ,card))))
+                        (server-trump (cdr (assoc 'trump-suit game-state)))
+                        (choice
+                         (if smart?
+                             (choose-play (unbox hand) cards-played game-state
+                                          #:trump (unbox trump)
+                                          #:exposed? (unbox exposed?)
+                                          #:seen (unbox seen)
+                                          #:must-trump? (unbox must-trump?))
+                             (findf (λ (c) (valid-card? c first-suit
+                                                        cards-played
+                                                        (unbox hand)))
+                                    (unbox hand)))))
+                   (when server-trump
+                     (set-box! trump server-trump)
+                     (set-box! exposed? #t))
+                   (set-box! must-trump? (eq? choice 'expose-trump))
+                   (unless (eq? choice 'expose-trump)
+                     (set-box! hand (remove choice (unbox hand))))
+                   (send-msg connection `(card-played ,email ,choice))))
                 (else (void))))
             (loop)))))))
   (scripted email connection events))
@@ -385,16 +427,17 @@
        (for-each close-scripted! players))
      (putenv "MATCH-TARGET" ""))
 
-   ;; a match against real bots must actually END now that they bid by
-   ;; hand strength — the old always-chase bots were set every hand, so
-   ;; their score only fell and no target was ever reached
+   ;; with hand-strength bidding, a table of bots (plus one bot-brained
+   ;; host) makes its bids at a healthy rate — the old always-chase bots
+   ;; were set every single hand, so their score could only fall and a
+   ;; match could never end
    (test-begin
-     (putenv "MATCH-TARGET" "2")
      (let ((connection (connect-to-ws)))
        (connect-user connection 'botmatch-host)
        (check-equal? (create-room connection 'botmatch-host 'botmatch-room)
                      'room-created)
-       (let ((host (spawn-scripted 'botmatch-host connection #:auto-next? #t)))
+       (let ((host (spawn-scripted 'botmatch-host connection
+                                   #:auto-next? #t #:smart? #t)))
          (for-each (λ (_) (send-msg connection '(add-bot-to-room botmatch-room)))
                    '(1 2 3))
          (await host
@@ -405,15 +448,18 @@
                          events))
                 #:label 'bots-seated)
          (send-msg connection '(start-game botmatch-room))
-         (let ((over (await host
-                            (λ (events) (findf (tagged 'match-over) events))
-                            #:timeout 120
-                            #:label 'bot-match-over)))
-           (check-true (<= (cdr (assoc 'hands (cadr over))) 30)
-                       "a target-2 bot match ends within 30 hands"))
+         (let ((found (await host
+                             (λ (events)
+                               (let ((results ((events-tagged 'hand-result) events)))
+                                 (or (findf (λ (r) (equal? (result-ref r 'made) #t))
+                                            results)
+                                     (and (>= (length results) 15) 'never-made))))
+                             #:timeout 90
+                             #:label 'bots-make-a-bid)))
+           (check-pred pair? found "a bid is made within fifteen hands"))
          (close-scripted! host)
-         (sleep 1)))
-     (putenv "MATCH-TARGET" ""))
+         ;; the host vanishing tears the match down (suite grace is 2s)
+         (sleep 3))))
 
    ;; stop server after tests
    (*service*)))

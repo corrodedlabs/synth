@@ -14,7 +14,11 @@
          create-room
          join-room
          client-lambda
-         spawn-bot)
+         spawn-bot
+         ;; pure bot heuristics, reusable by test harnesses
+         choose-bid
+         choose-trump-suit
+         choose-play)
 
 ;; resolved lazily so server.rkt can set GAME-PORT from its --port flag
 ;; before the first bot connects
