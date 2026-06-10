@@ -402,6 +402,9 @@ export class GameState {
         this.ui.hideBidPanel();
         this.ui.hideTrumpPanel();
         this.ui.setExposeVisible(false);
+        // no turn broadcast follows the last trick, so the marker of the
+        // hand's final player would keep pulsing through the result panel
+        this.playArea.clearActivePlayer();
         break;
 
       case "HandResult": {

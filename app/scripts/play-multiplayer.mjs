@@ -66,7 +66,7 @@ await guest.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });
 
 // both lobbies should now show 2 members
 for (const [label, page] of [["host", host], ["guest", guest]]) {
-  await page.waitForFunction(() => window.__game.state().members.length === 2, { timeout: 10000 });
+  await page.waitForFunction(() => window.__game.state().members.length === 2, undefined, { timeout: 10000 });
   console.log(`${label} lobby shows 2 players`);
 }
 await guest.screenshot({ path: `${SHOTS}/02-guest-lobby.png` });
@@ -84,7 +84,7 @@ if (!guestControls.addBot || !guestControls.start) {
 await host.click("#add-bot");
 await host.click("#add-bot");
 for (const [label, page] of [["host", host], ["guest", guest]]) {
-  await page.waitForFunction(() => window.__game.state().members.length === 4, { timeout: 10000 });
+  await page.waitForFunction(() => window.__game.state().members.length === 4, undefined, { timeout: 10000 });
   console.log(`${label} lobby shows 4 players`);
 }
 await host.screenshot({ path: `${SHOTS}/03-host-lobby-full.png` });

@@ -107,7 +107,7 @@ await guest.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });
 await host.click("#add-bot");
 await host.click("#add-bot");
 for (const [label, page] of [["host", host], ["guest", guest]]) {
-  await page.waitForFunction(() => window.__game.state().members.length === 4, { timeout: 10000 });
+  await page.waitForFunction(() => window.__game.state().members.length === 4, undefined, { timeout: 10000 });
   console.log(`${label} lobby shows 4 players`);
 }
 await host.click("#start-game");
@@ -156,7 +156,7 @@ check(
 // --- the host deals hand 2 with a real click ---
 await host.click("#next-hand");
 for (const [label, page] of [["host", host], ["guest", guest]]) {
-  await page.waitForFunction(() => window.__game.state().handNumber === 2, { timeout: 20000 });
+  await page.waitForFunction(() => window.__game.state().handNumber === 2, undefined, { timeout: 20000 });
   const snap = await state(page);
   check(`${label} starts hand 2 in the auction`, snap.phase === "bidding");
   check(`${label} per-hand results were reset`, snap.points === null);
@@ -185,7 +185,7 @@ check(
 
 // --- the host vanishing aborts the match for the guest ---
 await host.close();
-await guest.waitForFunction(() => window.__game.state().phase === "idle", { timeout: 20000 });
+await guest.waitForFunction(() => window.__game.state().phase === "idle", undefined, { timeout: 20000 });
 check("guest lands back on the start screen", await visible(guest, "start-screen"));
 check("the abort hides the between-hands panel", !(await visible(guest, "result-panel")));
 const guestAfter = await state(guest);

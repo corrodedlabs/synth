@@ -62,7 +62,7 @@ await guest.screenshot({ path: `${SHOTS}/01-two-tables-listed.png` });
 // --- guest joins table B; table A is untouched ---
 await guest.locator(".room-row", { hasText: tableB }).locator("button").click();
 await guest.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });
-await hostB.waitForFunction(() => window.__game.state().members.length === 2, {
+await hostB.waitForFunction(() => window.__game.state().members.length === 2, undefined, {
   timeout: 10000,
 });
 check("guest joined table B (host B sees 2)", true);
