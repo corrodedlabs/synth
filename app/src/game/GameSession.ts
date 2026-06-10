@@ -1,6 +1,7 @@
 import { Effect, Fiber, Queue } from "effect";
-import { cardPoints, ServerEvent } from "../net/protocol";
+import { cardPoints, RoomInfo, ServerEvent } from "../net/protocol";
 import { connectSocket, GameSocket, SocketError } from "../net/SocketService";
+import { memberDisplayName } from "../ui/UiOverlay";
 import {
   CardModel,
   GameAction,
@@ -15,19 +16,43 @@ export interface SessionCallbacks {
   readonly dispatch: (action: GameAction) => void;
   readonly getModel: () => GameModel;
   readonly status: (text: string) => void;
+  readonly rooms: (rooms: readonly RoomInfo[]) => void;
 }
 
-const SERVER_URL = "ws://localhost:8081/test";
+// What the session should do once the socket is up.
+export type SessionIntent = "create-room" | "browse-rooms";
+
+// Server endpoint resolution, most specific wins:
+// ?server=ws://… → ?port=9000 (localhost) → VITE_SERVER_URL (production build)
+// → ws://localhost:8081/test (dev default).
+function serverUrl(): string {
+  const params = new URLSearchParams(window.location.search);
+  const explicit = params.get("server");
+  if (explicit) return explicit;
+  const port = params.get("port");
+  if (port) return `ws://localhost:${port}/test`;
+  const configured = import.meta.env.VITE_SERVER_URL as string | undefined;
+  if (configured) return configured;
+  return "ws://localhost:8081/test";
+}
 
 // Bots answer instantly; these pauses pace the rendered game so turns stay readable.
 const BID_PAUSE = "400 millis";
 const CARD_PAUSE = "700 millis";
 const TRICK_PAUSE = "1400 millis";
 
+// App-level liveness ping so hosting proxies (fly.io, Netlify previews) don't
+// cull a quiet lobby socket.
+const PING_INTERVAL = "25 seconds";
+
+const MAX_PLAYERS = 4;
+
 export class GameSession {
   private socket: GameSocket | null = null;
   private fiber: Fiber.RuntimeFiber<void, SocketError> | null = null;
   private myServerIndex = 0;
+  private inRoom = false;
+  private joinedRoomName: string | null = null;
   private cardsInTrick = 0;
   private trickPoints = 0;
   private pointsTaken = [0, 0, 0, 0]; // accumulated per view index
@@ -35,17 +60,22 @@ export class GameSession {
   private chosenTrump: Suit | null = null;
 
   readonly email: string;
+  readonly displayName: string;
   readonly roomName: string;
 
-  constructor(private callbacks: SessionCallbacks) {
+  constructor(private callbacks: SessionCallbacks, playerName: string) {
     const id = Math.random().toString(36).slice(2, 8);
-    this.email = `player-${id}@game.local`;
-    this.roomName = `room-${id}`;
+    const slug =
+      playerName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") ||
+      "player";
+    this.displayName = playerName.trim() || "Player";
+    this.email = `${slug}-${id}@game.local`;
+    this.roomName = `${this.displayName}'s table #${id.slice(0, 3)}`;
   }
 
-  start() {
+  start(intent: SessionIntent) {
     this.fiber = Effect.runFork(
-      this.program().pipe(
+      this.program(intent).pipe(
         Effect.catchAll((error) =>
           Effect.sync(() => {
             this.callbacks.status(error.message);
@@ -63,6 +93,56 @@ export class GameSession {
     }
     this.socket?.close();
     this.socket = null;
+  }
+
+  // --- lobby input (called from the UI) ---
+
+  createRoom() {
+    if (!this.socket || this.inRoom) return;
+    this.socket.send({ _tag: "MakeRoom", hostEmail: this.email, roomName: this.roomName });
+  }
+
+  refreshRooms() {
+    if (!this.socket || this.inRoom) return;
+    this.socket.send({ _tag: "GetActiveRooms" });
+  }
+
+  join(roomName: string) {
+    if (!this.socket || this.inRoom) return;
+    this.joinedRoomName = roomName;
+    this.socket.send({ _tag: "JoinRoom", roomName, email: this.email });
+    this.callbacks.status("Joining the table…");
+  }
+
+  leaveRoom() {
+    const model = this.callbacks.getModel();
+    if (!this.socket || !this.inRoom || model.roomName === null) return;
+    this.socket.send({ _tag: "LeaveRoom", roomName: model.roomName, email: this.email });
+  }
+
+  kick(targetEmail: string) {
+    const model = this.callbacks.getModel();
+    if (!this.socket || !model.isHost || model.roomName === null) return;
+    if (targetEmail === this.email) return;
+    this.socket.send({
+      _tag: "KickFromRoom",
+      roomName: model.roomName,
+      hostEmail: this.email,
+      targetEmail,
+    });
+  }
+
+  addBot() {
+    const model = this.callbacks.getModel();
+    if (!this.socket || !model.isHost || model.members.length >= MAX_PLAYERS) return;
+    this.socket.send({ _tag: "AddBot", roomName: this.roomName });
+  }
+
+  startGame() {
+    const model = this.callbacks.getModel();
+    if (!this.socket || !model.isHost || model.members.length !== MAX_PLAYERS) return;
+    this.socket.send({ _tag: "StartGame", roomName: this.roomName });
+    this.callbacks.status("Starting…");
   }
 
   // --- player input (called from the UI when the server is waiting on us) ---
@@ -100,6 +180,17 @@ export class GameSession {
     this.callbacks.dispatch({ _tag: "RequestCleared" });
   }
 
+  // Back to the start screen: reset lobby state and refresh the table list
+  // so the user can immediately join or host again on the same connection.
+  private exitRoom(message: string) {
+    this.inRoom = false;
+    this.joinedRoomName = null;
+    this.myServerIndex = 0;
+    this.callbacks.dispatch({ _tag: "RoomLeft" });
+    this.callbacks.status(message);
+    this.refreshRooms();
+  }
+
   // --- seat translation: server index <-> view index (0 = us at the bottom) ---
 
   private toView(serverIndex: number): PlayerIndex {
@@ -112,13 +203,13 @@ export class GameSession {
 
   // --- session program ---
 
-  private program(): Effect.Effect<void, SocketError> {
+  private program(intent: SessionIntent): Effect.Effect<void, SocketError> {
     return Effect.gen(this, function* () {
       const { dispatch } = this.callbacks;
       dispatch({ _tag: "PhaseChanged", phase: "connecting" });
-      this.callbacks.status("Joining a table…");
+      this.callbacks.status("Connecting…");
 
-      const socket = yield* connectSocket(SERVER_URL);
+      const socket = yield* connectSocket(serverUrl());
       this.socket = socket;
 
       socket.send({ _tag: "ConnectUser", email: this.email, picUrl: "none" });
@@ -126,50 +217,25 @@ export class GameSession {
       // beat so the user exists before the room is created.
       yield* Effect.sleep("300 millis");
 
-      socket.send({ _tag: "MakeRoom", hostEmail: this.email, roomName: this.roomName });
-      yield* this.waitFor(socket, (event) => event._tag === "RoomCreated");
+      // heartbeat — dies with this fiber when the session ends
+      yield* Effect.fork(
+        Effect.forever(
+          Effect.sleep(PING_INTERVAL).pipe(
+            Effect.andThen(Effect.sync(() => this.socket?.send({ _tag: "Ping" })))
+          )
+        )
+      );
 
-      let members: readonly string[] = [];
-      for (let expected = 2; expected <= 4; expected++) {
-        socket.send({ _tag: "AddBot", roomName: this.roomName });
-        const event = yield* this.waitFor(
-          socket,
-          (e): e is ServerEvent & { _tag: "RoomMembers" } =>
-            e._tag === "RoomMembers" && e.members.length === expected
-        );
-        members = event.members;
-        this.callbacks.status(`Bots seated: ${expected - 1} of 3`);
+      if (intent === "create-room") {
+        this.createRoom();
+      } else {
+        this.refreshRooms();
       }
-
-      this.myServerIndex = members.indexOf(this.email);
-      if (this.myServerIndex < 0) {
-        return yield* Effect.fail(new SocketError("could not find our seat in the room"));
-      }
-
-      socket.send({ _tag: "StartGame", roomName: this.roomName });
-      this.callbacks.status("Dealing…");
 
       for (;;) {
         const event = yield* Queue.take(socket.events);
         const finished = yield* this.handleEvent(event);
         if (finished) return;
-      }
-    });
-  }
-
-  private waitFor<E extends ServerEvent>(
-    socket: GameSocket,
-    predicate: (event: ServerEvent) => event is E
-  ): Effect.Effect<E>;
-  private waitFor(
-    socket: GameSocket,
-    predicate: (event: ServerEvent) => boolean
-  ): Effect.Effect<ServerEvent>;
-  private waitFor(socket: GameSocket, predicate: (event: ServerEvent) => boolean) {
-    return Effect.gen(this, function* () {
-      for (;;) {
-        const event = yield* Queue.take(socket.events);
-        if (predicate(event)) return event;
       }
     });
   }
@@ -190,9 +256,75 @@ export class GameSession {
     const { dispatch } = this.callbacks;
     return Effect.gen(this, function* () {
       switch (event._tag) {
-        case "HandDealt":
+        case "RoomCreated":
+          this.inRoom = true;
+          this.myServerIndex = 0;
+          dispatch({
+            _tag: "RoomEntered",
+            roomName: this.roomName,
+            members: [this.email],
+            isHost: true,
+          });
+          this.callbacks.status("Your table is ready — fill the seats, then start.");
+          return false;
+
+        case "ActiveRooms":
+          this.callbacks.rooms(event.rooms);
+          return false;
+
+        case "RoomMembers": {
+          this.myServerIndex = event.members.indexOf(this.email);
+          if (this.inRoom) {
+            dispatch({ _tag: "MembersChanged", members: event.members });
+          } else if (this.myServerIndex >= 0) {
+            // our join went through — this broadcast is our welcome
+            this.inRoom = true;
+            dispatch({
+              _tag: "RoomEntered",
+              roomName: this.joinedRoomName ?? "table",
+              members: event.members,
+              isHost: false,
+            });
+          }
+          return false;
+        }
+
+        case "GameStarted":
+          this.callbacks.status("Dealing…");
+          return false;
+
+        case "RoomLeft":
+          this.exitRoom("You left the table.");
+          return false;
+
+        case "RoomClosed":
+          if (this.inRoom) this.exitRoom("The host closed the table.");
+          return false;
+
+        case "RemovedFromRoom":
+          if (this.inRoom) this.exitRoom("The host removed you from the table.");
+          return false;
+
+        case "StartGameFailed":
+          this.callbacks.status(
+            event.reason === "room-not-ready"
+              ? "The table needs 4 players before the game can start."
+              : "This game has already started."
+          );
+          return false;
+
+        case "HandDealt": {
+          // First deal: seats are final now, pin everyone's display name.
+          const model = this.callbacks.getModel();
+          if (model.seatNames === null && model.members.length === 4) {
+            const names = [0, 1, 2, 3].map((view) =>
+              memberDisplayName(model.members[this.toServer(view)] ?? "")
+            );
+            dispatch({ _tag: "SeatNamesSet", names });
+          }
           dispatch({ _tag: "HandDealt", cards: event.cards });
           return false;
+        }
 
         case "Turn":
           // After a complete trick, the next leader is the trick's winner.
@@ -265,7 +397,11 @@ export class GameSession {
         }
 
         case "ServerError":
-          this.callbacks.status(`Server rejected that: ${event.message}`);
+          this.callbacks.status(
+            event.message.includes("no-such-room")
+              ? "That table is no longer open."
+              : `Server rejected that: ${event.message}`
+          );
           return false;
 
         case "Disconnected":

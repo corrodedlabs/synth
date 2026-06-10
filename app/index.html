@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>🎴</text></svg>" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -132,6 +132,243 @@
         cursor: pointer;
         letter-spacing: 2px;
       }
+      #player-name {
+        font-family: inherit;
+        font-size: 22px;
+        color: #3b2f2a;
+        background: rgba(253, 250, 243, 0.9);
+        border: 1px solid rgba(59, 47, 42, 0.35);
+        border-radius: 4px;
+        padding: 9px 18px;
+        margin-bottom: 22px;
+        text-align: center;
+        letter-spacing: 0.6px;
+        outline: none;
+        width: 240px;
+      }
+      #player-name:focus {
+        border-color: rgba(59, 47, 42, 0.65);
+      }
+      #start-actions {
+        display: flex;
+        gap: 16px;
+      }
+      #room-browser {
+        margin-top: 30px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+        max-height: 280px;
+      }
+      #room-browser .browser-title {
+        font-size: 20px;
+        opacity: 0.7;
+        letter-spacing: 0.6px;
+      }
+      #room-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        overflow-y: auto;
+        max-height: 190px;
+        min-width: 360px;
+      }
+      .room-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        background: rgba(253, 250, 243, 0.92);
+        border: 1px solid rgba(59, 47, 42, 0.2);
+        border-radius: 4px;
+        padding: 8px 14px;
+        font-size: 20px;
+      }
+      .room-row .room-name {
+        letter-spacing: 0.4px;
+      }
+      .room-row .room-count {
+        opacity: 0.6;
+        font-size: 18px;
+      }
+      .room-row button,
+      #room-browser button {
+        font-size: 18px !important;
+        padding: 5px 18px !important;
+        letter-spacing: 0.6px !important;
+      }
+      #room-empty {
+        font-size: 19px;
+        opacity: 0.6;
+        font-style: italic;
+      }
+      #lobby-panel {
+        top: 50%;
+        transform: translate(-50%, -50%);
+        min-width: 380px;
+        padding: 26px 40px;
+      }
+      #lobby-title {
+        font-size: 30px;
+        margin-bottom: 4px;
+        letter-spacing: 0.6px;
+        padding: 0 76px; /* clear of the corner leave button */
+      }
+      #lobby-subtitle {
+        font-size: 18px;
+        opacity: 0.65;
+        margin-bottom: 16px;
+      }
+      #seat-list {
+        list-style: none;
+        margin: 0 0 18px;
+        padding: 0;
+        text-align: left;
+      }
+      #seat-list li {
+        font-size: 21px;
+        padding: 5px 4px;
+        min-height: 36px;
+        box-sizing: border-box;
+        border-bottom: 1px solid rgba(59, 47, 42, 0.12);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+      }
+      #seat-list li:last-child {
+        border-bottom: none;
+      }
+      #seat-list .seat-label {
+        opacity: 0.55;
+        font-size: 18px;
+      }
+      #seat-list li.empty-seat {
+        opacity: 0.45;
+        font-style: italic;
+      }
+      #lobby-panel button:disabled {
+        opacity: 0.35;
+        cursor: default;
+      }
+      #lobby-panel button:disabled:hover {
+        background: transparent;
+      }
+      #lobby-hint {
+        font-size: 18px;
+        opacity: 0.65;
+        margin-top: 10px;
+        min-height: 22px;
+      }
+      #leave-table {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        font-size: 15px !important;
+        padding: 3px 12px !important;
+        border-color: rgba(59, 47, 42, 0.25) !important;
+        opacity: 0.6;
+        margin: 0 !important;
+      }
+      #leave-table:hover {
+        opacity: 1;
+      }
+      /* #seat-list prefix outranks the generic .panel button rules */
+      #seat-list .kick-button {
+        font-family: inherit;
+        font-size: 13px;
+        line-height: 1;
+        color: #a33c2e;
+        background: transparent;
+        border: 1px solid rgba(163, 60, 46, 0.4);
+        border-radius: 50%;
+        width: 22px;
+        height: 22px;
+        padding: 0;
+        margin: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        flex-shrink: 0;
+      }
+      #seat-list .kick-button:hover {
+        background: rgba(163, 60, 46, 0.12);
+      }
+      #seat-list .seat-tags {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .seat-name-label {
+        position: absolute;
+        transform: translate(-50%, 0);
+        font-size: 19px;
+        letter-spacing: 0.6px;
+        color: #3b2f2a;
+        opacity: 0;
+        transition: opacity 400ms ease;
+        pointer-events: none;
+        text-align: center;
+        white-space: nowrap;
+      }
+      .seat-name-label.visible {
+        opacity: 0.7;
+      }
+      .seat-name-label .partner-tag {
+        display: block;
+        font-size: 14px;
+        opacity: 0.65;
+        letter-spacing: 1px;
+      }
+      #help-button {
+        position: absolute;
+        bottom: 18px;
+        right: 22px;
+        z-index: 30; /* clickable above the full-screen start overlay */
+        pointer-events: auto;
+        font-family: inherit;
+        font-size: 17px;
+        color: #3b2f2a;
+        background: transparent;
+        border: none;
+        border-bottom: 1px solid rgba(59, 47, 42, 0.35);
+        padding: 2px 2px;
+        cursor: pointer;
+        letter-spacing: 0.8px;
+        opacity: 0.6;
+      }
+      #help-button:hover {
+        opacity: 1;
+      }
+      #help-panel {
+        top: 50%;
+        transform: translate(-50%, -50%);
+        max-width: 520px;
+        text-align: left;
+        z-index: 31; /* above the start overlay and the help button */
+      }
+      #help-panel .panel-title {
+        font-size: 28px;
+        text-align: center;
+        margin-bottom: 10px;
+      }
+      #help-rules {
+        margin: 0 0 16px;
+        padding-left: 22px;
+        font-size: 19px;
+        line-height: 1.45;
+      }
+      #help-rules li {
+        margin-bottom: 7px;
+      }
+      #help-panel #help-close {
+        display: block;
+        margin: 0 auto;
+        font-size: 18px;
+        padding: 6px 26px;
+      }
       #status-line {
         position: absolute;
         top: 32px;
@@ -223,6 +460,25 @@
       <div id="status-line"></div>
       <div id="trump-indicator"></div>
 
+      <div id="seat-label-1" class="seat-name-label"></div>
+      <div id="seat-label-2" class="seat-name-label"></div>
+      <div id="seat-label-3" class="seat-name-label"></div>
+
+      <button id="help-button" type="button">how to play</button>
+      <div id="help-panel" class="panel hidden">
+        <div class="panel-title">Twenty-Eight</div>
+        <ul id="help-rules">
+          <li>32 cards, four players — you and the player opposite are a team.</li>
+          <li>Card points: <b>J&nbsp;3</b> · <b>9&nbsp;2</b> · <b>A&nbsp;1</b> · <b>10&nbsp;1</b> — 28 in all, hence the name.</li>
+          <li>You get 4 cards, then everyone bids 16–28: the bid is how many points your team promises to take.</li>
+          <li>The auction winner picks the trump suit <i>secretly</i>, then the last 4 cards are dealt.</li>
+          <li>Follow the led suit if you can. If you can't, play anything — or reveal the trump to start trumping.</li>
+          <li>Highest card of the led suit wins the trick; once trump is revealed, trumps beat everything.</li>
+          <li>Make at least your bid in points and your team wins the hand — fall short and you're <i>set</i>.</li>
+        </ul>
+        <button id="help-close" type="button">Close</button>
+      </div>
+
       <div id="bid-panel" class="panel hidden">
         <div id="bid-label"></div>
         <button id="bid-raise" type="button">Bid</button>
@@ -245,10 +501,29 @@
         <button id="play-again" type="button">Play again</button>
       </div>
 
+      <div id="lobby-panel" class="panel hidden">
+        <div id="lobby-title"></div>
+        <div id="lobby-subtitle"></div>
+        <ul id="seat-list"></ul>
+        <button id="add-bot" type="button">Add a bot</button>
+        <button id="start-game" type="button" disabled>Start game</button>
+        <div id="lobby-hint"></div>
+        <button id="leave-table" type="button">Leave table</button>
+      </div>
+
       <div id="start-screen" class="hidden">
         <h1>28</h1>
         <p>a trick-taking game</p>
-        <button id="play-button" type="button">Play</button>
+        <input id="player-name" type="text" placeholder="your name" maxlength="20" autocomplete="off" />
+        <div id="start-actions">
+          <button id="create-button" type="button">Create a table</button>
+          <button id="browse-button" type="button">Join a table</button>
+        </div>
+        <div id="room-browser" class="hidden">
+          <div class="browser-title">Open tables</div>
+          <div id="room-list"></div>
+          <button id="refresh-rooms" type="button">Refresh</button>
+        </div>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>

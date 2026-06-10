@@ -60,7 +60,14 @@ export class GameState {
     );
 
     this.ui = new UiOverlay({
-      onStart: () => this.startOnline(),
+      onCreate: (name) => this.createTable(name),
+      onBrowse: (name) => this.browseTables(name),
+      onJoin: (roomName) => this.session?.join(roomName),
+      onRefreshRooms: () => this.session?.refreshRooms(),
+      onAddBot: () => this.session?.addBot(),
+      onStartGame: () => this.session?.startGame(),
+      onLeave: () => this.session?.leaveRoom(),
+      onKick: (member) => this.session?.kick(member),
       onBid: (bid) => this.session?.submitBid(bid),
       onPass: () => this.session?.submitBid("pass"),
       onTrump: (suit) => this.session?.chooseTrump(suit),
@@ -70,6 +77,48 @@ export class GameState {
 
     this.scoreElement = document.getElementById("score-value");
     this.tricksElement = document.getElementById("tricks-value");
+
+    window.addEventListener("resize", () => this.positionSeatLabels());
+  }
+
+  // "You" for ourselves, the real player name (set at deal time) otherwise.
+  private seatName(playerIndex: PlayerIndex): string {
+    if (playerIndex === 0) return "You";
+    return this.model.seatNames?.[playerIndex] ?? SEAT_NAMES[playerIndex];
+  }
+
+  // Pin opponent name labels under their enso markers.
+  private positionSeatLabels() {
+    const canvas = this.sceneManager.renderer.domElement;
+    for (const seat of [1, 2, 3] as const) {
+      const label = document.getElementById(`seat-label-${seat}`);
+      if (!label) continue;
+      const names = this.model.seatNames;
+      if (!names) {
+        label.classList.remove("visible");
+        continue;
+      }
+      const screen = this.playArea.markerScreenPosition(seat, canvas);
+      if (!screen) continue;
+      label.textContent = names[seat];
+      if (seat === 2) {
+        const tag = document.createElement("span");
+        tag.className = "partner-tag";
+        tag.textContent = "your partner";
+        label.append(tag);
+      }
+      // Keep clear of the played-card cross: partner's label sits above their
+      // marker, side labels are pushed outward and down.
+      const offset =
+        seat === 2
+          ? { x: 0, y: -96 }
+          : seat === 1
+            ? { x: 64, y: 54 }
+            : { x: -64, y: 54 };
+      label.style.left = `${screen.x + offset.x}px`;
+      label.style.top = `${screen.y + offset.y}px`;
+      label.classList.add("visible");
+    }
   }
 
   public showStartScreen() {
@@ -85,19 +134,37 @@ export class GameState {
     this.mockFiber = Effect.runFork(program);
   }
 
-  public startOnline() {
+  public createTable(playerName: string) {
+    this.startSession(playerName, "create-room");
+  }
+
+  public browseTables(playerName: string) {
+    this.startSession(playerName, "browse-rooms");
+  }
+
+  private startSession(playerName: string, intent: "create-room" | "browse-rooms") {
+    if (this.session) {
+      // already connected (e.g. browsing) — just issue the new intent
+      if (intent === "create-room") this.session.createRoom();
+      else this.session.refreshRooms();
+      return;
+    }
     this.mockMode = false;
-    this.session = new GameSession({
-      dispatch: (action) => this.dispatch(action),
-      getModel: () => this.model,
-      status: (text) => this.ui.status(text),
-    });
+    this.session = new GameSession(
+      {
+        dispatch: (action) => this.dispatch(action),
+        getModel: () => this.model,
+        status: (text) => this.ui.status(text),
+        rooms: (rooms) => this.ui.showRooms(rooms),
+      },
+      playerName
+    );
 
     const session = this.session;
     Effect.runFork(
       Effect.gen(this, function* () {
         yield* this.loadTextures();
-        session.start();
+        session.start(intent);
       })
     );
   }
@@ -187,10 +254,27 @@ export class GameState {
   private renderAction(action: GameAction) {
     switch (action._tag) {
       case "PhaseChanged":
-        if (action.phase === "connecting") this.ui.status("Joining a table…");
+        if (action.phase === "connecting") this.ui.status("Connecting…");
+        if (action.phase === "idle") this.ui.showStartScreen();
+        break;
+
+      case "RoomEntered":
+      case "MembersChanged":
+        this.ui.updateLobby(this.model, this.session?.email ?? "");
+        break;
+
+      case "RoomLeft":
+        this.ui.hideLobby();
+        this.ui.showStartScreen();
+        this.positionSeatLabels(); // hides them (seatNames reset)
+        break;
+
+      case "SeatNamesSet":
+        this.positionSeatLabels();
         break;
 
       case "HandDealt":
+        this.ui.hideLobby();
         action.cards.forEach((card) => this.hand.addCard(this.createCard(card)));
         break;
 
@@ -211,13 +295,13 @@ export class GameState {
         break;
 
       case "BidPlaced": {
-        const seat = SEAT_NAMES[action.playerIndex];
+        const seat = this.seatName(action.playerIndex);
         this.ui.status(action.bid === "pass" ? `${seat} pass${action.playerIndex === 0 ? "" : "es"}` : `${seat} bid${action.playerIndex === 0 ? "" : "s"} ${action.bid}`, true);
         break;
       }
 
       case "BidWon":
-        this.ui.status(`${SEAT_NAMES[action.playerIndex]} won the bid at ${action.bid}`, true);
+        this.ui.status(`${this.seatName(action.playerIndex)} won the bid at ${action.bid}`, true);
         break;
 
       case "TrumpSet":
@@ -255,7 +339,7 @@ export class GameState {
         this.playArea.clearTable(action.winner);
         this.renderScore();
         if (action.winner !== null) {
-          const seat = SEAT_NAMES[action.winner];
+          const seat = this.seatName(action.winner);
           const taker = action.winner === 0 ? "You take" : `${seat} takes`;
           this.ui.status(
             action.points > 0 ? `${taker} the trick (+${action.points})` : `${taker} the trick`,
@@ -275,7 +359,7 @@ export class GameState {
           const bidderOurs = this.model.bidWinner === 0 || this.model.bidWinner === 2;
           const bidderPoints = bidderOurs ? ourPoints : theirPoints;
           const made = bidderPoints >= this.model.finalBid;
-          const bidderName = this.model.bidWinner === 0 ? "Your" : `${SEAT_NAMES[this.model.bidWinner]}'s`;
+          const bidderName = this.model.bidWinner === 0 ? "Your" : `${this.seatName(this.model.bidWinner)}'s`;
           detail = `${bidderName} team bid ${this.model.finalBid} and took ${bidderPoints} — ${made ? "made it" : "set"}`;
         }
         this.ui.status("");

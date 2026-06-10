@@ -48,6 +48,32 @@ describe("decodeServerEvent", () => {
     expect(decodeServerEvent("(game-started)")).toEqual({ _tag: "GameStarted" });
   });
 
+  it("decodes the lobby flow", () => {
+    expect(decodeServerEvent("room-joined")).toEqual({ _tag: "RoomJoined" });
+    expect(decodeServerEvent("room-left")).toEqual({ _tag: "RoomLeft" });
+    expect(decodeServerEvent('(room-closed "a\'s table")')).toEqual({ _tag: "RoomClosed" });
+    expect(decodeServerEvent('(removed-from-room "a\'s table")')).toEqual({
+      _tag: "RemovedFromRoom",
+    });
+    expect(decodeServerEvent("(start-game-failed room-not-ready)")).toEqual({
+      _tag: "StartGameFailed",
+      reason: "room-not-ready",
+    });
+    // exact shape the server's game-room->list produces
+    expect(
+      decodeServerEvent(
+        '(active-rooms (((host . "a@x") (name . "a\'s table") (members "bot-1" "a@x")) ((host . "b@x") (name . "b\'s table") (members "b@x"))))'
+      )
+    ).toEqual({
+      _tag: "ActiveRooms",
+      rooms: [
+        { host: "a@x", name: "a's table", members: ["bot-1", "a@x"] },
+        { host: "b@x", name: "b's table", members: ["b@x"] },
+      ],
+    });
+    expect(decodeServerEvent("(active-rooms ())")).toEqual({ _tag: "ActiveRooms", rooms: [] });
+  });
+
   it("decodes the bidding flow", () => {
     expect(decodeServerEvent("(turn 2)")).toEqual({ _tag: "Turn", playerIndex: 2 });
     expect(decodeServerEvent("(request-bid 16)")).toEqual({ _tag: "BidRequested", currentBid: 16 });
@@ -113,6 +139,25 @@ describe("decodeServerEvent", () => {
 });
 
 describe("encodeCommand", () => {
+  it("encodes lobby commands", () => {
+    expect(encodeCommand({ _tag: "JoinRoom", roomName: "a's table", email: "b@x" })).toBe(
+      '(join-room "a\'s table" "b@x")'
+    );
+    expect(encodeCommand({ _tag: "LeaveRoom", roomName: "a's table", email: "b@x" })).toBe(
+      '(leave-room "a\'s table" "b@x")'
+    );
+    expect(
+      encodeCommand({
+        _tag: "KickFromRoom",
+        roomName: "a's table",
+        hostEmail: "a@x",
+        targetEmail: "bot-1",
+      })
+    ).toBe('(kick-from-room "a\'s table" "a@x" "bot-1")');
+    expect(encodeCommand({ _tag: "GetActiveRooms" })).toBe("(get-active-rooms)");
+    expect(encodeCommand({ _tag: "Ping" })).toBe("(ping)");
+  });
+
   it("encodes every command", () => {
     expect(encodeCommand({ _tag: "ConnectUser", email: "a@b", picUrl: "p.png" })).toBe(
       '(connect-user "a@b" "p.png")'

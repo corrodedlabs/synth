@@ -32,6 +32,15 @@ if (params.has('mock')) {
   pass: () => gameState.getSession()?.submitBid('pass'),
   trump: (suit: 'hearts' | 'diamonds' | 'clubs' | 'spades') => gameState.getSession()?.chooseTrump(suit),
   expose: () => gameState.getSession()?.exposeTrump(),
+  // lobby controls
+  createTable: (name: string) => gameState.createTable(name ?? 'tester'),
+  browseTables: (name: string) => gameState.browseTables(name ?? 'tester'),
+  joinTable: (roomName: string) => gameState.getSession()?.join(roomName),
+  addBot: () => gameState.getSession()?.addBot(),
+  startGame: () => gameState.getSession()?.startGame(),
+  leaveTable: () => gameState.getSession()?.leaveRoom(),
+  kick: (member: string) => gameState.getSession()?.kick(member),
+  roomName: () => gameState.getSession()?.roomName,
 };
 
 function animate() {

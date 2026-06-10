@@ -3,14 +3,19 @@
 // plays, then the debug bridge. Usage: node scripts/play-game.mjs [url]
 // Screenshots land in /tmp/game-shots.
 import { chromium } from "playwright";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 
 const URL = process.argv[2] ?? "http://localhost:5173/";
 const SHOTS = "/tmp/game-shots";
 mkdirSync(SHOTS, { recursive: true });
 
+// Prefer the sandbox chromium when present (Linux CI), else system Chrome.
+// HEADED=1 opens a visible browser window.
 const browser = await chromium.launch({
-  executablePath: "/usr/bin/chromium",
+  ...(existsSync("/usr/bin/chromium")
+    ? { executablePath: "/usr/bin/chromium" }
+    : { channel: "chrome" }),
+  headless: !process.env.HEADED,
   args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader"],
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
@@ -45,10 +50,42 @@ const getState = () =>
 
 console.log(`navigating to ${URL}`);
 await page.goto(URL);
-await page.waitForSelector("#play-button", { state: "visible", timeout: 15000 });
+await page.waitForSelector("#create-button", { state: "visible", timeout: 15000 });
 await shot("01-start");
-await page.click("#play-button");
-console.log("clicked play");
+
+// --- lobby flow: create a table, seat 3 bots, then explicitly start ---
+await page.fill("#player-name", "Tester");
+await page.click("#create-button");
+await page.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });
+await shot("01b-lobby-empty");
+
+const seatCount = () =>
+  page.evaluate(() => window.__game.state().members.length);
+const startDisabled = () =>
+  page.evaluate(() => document.getElementById("start-game").disabled);
+
+if (!(await startDisabled())) throw new Error("start button enabled with 1 player");
+// the explicit-start gate: starting must do nothing before the table is full
+await page.evaluate(() => window.__game.startGame());
+await page.waitForTimeout(500);
+if ((await page.evaluate(() => window.__game.state().phase)) !== "lobby") {
+  throw new Error("game left the lobby before 4 players were seated");
+}
+
+for (let bots = 1; bots <= 3; bots++) {
+  await page.click("#add-bot");
+  await page.waitForFunction(
+    (expected) => window.__game.state().members.length === expected,
+    bots + 1,
+    { timeout: 10000 }
+  );
+  console.log(`bots seated: ${bots}`);
+}
+await shot("01c-lobby-full");
+
+if (await startDisabled()) throw new Error("start button still disabled with 4 players");
+console.log(`seats full (${await seatCount()}), starting game`);
+await page.click("#start-game");
 
 let didBid = false;
 let shotFullHand = false;

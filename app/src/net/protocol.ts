@@ -73,8 +73,20 @@ export function decodeSuit(expr: SExpr): Suit | null {
 
 export type BidValue = number | "pass";
 
+export interface RoomInfo {
+  readonly host: string;
+  readonly name: string;
+  readonly members: readonly string[];
+}
+
 export type ServerEvent =
   | { readonly _tag: "RoomCreated" }
+  | { readonly _tag: "RoomJoined" }
+  | { readonly _tag: "RoomLeft" }
+  | { readonly _tag: "RoomClosed" }
+  | { readonly _tag: "RemovedFromRoom" }
+  | { readonly _tag: "ActiveRooms"; readonly rooms: readonly RoomInfo[] }
+  | { readonly _tag: "StartGameFailed"; readonly reason: string }
   | { readonly _tag: "RoomMembers"; readonly members: readonly string[] }
   | { readonly _tag: "GameStarted" }
   | { readonly _tag: "HandDealt"; readonly cards: readonly CardModel[] }
@@ -114,6 +126,8 @@ export function decodeServerEvent(frame: string): ServerEvent | null {
   }
 
   if (isSym(expr, "room-created")) return { _tag: "RoomCreated" };
+  if (isSym(expr, "room-joined")) return { _tag: "RoomJoined" };
+  if (isSym(expr, "room-left")) return { _tag: "RoomLeft" };
   if (!Array.isArray(expr) || expr.length === 0 || !(expr[0] instanceof Sym)) {
     return { _tag: "Ignored", raw: trimmed };
   }
@@ -128,6 +142,34 @@ export function decodeServerEvent(frame: string): ServerEvent | null {
 
     case "game-started":
       return { _tag: "GameStarted" };
+
+    case "room-closed":
+      return { _tag: "RoomClosed" };
+
+    case "removed-from-room":
+      return { _tag: "RemovedFromRoom" };
+
+    case "start-game-failed": {
+      const reason = rest[0];
+      return { _tag: "StartGameFailed", reason: reason instanceof Sym ? reason.name : "unknown" };
+    }
+
+    case "active-rooms": {
+      const roomList = rest[0];
+      if (!Array.isArray(roomList)) return { _tag: "Ignored", raw: trimmed };
+      const rooms = roomList.flatMap((entry): RoomInfo[] => {
+        const host = assocValue(entry, "host");
+        const name = assocValue(entry, "name");
+        const members = assocValue(entry, "members");
+        if (typeof name !== "string" && !(name instanceof Sym)) return [];
+        return [{
+          host: typeof host === "string" || host instanceof Sym ? memberName(host) : "",
+          name: memberName(name),
+          members: Array.isArray(members) ? members.map(memberName) : [],
+        }];
+      });
+      return { _tag: "ActiveRooms", rooms };
+    }
 
     case "hand": {
       const cards = rest[1];
@@ -204,6 +246,16 @@ export function decodeServerEvent(frame: string): ServerEvent | null {
 export type ClientCommand =
   | { readonly _tag: "ConnectUser"; readonly email: string; readonly picUrl: string }
   | { readonly _tag: "MakeRoom"; readonly hostEmail: string; readonly roomName: string }
+  | { readonly _tag: "JoinRoom"; readonly roomName: string; readonly email: string }
+  | { readonly _tag: "LeaveRoom"; readonly roomName: string; readonly email: string }
+  | {
+      readonly _tag: "KickFromRoom";
+      readonly roomName: string;
+      readonly hostEmail: string;
+      readonly targetEmail: string;
+    }
+  | { readonly _tag: "GetActiveRooms" }
+  | { readonly _tag: "Ping" }
   | { readonly _tag: "AddBot"; readonly roomName: string }
   | { readonly _tag: "StartGame"; readonly roomName: string }
   | { readonly _tag: "PutBid"; readonly email: string; readonly bid: BidValue }
@@ -217,6 +269,21 @@ export function encodeCommand(command: ClientCommand): string {
       return writeSExpr([sym("connect-user"), command.email, command.picUrl]);
     case "MakeRoom":
       return writeSExpr([sym("make-room"), command.hostEmail, command.roomName]);
+    case "JoinRoom":
+      return writeSExpr([sym("join-room"), command.roomName, command.email]);
+    case "LeaveRoom":
+      return writeSExpr([sym("leave-room"), command.roomName, command.email]);
+    case "KickFromRoom":
+      return writeSExpr([
+        sym("kick-from-room"),
+        command.roomName,
+        command.hostEmail,
+        command.targetEmail,
+      ]);
+    case "GetActiveRooms":
+      return writeSExpr([sym("get-active-rooms")]);
+    case "Ping":
+      return writeSExpr([sym("ping")]);
     case "AddBot":
       return writeSExpr([sym("add-bot-to-room"), command.roomName]);
     case "StartGame":

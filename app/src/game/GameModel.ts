@@ -19,6 +19,7 @@ export interface PlayedCardModel {
 export type GamePhase =
   | "idle"
   | "connecting"
+  | "lobby"
   | "bidding"
   | "choosing-trump"
   | "playing"
@@ -32,6 +33,12 @@ export type PendingRequest =
 
 export interface GameModel {
   readonly phase: GamePhase;
+  // Lobby state. Members are in *server* order (newest joiner first, host last).
+  readonly roomName: string | null;
+  readonly members: readonly string[];
+  readonly isHost: boolean;
+  // Display names by view index (0 = us), fixed once the hand is dealt.
+  readonly seatNames: readonly string[] | null;
   // All player indices in the model are *view* indices:
   // 0 = us (bottom), 1 = right, 2 = top (partner), 3 = left.
   readonly hand: readonly CardModel[];
@@ -52,6 +59,15 @@ export interface GameModel {
 
 export type GameAction =
   | { readonly _tag: "PhaseChanged"; readonly phase: GamePhase }
+  | {
+      readonly _tag: "RoomEntered";
+      readonly roomName: string;
+      readonly members: readonly string[];
+      readonly isHost: boolean;
+    }
+  | { readonly _tag: "MembersChanged"; readonly members: readonly string[] }
+  | { readonly _tag: "RoomLeft" }
+  | { readonly _tag: "SeatNamesSet"; readonly names: readonly string[] }
   | { readonly _tag: "HandDealt"; readonly cards: readonly CardModel[] }
   | { readonly _tag: "CardPlayed"; readonly card: CardModel; readonly playerIndex: PlayerIndex }
   | { readonly _tag: "ActivePlayerChanged"; readonly playerIndex: PlayerIndex | null }
@@ -71,6 +87,10 @@ export type GameAction =
 
 export const initialGameModel: GameModel = {
   phase: "idle",
+  roomName: null,
+  members: [],
+  isHost: false,
+  seatNames: null,
   hand: [],
   playedCards: [],
   activePlayer: null,
@@ -92,9 +112,36 @@ export function gameReducer(state: GameModel, action: GameAction): GameModel {
     case "PhaseChanged":
       return { ...state, phase: action.phase };
 
+    case "RoomEntered":
+      return {
+        ...state,
+        phase: "lobby",
+        roomName: action.roomName,
+        members: action.members,
+        isHost: action.isHost,
+      };
+
+    case "MembersChanged":
+      return { ...state, members: action.members };
+
+    case "RoomLeft":
+      return {
+        ...state,
+        phase: "idle",
+        roomName: null,
+        members: [],
+        isHost: false,
+        seatNames: null,
+      };
+
+    case "SeatNamesSet":
+      return { ...state, seatNames: action.names };
+
     case "HandDealt":
       return {
         ...state,
+        // the first deal moves us from the lobby into the game
+        phase: state.phase === "lobby" ? "bidding" : state.phase,
         hand: [...state.hand, ...action.cards],
       };
 

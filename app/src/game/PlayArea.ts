@@ -42,6 +42,27 @@ export class PlayArea {
     this.loadEnsoTexture();
   }
 
+  // World anchors of the three opponent markers, keyed by view index.
+  private markerWorldPositions: Record<number, THREE.Vector3> = {
+    1: new THREE.Vector3(1.8, 0.05, -0.7),
+    2: new THREE.Vector3(0, 0.05, -2.2),
+    3: new THREE.Vector3(-1.8, 0.05, -0.7),
+  };
+
+  // Screen-space position of an opponent's marker, for HTML labels.
+  public markerScreenPosition(
+    playerIndex: number,
+    canvas: HTMLElement
+  ): { x: number; y: number } | null {
+    const world = this.markerWorldPositions[playerIndex];
+    if (!world) return null;
+    const projected = world.clone().project(this.camera);
+    return {
+      x: ((projected.x + 1) / 2) * canvas.clientWidth,
+      y: ((1 - projected.y) / 2) * canvas.clientHeight,
+    };
+  }
+
   private loadEnsoTexture() {
     // Load the actual enso.png texture for authentic brush stroke appearance
     const loader = new THREE.TextureLoader();
