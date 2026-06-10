@@ -78,7 +78,17 @@ export class GameState {
     this.scoreElement = document.getElementById("score-value");
     this.tricksElement = document.getElementById("tricks-value");
 
-    window.addEventListener("resize", () => this.positionSeatLabels());
+    this.applyViewportLayout();
+    window.addEventListener("resize", () => {
+      this.applyViewportLayout();
+      this.positionSeatLabels();
+    });
+  }
+
+  // Portrait/narrow screens get a tighter hand fan.
+  private applyViewportLayout() {
+    const portrait = window.innerWidth < window.innerHeight;
+    this.hand.setWidthScale(portrait ? 0.82 : 1);
   }
 
   // "You" for ourselves, the real player name (set at deal time) otherwise.
@@ -108,13 +118,16 @@ export class GameState {
         label.append(tag);
       }
       // Keep clear of the played-card cross: partner's label sits above their
-      // marker, side labels are pushed outward and down.
+      // marker, side labels are pushed outward and down. Tighter on phones.
+      const compact = window.innerWidth < 700;
+      const out = compact ? 38 : 64;
+      const down = compact ? 34 : 54;
       const offset =
         seat === 2
-          ? { x: 0, y: -96 }
+          ? { x: 0, y: compact ? -64 : -96 }
           : seat === 1
-            ? { x: 64, y: 54 }
-            : { x: -64, y: 54 };
+            ? { x: out, y: down }
+            : { x: -out, y: down };
       label.style.left = `${screen.x + offset.x}px`;
       label.style.top = `${screen.y + offset.y}px`;
       label.classList.add("visible");

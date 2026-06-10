@@ -6,6 +6,14 @@ export class Hand {
   private scene: THREE.Scene;
   private camera: THREE.Camera;
   private handCenter = new THREE.Vector3(0, 0.3, 2.0);
+  // Narrow screens compress the fan (more overlap) so it stays in frame.
+  private widthScale = 1;
+
+  public setWidthScale(scale: number) {
+    if (scale === this.widthScale) return;
+    this.widthScale = scale;
+    this.arrangeCards();
+  }
 
   constructor(scene: THREE.Scene, camera: THREE.Camera) {
     this.scene = scene;
@@ -46,8 +54,8 @@ export class Hand {
   // Fan with near-full card visibility: spacing adapts to hand size so
   // every rank stays readable (cards are 0.6 wide; leave ~0.07 overlap).
   private computeLayout(index: number, count: number): { position: THREE.Vector3; rotation: THREE.Euler } {
-    const step = 0.53;
-    const spreadX = Math.min((step * (count - 1)) / 2, 2.4);
+    const step = 0.53 * this.widthScale;
+    const spreadX = Math.min((step * (count - 1)) / 2, 2.4 * this.widthScale);
     const curveHeight = 0.4; // gentle arc
 
     const p0 = new THREE.Vector2(-spreadX, this.handCenter.y);

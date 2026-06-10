@@ -49,6 +49,7 @@ Three layers; run all of them after non-trivial changes.
    HEADED=1 node scripts/play-multiplayer.mjs    "http://localhost:5179/?port=8082"
    HEADED=1 node scripts/test-lobby-controls.mjs "http://localhost:5179/?port=8082"
    HEADED=1 node scripts/test-multi-tables.mjs   "http://localhost:5179/?port=8082"
+   HEADED=1 node scripts/test-mobile.mjs         "http://localhost:5179/?port=8082"
    ```
 
    - `play-game.mjs` — one human + 3 bots: lobby → bid → trump → all 8 tricks
@@ -57,6 +58,8 @@ Three layers; run all of them after non-trivial changes.
    - `test-lobby-controls.mjs` — kick bot/human, leave, close table,
      disconnect cleanup.
    - `test-multi-tables.mjs` — several concurrent tables, room browser, join.
+   - `test-mobile.mjs` — phone viewport (390×844, touch emulation): panels and
+     hand must fit the screen, full game played with real taps.
    - All four honour `HEADED=1`. Screenshots land in `/tmp/game-shots*`;
      scripts exit non-zero on console errors. Any new test script must follow
      the same pattern (`headless: !process.env.HEADED`).

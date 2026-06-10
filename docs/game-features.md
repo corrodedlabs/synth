@@ -62,6 +62,10 @@ The game no longer auto-starts. Sitting down is an explicit, social flow:
 - **How to play** — a persistent *how to play* link (bottom-right, available
   on the title screen and mid-game) opens a short rules overlay: teams, card
   points, bidding, hidden trump, following suit, and made/set scoring.
+- **Mobile friendly** — portrait phones get a widened camera, a tighter hand
+  fan, stacked HUD rows, and full-width panels; cards play by tap or drag
+  (touch handlers were already wired). Verified by `test-mobile.mjs` on a
+  390×844 touch viewport.
 
 ## Gameplay (one human + any mix of humans/bots)
 

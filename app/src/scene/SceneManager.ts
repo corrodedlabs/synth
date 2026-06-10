@@ -20,8 +20,7 @@ export class SceneManager {
     );
     // Camera position to show hand arc prominently at bottom, play area in center
     // Raised and pulled back to show full scene composition
-    this.camera.position.set(0, 5.9, 6.4);
-    this.camera.lookAt(0, 0.15, 0.1); // Look slightly toward player
+    this.updateCameraForViewport();
 
     // Renderer setup
     this.renderer = new THREE.WebGLRenderer({
@@ -49,11 +48,27 @@ export class SceneManager {
     const width = window.innerWidth;
     const height = window.innerHeight;
 
-    this.camera.aspect = width / height;
-    this.camera.updateProjectionMatrix();
+    this.updateCameraForViewport();
 
     this.renderer.setSize(width, height);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  }
+
+  // The default framing is tuned for landscape. Portrait screens get a wider
+  // FOV and a camera pulled up/back so the hand fan and trick stay in frame.
+  private updateCameraForViewport() {
+    const aspect = window.innerWidth / window.innerHeight;
+    this.camera.aspect = aspect;
+    if (aspect < 1) {
+      const portrait = THREE.MathUtils.clamp(1 / aspect, 1, 2.2);
+      this.camera.fov = Math.min(38 * portrait, 70);
+      this.camera.position.set(0, 5.9 + 0.8 * (portrait - 1), 6.4 + 1.6 * (portrait - 1));
+    } else {
+      this.camera.fov = 38;
+      this.camera.position.set(0, 5.9, 6.4);
+    }
+    this.camera.lookAt(0, 0.15, 0.1);
+    this.camera.updateProjectionMatrix();
   }
 
   public update() {
