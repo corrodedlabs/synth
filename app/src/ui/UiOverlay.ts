@@ -127,6 +127,9 @@ export class UiOverlay {
   }
 
   updateLobby(model: GameModel, selfEmail: string) {
+    // entering a lobby always hides the start screen — sessions driven via
+    // the debug bridge never go through the start-button click handlers
+    this.hide(this.startScreen);
     this.lobbyTitle.textContent = model.roomName ?? "";
     this.lobbySubtitle.textContent = model.isHost
       ? "You are hosting this table"

@@ -5,3 +5,4 @@ app/dist
 .lsp
 # Local Netlify folder
 .netlify
+.playwright-mcp/
