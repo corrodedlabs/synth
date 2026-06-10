@@ -1,0 +1,5 @@
+# Only the Racket server goes into the image.
+*
+!game.rkt
+!client.rkt
+!server.rkt

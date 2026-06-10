@@ -3,3 +3,5 @@ compiled/*
 app/node_modules/*
 app/dist
 .lsp
+# Local Netlify folder
+.netlify

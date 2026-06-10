@@ -1,0 +1,13 @@
+# Netlify config for the 28 frontend (Vite app under app/).
+
+[build]
+  base = "app"
+  command = "npm run build"
+  # resolved from the repo root (where this file lives), not from base
+  publish = "app/dist"
+
+[build.environment]
+  # WebSocket endpoint of the deployed game server (fly.io app).
+  # Must be wss:// — Netlify serves over https. Override per-site in the
+  # Netlify UI if the fly app name differs.
+  VITE_SERVER_URL = "wss://twenty-eight-game.fly.dev/test"
