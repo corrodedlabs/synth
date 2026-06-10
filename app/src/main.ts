@@ -40,6 +40,7 @@ if (params.has('mock')) {
   addBot: () => gameState.getSession()?.addBot(),
   startGame: () => gameState.getSession()?.startGame(),
   leaveTable: () => gameState.getSession()?.leaveRoom(),
+  leaveMatch: () => gameState.leaveMatch(),
   kick: (member: string) => gameState.getSession()?.kick(member),
   roomName: () => gameState.getSession()?.roomName,
   sounds: () => gameState.soundState(),

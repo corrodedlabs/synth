@@ -63,7 +63,8 @@ Four layers; run all of them after non-trivial changes.
      first hand.
    - `test-match.mjs` — host + guest + 2 bots play a two-hand match: the
      between-hands panel (host deal button vs guest waiting note), match
-     scores mirroring, dealer rotation, host-page close aborting the guest.
+     scores mirroring, dealer rotation, and the leave-match button (two-step
+     confirm; leaver gets a fresh start screen, the rest are aborted).
    - `test-lobby-controls.mjs` — kick bot/human, leave, close table,
      disconnect cleanup.
    - `test-multi-tables.mjs` — several concurrent tables, room browser, join.
@@ -90,8 +91,8 @@ await page.click("#create-button");        // or #browse-button + .room-row butt
 Drive decisions through the `window.__game` debug bridge instead of 3D
 gestures: `state()` (the reducer model — poll it with `waitForFunction`),
 `legalCards()`, `play(id)`, `bid(n)`, `pass()`, `trump(suit)`, `expose()`,
-`nextHand()`, `addBot()`, `startGame()`, `leaveTable()`, `kick(member)`,
-`roomName()`.
+`nextHand()`, `addBot()`, `startGame()`, `leaveTable()`, `leaveMatch()`,
+`kick(member)`, `roomName()`.
 Launch with `channel: "chrome"` locally (`/usr/bin/chromium` in CI sandboxes)
 and `--enable-unsafe-swiftshader --use-angle=swiftshader` for headless WebGL.
 

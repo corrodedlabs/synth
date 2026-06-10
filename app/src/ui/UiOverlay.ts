@@ -15,6 +15,7 @@ export interface UiCallbacks {
   readonly onTrump: (suit: Suit) => void;
   readonly onExpose: () => void;
   readonly onNextHand: () => void;
+  readonly onLeaveMatch: () => void;
   readonly onPlayAgain: () => void;
 }
 
@@ -60,8 +61,10 @@ export class UiOverlay {
   private nextHandButton = element("next-hand") as HTMLButtonElement;
   private resultWait = element("result-wait");
   private playAgainButton = element("play-again") as HTMLButtonElement;
+  private leaveMatchButton = element("leave-match") as HTMLButtonElement;
   private trumpIndicator = element("trump-indicator");
   private statusTimer: number | null = null;
+  private leaveArmTimer: number | null = null;
 
   constructor(private callbacks: UiCallbacks) {
     element("create-button").addEventListener("click", () => {
@@ -98,6 +101,19 @@ export class UiOverlay {
       callbacks.onNextHand();
     });
     this.playAgainButton.addEventListener("click", () => callbacks.onPlayAgain());
+
+    // leaving abandons the match for all four seats, so the first click
+    // only arms the button; a second within a few seconds confirms
+    this.leaveMatchButton.addEventListener("click", () => {
+      if (!this.leaveMatchButton.classList.contains("armed")) {
+        this.leaveMatchButton.classList.add("armed");
+        this.leaveMatchButton.textContent = "abandon the match?";
+        this.leaveArmTimer = window.setTimeout(() => this.disarmLeaveMatch(), 4000);
+        return;
+      }
+      this.disarmLeaveMatch();
+      callbacks.onLeaveMatch();
+    });
 
     // how-to-play overlay is pure UI — no game state involved
     const helpPanel = element("help-panel");
@@ -288,6 +304,21 @@ export class UiOverlay {
 
   hideResult() {
     this.hide(this.resultPanel);
+  }
+
+  // The in-game escape hatch: visible only while a match is in progress.
+  setLeaveMatchVisible(visible: boolean) {
+    this.disarmLeaveMatch();
+    this.leaveMatchButton.classList.toggle("hidden", !visible);
+  }
+
+  private disarmLeaveMatch() {
+    if (this.leaveArmTimer !== null) {
+      window.clearTimeout(this.leaveArmTimer);
+      this.leaveArmTimer = null;
+    }
+    this.leaveMatchButton.classList.remove("armed");
+    this.leaveMatchButton.textContent = "leave match";
   }
 
   private show(el: HTMLElement) {

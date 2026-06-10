@@ -76,6 +76,7 @@ export class GameState {
       onTrump: (suit) => this.session?.chooseTrump(suit),
       onExpose: () => this.session?.exposeTrump(),
       onNextHand: () => this.session?.nextHand(),
+      onLeaveMatch: () => this.leaveMatch(),
       onPlayAgain: () => window.location.reload(),
     });
 
@@ -201,6 +202,17 @@ export class GameState {
     return this.session;
   }
 
+  // Walk away from a running match: close our socket (the server notices
+  // within a second and aborts the game for the other seats) and reset to
+  // the start screen. The next create/browse builds a fresh session.
+  public leaveMatch() {
+    if (!this.session) return;
+    this.session.destroy();
+    this.session = null;
+    this.dispatch({ _tag: "RoomLeft" });
+    this.ui.status("You left the match.");
+  }
+
   // Plays a card from our hand by model id; used by the debug bridge.
   public playCardById(cardId: string): boolean {
     const card = this.model.hand.find((handCard) => handCard.id === cardId);
@@ -279,7 +291,16 @@ export class GameState {
     switch (action._tag) {
       case "PhaseChanged":
         if (action.phase === "connecting") this.ui.status("Connecting…");
-        if (action.phase === "idle") this.ui.showStartScreen();
+        if (action.phase === "idle") {
+          // only dead sessions dispatch idle (connect failure, server gone):
+          // drop ours so the start screen's buttons build a fresh one
+          if (this.session) {
+            this.session.destroy();
+            this.session = null;
+          }
+          this.ui.setLeaveMatchVisible(false);
+          this.ui.showStartScreen();
+        }
         break;
 
       case "RoomEntered":
@@ -301,6 +322,7 @@ export class GameState {
         this.ui.hideTrumpPanel();
         this.ui.setExposeVisible(false);
         this.ui.hideResult();
+        this.ui.setLeaveMatchVisible(false);
         this.renderScore();
         this.ui.hideLobby();
         this.ui.showStartScreen();
@@ -313,6 +335,8 @@ export class GameState {
 
       case "HandDealt":
         this.ui.hideLobby();
+        // a live table always offers a way out (not in ?mock=1 — no server)
+        this.ui.setLeaveMatchVisible(this.session !== null);
         this.sound.deal(action.cards.length);
         action.cards.forEach((card) => this.hand.addCard(this.createCard(card)));
         break;
@@ -449,6 +473,8 @@ export class GameState {
       case "MatchOver": {
         this.sound.result(action.winner === "us");
         this.ui.status("");
+        // the match is decided — the panel's Play again takes it from here
+        this.ui.setLeaveMatchVisible(false);
         this.ui.showMatchOver(action.us, action.them, action.winner === "us", action.hands);
         break;
       }

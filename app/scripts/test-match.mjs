@@ -3,7 +3,9 @@
 // the guest a waiting note, match scores mirror); a guest's nextHand() is
 // inert; the host's click deals hand 2 (table resets, match HUD and seat
 // names persist, hand number bumps); after hand 2 the match score has
-// accumulated; closing the host's page aborts the match for the guest.
+// accumulated; the guest then leaves with the corner button (two-step
+// confirm) — the leaver gets a working start screen and can host a fresh
+// table without a reload, everyone else is aborted.
 // Usage: node scripts/test-match.mjs [url]
 // Screenshots land in /tmp/game-shots-match.
 import { chromium } from "playwright";
@@ -91,10 +93,13 @@ const playUntil = async (label, page, targetPhase) => {
 const host = await newPlayer("host");
 const guest = await newPlayer("guest");
 
+check("leave button hidden on the start screen", !(await visible(host, "leave-match")));
+
 // --- lobby: host creates, guest joins, two bots fill the table ---
 await host.fill("#player-name", "Host");
 await host.click("#create-button");
 await host.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });
+check("leave button hidden in the lobby", !(await visible(host, "leave-match")));
 const roomName = await host.evaluate(() => window.__game.roomName());
 console.log(`host created "${roomName}"`);
 
@@ -122,6 +127,7 @@ await guest.screenshot({ path: `${SHOTS}/02-hand1-guest-panel.png` });
 
 check("hand number is 1 on both pages", host1.handNumber === 1 && guest1.handNumber === 1);
 check("no match winner yet", host1.matchWinner === null && guest1.matchWinner === null);
+check("leave button is offered during a match", await visible(host, "leave-match"));
 const total = (points) => points.reduce((a, b) => a + b, 0);
 check("both views agree on the hand's card points", total(host1.points) === total(guest1.points));
 check(
@@ -183,14 +189,33 @@ check(
   (host2.matchUs !== host1.matchUs) !== (host2.matchThem !== host1.matchThem)
 );
 
-// --- the host vanishing aborts the match for the guest ---
-await host.close();
-await guest.waitForFunction(() => window.__game.state().phase === "idle", undefined, { timeout: 20000 });
-check("guest lands back on the start screen", await visible(guest, "start-screen"));
-check("the abort hides the between-hands panel", !(await visible(guest, "result-panel")));
+// --- the guest walks out with the corner button (two-step confirm) ---
+check("guest sees the leave button between hands", await visible(guest, "leave-match"));
+await guest.click("#leave-match");
+const armedText = await guest.evaluate(() => document.getElementById("leave-match").textContent);
+check(`first click only arms the button ("${armedText}")`, armedText.includes("abandon"));
+check("still in the match after one click", (await state(guest)).phase === "hand-finished");
+await guest.click("#leave-match");
+await guest.waitForFunction(() => window.__game.state().phase === "idle", undefined, { timeout: 5000 });
+check("leaver lands back on the start screen", await visible(guest, "start-screen"));
+check("leaving hides the between-hands panel", !(await visible(guest, "result-panel")));
+check("leaving hides the leave button", !(await visible(guest, "leave-match")));
 const guestAfter = await state(guest);
-check("the match state was wiped", guestAfter.matchUs === 0 && guestAfter.matchThem === 0);
-await guest.screenshot({ path: `${SHOTS}/05-guest-aborted.png` });
+check("the leaver's match state was wiped", guestAfter.matchUs === 0 && guestAfter.matchThem === 0);
+await guest.screenshot({ path: `${SHOTS}/05-guest-left.png` });
+
+// --- everyone else is aborted by the leave ---
+await host.waitForFunction(() => window.__game.state().phase === "idle", undefined, { timeout: 20000 });
+check("host is aborted back to the start screen", await visible(host, "start-screen"));
+check("the abort hides the host's panel too", !(await visible(host, "result-panel")));
+await host.screenshot({ path: `${SHOTS}/06-host-aborted.png` });
+
+// --- the leaver's page is still alive: a fresh table without a reload ---
+await guest.click("#create-button");
+await guest.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });
+const fresh = await state(guest);
+check("leaver can host a new table on the same page", fresh.phase === "lobby" && fresh.isHost);
+await guest.screenshot({ path: `${SHOTS}/07-leaver-new-table.png` });
 
 if (errors.length) {
   console.log("CONSOLE ERRORS:");

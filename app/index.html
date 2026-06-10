@@ -342,11 +342,17 @@
       #help-button:hover {
         opacity: 1;
       }
-      #sound-button {
+      #corner-actions {
         position: absolute;
         bottom: 18px;
         left: 22px;
         z-index: 30; /* clickable above the full-screen start overlay */
+        display: flex;
+        gap: 18px;
+        pointer-events: none;
+      }
+      #sound-button,
+      #leave-match {
         pointer-events: auto;
         font-family: inherit;
         font-size: 17px;
@@ -359,7 +365,14 @@
         letter-spacing: 0.8px;
         opacity: 0.6;
       }
-      #sound-button:hover {
+      #sound-button:hover,
+      #leave-match:hover {
+        opacity: 1;
+      }
+      /* armed = one more click abandons the match for everyone */
+      #leave-match.armed {
+        color: #a33c2e;
+        border-bottom-color: rgba(163, 60, 46, 0.6);
         opacity: 1;
       }
       #help-panel {
@@ -565,9 +578,13 @@
           right: 14px;
           font-size: 15px;
         }
-        #sound-button {
+        #corner-actions {
           bottom: 12px;
           left: 14px;
+          gap: 12px;
+        }
+        #sound-button,
+        #leave-match {
           font-size: 15px;
         }
         .seat-name-label {
@@ -636,7 +653,10 @@
       <div id="seat-label-3" class="seat-name-label"></div>
 
       <button id="help-button" type="button">how to play</button>
-      <button id="sound-button" type="button">sound on</button>
+      <div id="corner-actions">
+        <button id="sound-button" type="button">sound on</button>
+        <button id="leave-match" type="button" class="hidden">leave match</button>
+      </div>
       <div id="help-panel" class="panel hidden">
         <div class="panel-title">Twenty-Eight</div>
         <ul id="help-rules">
