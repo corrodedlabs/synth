@@ -9,7 +9,7 @@ describe("card mapping", () => {
       suit: "clubs",
       rank: "J",
     });
-    expect(decodeCard(parseSExpr("#s(card ten 3 heart 1)"))).toEqual({
+    expect(decodeCard(parseSExpr("#s(card ten 4 heart 1)"))).toEqual({
       id: "hearts-10",
       suit: "hearts",
       rank: "10",
@@ -17,13 +17,14 @@ describe("card mapping", () => {
   });
 
   it("re-encodes cards exactly as game.rkt builds them", () => {
+    // ranks double as trick strength: J 9 A 10 K Q 8 7 → 7..0
     const samples = [
       "#s(card jack 7 club 3)",
-      "#s(card queen 6 diamond 0)",
-      "#s(card king 5 heart 0)",
-      "#s(card ace 4 spade 1)",
-      "#s(card ten 3 club 1)",
-      "#s(card nine 2 diamond 2)",
+      "#s(card nine 6 diamond 2)",
+      "#s(card ace 5 spade 1)",
+      "#s(card ten 4 club 1)",
+      "#s(card king 3 heart 0)",
+      "#s(card queen 2 diamond 0)",
       "#s(card eight 1 heart 0)",
       "#s(card seven 0 spade 0)",
     ];
@@ -76,7 +77,7 @@ describe("decodeServerEvent", () => {
 
   it("decodes the bidding flow", () => {
     expect(decodeServerEvent("(turn 2)")).toEqual({ _tag: "Turn", playerIndex: 2 });
-    expect(decodeServerEvent("(request-bid 16)")).toEqual({ _tag: "BidRequested", currentBid: 16 });
+    expect(decodeServerEvent("(request-bid 16)")).toEqual({ _tag: "BidRequested", minBid: 16 });
     expect(decodeServerEvent("(bid-placed 1 17)")).toEqual({ _tag: "BidPlaced", playerIndex: 1, bid: 17 });
     expect(decodeServerEvent("(bid-placed 2 pass)")).toEqual({ _tag: "BidPlaced", playerIndex: 2, bid: "pass" });
     expect(decodeServerEvent("(bid-result (19 . 1))")).toEqual({ _tag: "BidResult", bid: 19, playerIndex: 1 });
@@ -101,10 +102,14 @@ describe("decodeServerEvent", () => {
     });
   });
 
+  it("decodes the end of a game", () => {
+    expect(decodeServerEvent('(game-aborted "a\'s table")')).toEqual({ _tag: "GameAborted" });
+  });
+
   it("decodes play requests", () => {
     expect(
       decodeServerEvent(
-        "(play-card (cards-played #s(card ace 4 spade 1)) (game-state (trump-suit . #f) (first-suit . spade)))"
+        "(play-card (cards-played #s(card ace 5 spade 1)) (game-state (trump-suit . #f) (first-suit . spade)))"
       )
     ).toEqual({
       _tag: "PlayRequested",

@@ -27,9 +27,15 @@ export type GamePhase =
 
 // What the server is currently waiting on from us.
 export type PendingRequest =
-  | { readonly kind: "bid"; readonly currentBid: number }
+  | { readonly kind: "bid"; readonly minBid: number }
   | { readonly kind: "trump" }
-  | { readonly kind: "play"; readonly firstSuit: Suit | null; readonly trumpSuit: Suit | null };
+  | {
+      readonly kind: "play";
+      readonly firstSuit: Suit | null;
+      readonly trumpSuit: Suit | null;
+      // we just called for the exposure, so we must trump if we can
+      readonly mustTrump?: boolean;
+    };
 
 export interface GameModel {
   readonly phase: GamePhase;
@@ -49,6 +55,7 @@ export interface GameModel {
   readonly theirScore: number;
   readonly theirTricks: number;
   readonly currentBid: number;
+  readonly bidsPlaced: number; // bids and passes seen this auction
   readonly bidWinner: PlayerIndex | null;
   readonly finalBid: number | null;
   readonly trumpSuit: Suit | null; // known if we chose it or after exposure
@@ -99,6 +106,7 @@ export const initialGameModel: GameModel = {
   theirScore: 0,
   theirTricks: 0,
   currentBid: 16,
+  bidsPlaced: 0,
   bidWinner: null,
   finalBid: null,
   trumpSuit: null,
@@ -125,14 +133,9 @@ export function gameReducer(state: GameModel, action: GameAction): GameModel {
       return { ...state, members: action.members };
 
     case "RoomLeft":
-      return {
-        ...state,
-        phase: "idle",
-        roomName: null,
-        members: [],
-        isHost: false,
-        seatNames: null,
-      };
+      // back to the start screen — also wipes any in-progress game state
+      // (hand, trick, scores) so an aborted game leaves nothing behind
+      return initialGameModel;
 
     case "SeatNamesSet":
       return { ...state, seatNames: action.names };
@@ -175,6 +178,7 @@ export function gameReducer(state: GameModel, action: GameAction): GameModel {
       return {
         ...state,
         currentBid: action.bid === "pass" ? state.currentBid : action.bid,
+        bidsPlaced: state.bidsPlaced + 1,
       };
 
     case "BidWon":
@@ -206,7 +210,9 @@ export function gameReducer(state: GameModel, action: GameAction): GameModel {
       const ours = action.winner === 0 || action.winner === 2;
       return {
         ...state,
-        playedCards: [],
+        // only the completed trick leaves the table — a card already led to
+        // the next trick (possible at bot speed) must survive
+        playedCards: state.playedCards.slice(4),
         score: ours ? state.score + action.points : state.score,
         tricks: ours ? state.tricks + 1 : state.tricks,
         theirScore: !ours && action.winner !== null ? state.theirScore + action.points : state.theirScore,
@@ -227,14 +233,21 @@ export function gameReducer(state: GameModel, action: GameAction): GameModel {
   }
 }
 
-// Mirrors valid-card? in game.rkt — used only as a UX guard; the server
-// remains the authority.
+// Mirrors the play rules in game.rkt — used only as a UX guard; the server
+// remains the authority. Follow suit if you can; trumping never excuses
+// breaking suit. After calling for the exposure you must trump if able.
 export function isLegalPlay(model: GameModel, card: CardModel): boolean {
   const request = model.pendingRequest;
   if (!request || request.kind !== "play") return false;
+  if (
+    request.mustTrump &&
+    request.trumpSuit !== null &&
+    model.hand.some((handCard) => handCard.suit === request.trumpSuit)
+  ) {
+    return card.suit === request.trumpSuit;
+  }
   if (request.firstSuit === null) return true;
   if (card.suit === request.firstSuit) return true;
-  if (request.trumpSuit !== null && card.suit === request.trumpSuit) return true;
   return !model.hand.some((handCard) => handCard.suit === request.firstSuit);
 }
 

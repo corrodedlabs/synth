@@ -277,6 +277,18 @@ export class GameState {
         break;
 
       case "RoomLeft":
+        // tear down any in-progress game (aborted games land here mid-hand)
+        for (const card of [...this.hand.getCards()]) {
+          this.hand.removeCard(card);
+          this.sceneManager.scene.remove(card.mesh);
+        }
+        this.playArea.clearTable();
+        this.playArea.clearActivePlayer();
+        this.ui.setTrump(null, false);
+        this.ui.hideBidPanel();
+        this.ui.hideTrumpPanel();
+        this.ui.setExposeVisible(false);
+        this.renderScore();
         this.ui.hideLobby();
         this.ui.showStartScreen();
         this.positionSeatLabels(); // hides them (seatNames reset)
@@ -325,7 +337,7 @@ export class GameState {
       case "RequestReceived":
         switch (action.request.kind) {
           case "bid":
-            this.ui.showBidPanel(action.request.currentBid);
+            this.ui.showBidPanel(action.request.minBid, this.model.bidsPlaced === 0);
             break;
           case "trump":
             this.ui.showTrumpPanel();

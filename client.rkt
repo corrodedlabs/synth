@@ -73,7 +73,7 @@
     (define select-card
       (λ (hand cards-played-in-round first-suit)
         (findf (λ (card)
-                (valid-card? card first-suit cards-played-in-round #f hand))
+                (valid-card? card first-suit cards-played-in-round hand))
                hand)))
 
     (define connection (user-connection user))

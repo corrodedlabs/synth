@@ -84,5 +84,7 @@ cd app && VITE_SERVER_URL=ws://localhost:8080/test npm run build && npm run prev
   kicked, or when their table closes.
 - There is still no auth: identity is the self-reported email the client
   generates. Fine for a friendly game server; do not store anything sensitive.
-- No reconnection mid-game yet — a refresh abandons the hand (the remaining
-  players' game stalls waiting on the leaver; documented limitation).
+- No reconnection mid-game yet — a refresh abandons the hand. The server
+  notices the dead socket within ~1s, aborts the game (`game-aborted`),
+  releases the bots, and the remaining humans are returned to the start
+  screen.

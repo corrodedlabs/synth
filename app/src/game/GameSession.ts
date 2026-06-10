@@ -58,6 +58,7 @@ export class GameSession {
   private pointsTaken = [0, 0, 0, 0]; // accumulated per view index
   private locallyPlayed = new Set<string>();
   private chosenTrump: Suit | null = null;
+  private justExposed = false; // we called for the trump, must trump if able
 
   readonly email: string;
   readonly displayName: string;
@@ -176,6 +177,7 @@ export class GameSession {
   exposeTrump() {
     const model = this.callbacks.getModel();
     if (!this.socket || !canExposeTrump(model)) return;
+    this.justExposed = true;
     this.socket.send({ _tag: "ExposeTrump", email: this.email });
     this.callbacks.dispatch({ _tag: "RequestCleared" });
   }
@@ -186,6 +188,12 @@ export class GameSession {
     this.inRoom = false;
     this.joinedRoomName = null;
     this.myServerIndex = 0;
+    this.cardsInTrick = 0;
+    this.trickPoints = 0;
+    this.pointsTaken = [0, 0, 0, 0];
+    this.locallyPlayed.clear();
+    this.chosenTrump = null;
+    this.justExposed = false;
     this.callbacks.dispatch({ _tag: "RoomLeft" });
     this.callbacks.status(message);
     this.refreshRooms();
@@ -305,6 +313,10 @@ export class GameSession {
           if (this.inRoom) this.exitRoom("The host removed you from the table.");
           return false;
 
+        case "GameAborted":
+          if (this.inRoom) this.exitRoom("A player disconnected — the game was abandoned.");
+          return false;
+
         case "StartGameFailed":
           this.callbacks.status(
             event.reason === "room-not-ready"
@@ -336,7 +348,7 @@ export class GameSession {
           dispatch({ _tag: "PhaseChanged", phase: "bidding" });
           dispatch({
             _tag: "RequestReceived",
-            request: { kind: "bid", currentBid: event.currentBid },
+            request: { kind: "bid", minBid: event.minBid },
           });
           return false;
 
@@ -370,16 +382,19 @@ export class GameSession {
           return false;
         }
 
-        case "PlayRequested":
+        case "PlayRequested": {
           dispatch({ _tag: "PhaseChanged", phase: "playing" });
           if (event.trumpSuit !== null) {
             dispatch({ _tag: "TrumpSet", suit: event.trumpSuit, exposed: true });
           }
+          const mustTrump = this.justExposed;
+          this.justExposed = false;
           dispatch({
             _tag: "RequestReceived",
-            request: { kind: "play", firstSuit: event.firstSuit, trumpSuit: event.trumpSuit },
+            request: { kind: "play", firstSuit: event.firstSuit, trumpSuit: event.trumpSuit, mustTrump },
           });
           return false;
+        }
 
         case "PointsWon": {
           const points = [0, 1, 2, 3].map((view) => event.points.get(this.toServer(view)) ?? 0);
@@ -396,13 +411,19 @@ export class GameSession {
           return true;
         }
 
-        case "ServerError":
-          this.callbacks.status(
-            event.message.includes("no-such-room")
-              ? "That table is no longer open."
-              : `Server rejected that: ${event.message}`
-          );
+        case "ServerError": {
+          const friendly: Record<string, string> = {
+            "no-such-room": "That table is no longer open.",
+            "must-open-bid": "You open the bidding — pick a bid of 16 or more.",
+            "invalid-bid": "That bid is no longer high enough.",
+            "invalid-card": "You must follow suit while you can.",
+            "must-play-trump": "You called for the trump, so you must play one.",
+            "invalid-expose": "You can only call for the trump when you cannot follow suit.",
+          };
+          const match = Object.keys(friendly).find((key) => event.message.includes(key));
+          this.callbacks.status(match ? friendly[match] : `Server rejected that: ${event.message}`);
           return false;
+        }
 
         case "Disconnected":
           this.callbacks.status("Disconnected from the game server.");

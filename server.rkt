@@ -2,6 +2,7 @@
 
 (require net/rfc6455)
 
+(require racket/async-channel)
 (require racket/cmdline)
 (require racket/control)
 (require racket/port)
@@ -62,20 +63,21 @@
            create-bot-user)
 
   (require net/rfc6455)
+  (require racket/async-channel)
   (require "./client.rkt")
 
   ;; represents a connected user
   ;; connection => connection corres to the user connected
   ;; email => email of the users
   ;; hand => list of cards that the player has
-  ;; comm => channel for synchronisation
+  ;; comm => async channel for game messages (puts never block the listener)
   (struct user (connection email hand comm pic-url))
 
   (define *connected-users* (make-hash))
 
   (define (connect-new-user connection email pic-url)
     (hash-set! *connected-users* email
-               (user connection email '() (make-channel) pic-url)))
+               (user connection email '() (make-async-channel) pic-url)))
 
   (define (get-user-by-email email)
     (hash-ref *connected-users* email #f))
@@ -241,52 +243,68 @@
               players)))
 
   (define distribute-cards-to-players
-    (case-lambda
-      [(players) (distribute-cards-to-players players initial-deck)]
-      [(players deck)
-       (match/values
-           (distribute-cards deck 4)
-         [(new-cards-for-players remaining-deck)
-          (let ([players1
-                 (map (λ (new-cards player)
-                          (let ([conn (user-connection player)])
-                            (cond
-                              [(ws-conn-closed? conn)
-                               (error "connection closed for player" player)]
-                              [else
-                               (begin
-                                 (send-datum player
-                                             `(hand ,(user-email player) ,new-cards))
-                                 (struct-copy user player
-                                              (hand (append (user-hand player)
-                                                            new-cards))))])))
-                      new-cards-for-players
-                      players)])
-            (cons players1 remaining-deck))])]))
+    (λ (players deck)
+      (match/values
+          (distribute-cards deck 4)
+        [(new-cards-for-players remaining-deck)
+         (let ([players1
+                (map (λ (new-cards player)
+                       (let ([conn (user-connection player)])
+                         (cond
+                           [(ws-conn-closed? conn)
+                            (error "connection closed for player" player)]
+                           [else
+                            (begin
+                              (send-datum player
+                                          `(hand ,(user-email player) ,new-cards))
+                              (struct-copy user player
+                                           (hand (append (user-hand player)
+                                                         new-cards))))])))
+                     new-cards-for-players
+                     players)])
+           (cons players1 remaining-deck))])))
 
- 
-  (define receive-datum (compose1 channel-get user-comm))
+  ;; next message of the expected kind from this player's channel; other
+  ;; messages are dropped. Raises if the player's socket dies while we wait,
+  ;; which aborts the running game instead of hanging it forever.
+  (define receive-datum
+    (λ (player expected-tag)
+      (let loop ()
+        (let ([message (sync/timeout 1 (user-comm player))])
+          (cond
+            [(not message)
+             (if (ws-conn-closed? (user-connection player))
+                 (error 'receive-datum
+                        (format "player ~a disconnected" (user-email player)))
+                 (loop))]
+            [(and (pair? message) (equal? (car message) expected-tag))
+             message]
+            [else
+             (displayln (format "ignoring unexpected ~a from ~a"
+                                message (user-email player)))
+             (loop)])))))
 
-  ;; performs the bidding process and returns the final bid value
+  ;; runs the auction; returns (cons winning-bid winner-index)
   (define perform-bidding
     (λ (players)
-      (start-bidding (λ (player-index current-bid-value)
-                       (let* ((player (list-ref players player-index)))
+      (start-bidding (λ (player-index min-bid)
+                       (let ((player (list-ref players player-index)))
                          (send-datum-to-all players `(turn ,player-index))
-                         (send-datum player `(request-bid ,current-bid-value))
-                         (let ((bid-value (caddr (receive-datum player))))
-                           (send-datum-to-all players `(bid-placed ,player-index ,bid-value))
-                           bid-value)))
-                     (λ (player-index error-msg . args)
-                       (send-datum (list-ref players player-index) `(error ,error-msg))))))
+                         (send-datum player `(request-bid ,min-bid))
+                         (caddr (receive-datum player 'put-bid))))
+                     (λ (player-index bid-value)
+                       (send-datum-to-all players
+                                          `(bid-placed ,player-index ,bid-value)))
+                     (λ (player-index error-msg offending-value)
+                       (send-datum (list-ref players player-index)
+                                   `(error ,error-msg))))))
 
-  
   ;; player index is the index of the player who won the bid and will choose the trump
   (define choose-trump-suit
     (λ (players player-index)
       (let* ((bidder (list-ref players player-index)))
         (send-datum bidder '(choose-trump))
-        (let ([selected-trump-suit (caddr (receive-datum bidder))])
+        (let ([selected-trump-suit (caddr (receive-datum bidder 'selected-trump))])
           (send-datum-to-all players '(trump-selected))
           selected-trump-suit))))
   
@@ -309,12 +327,23 @@
             ;; joinable, and remember the running game by name
             (hash-set! *running-games* name #t)
             (close-room! room)
-            (with-handlers ((exn:fail? (λ (e)
-                                         (hash-remove! *running-games* name)
-                                         (raise e))))
+            ;; a mid-game failure (typically a disconnect) abandons the hand:
+            ;; free the table name and the bots, tell the humans
+            (with-handlers ((exn:fail?
+                             (λ (e)
+                               (displayln (format "game ~a aborted: ~a"
+                                                  name (exn-message e)))
+                               (hash-remove! *running-games* name)
+                               (for-each (λ (member)
+                                           (if (bot-user? member)
+                                               (release-user member)
+                                               (send-datum member
+                                                           `(game-aborted ,name))))
+                                         members)
+                               'game-aborted)))
               ;; members already includes the host
               (let* ((players members)
-                     (players+deck (distribute-cards-to-players players))
+                     (players+deck (distribute-cards-to-players players (fresh-deck)))
                      (bid-result (perform-bidding players))
                      (trump-suit (choose-trump-suit players (cdr bid-result))))
                 (for-each (λ (player)
@@ -326,16 +355,22 @@
                           (play-game (map user-hand players)
                                      trump-suit
                                      (λ (player-index cards-in-round game-state)
-                                       (displayln (format "waiting for player ~a " player-index))
                                        (let ((player (list-ref players player-index)))
                                          (send-datum-to-all players `(turn ,player-index))
                                          (send-datum player
                                                      `(play-card . ((cards-played . ,cards-in-round)
                                                                     (game-state . ,game-state))))
-
-                                         (let ((card (caddr (receive-datum player))))
-                                           (send-datum-to-all players `(played ,player-index ,card))
-                                           card))))))
+                                         (caddr (receive-datum player 'card-played))))
+                                     ;; broadcast accepted plays only — clients
+                                     ;; render every played message they see
+                                     #:notify-play
+                                     (λ (player-index card)
+                                       (send-datum-to-all players
+                                                          `(played ,player-index ,card)))
+                                     #:error-func
+                                     (λ (player-index error-msg)
+                                       (send-datum (list-ref players player-index)
+                                                   `(error ,error-msg))))))
                      (send-datum-to-all players `(points-won ,points-won)))
                    (hash-remove! *running-games* name)
                    ;; bots are single-use: free their connections and slots
@@ -515,8 +550,11 @@
               '(game-started)))
 
       ((put-bid selected-trump card-played)
-       (begin (displayln (format "got card from ~a" message))
-              (channel-put (user-comm (get-user-by-email (cadr message))) message)
+       (begin (displayln (format "got game message ~a" message))
+              ;; async put: a stray message must never block this thread; the
+              ;; game loop drops anything it is not waiting for
+              (async-channel-put (user-comm (get-user-by-email (cadr message)))
+                                 message)
               '(done)))
 
       ;; catch all

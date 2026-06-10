@@ -16,9 +16,9 @@ const NAME_TO_RANK: Record<string, Rank> = Object.fromEntries(
   Object.entries(RANK_TO_NAME).map(([rank, name]) => [name, rank as Rank])
 );
 
-// game.rkt assigns ranks by position in '(jack queen king ace ten nine eight seven)
+// game.rkt's numeric rank doubles as trick strength: J > 9 > A > 10 > K > Q > 8 > 7
 const RANK_TO_NUM: Record<Rank, number> = {
-  J: 7, Q: 6, K: 5, A: 4, "10": 3, "9": 2, "8": 1, "7": 0,
+  J: 7, "9": 6, A: 5, "10": 4, K: 3, Q: 2, "8": 1, "7": 0,
 };
 
 const RANK_TO_POINTS: Record<Rank, number> = {
@@ -89,9 +89,10 @@ export type ServerEvent =
   | { readonly _tag: "StartGameFailed"; readonly reason: string }
   | { readonly _tag: "RoomMembers"; readonly members: readonly string[] }
   | { readonly _tag: "GameStarted" }
+  | { readonly _tag: "GameAborted" }
   | { readonly _tag: "HandDealt"; readonly cards: readonly CardModel[] }
   | { readonly _tag: "Turn"; readonly playerIndex: number }
-  | { readonly _tag: "BidRequested"; readonly currentBid: number }
+  | { readonly _tag: "BidRequested"; readonly minBid: number }
   | { readonly _tag: "BidPlaced"; readonly playerIndex: number; readonly bid: BidValue }
   | { readonly _tag: "BidResult"; readonly bid: number; readonly playerIndex: number }
   | { readonly _tag: "ChooseTrumpRequested" }
@@ -143,6 +144,9 @@ export function decodeServerEvent(frame: string): ServerEvent | null {
     case "game-started":
       return { _tag: "GameStarted" };
 
+    case "game-aborted":
+      return { _tag: "GameAborted" };
+
     case "room-closed":
       return { _tag: "RoomClosed" };
 
@@ -181,7 +185,8 @@ export function decodeServerEvent(frame: string): ServerEvent | null {
       return { _tag: "Turn", playerIndex: rest[0] as number };
 
     case "request-bid":
-      return { _tag: "BidRequested", currentBid: rest[0] as number };
+      // the server sends the minimum acceptable bid (16 to open, else high+1)
+      return { _tag: "BidRequested", minBid: rest[0] as number };
 
     case "bid-placed": {
       const bid = rest[1];

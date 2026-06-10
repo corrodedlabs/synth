@@ -202,11 +202,14 @@ export class UiOverlay {
     }
   }
 
-  showBidPanel(currentBid: number) {
-    const nextBid = Math.min(currentBid + 1, 28);
-    this.bidLabel.textContent = `Bid stands at ${currentBid}`;
-    this.bidRaise.textContent = `Bid ${nextBid}`;
-    this.bidRaise.dataset.bid = String(nextBid);
+  // minBid is the lowest bid the server will accept; the opener must bid.
+  showBidPanel(minBid: number, isOpening: boolean) {
+    this.bidLabel.textContent = isOpening
+      ? "Open the bidding"
+      : `Bid stands at ${minBid - 1}`;
+    this.bidRaise.textContent = `Bid ${minBid}`;
+    this.bidRaise.dataset.bid = String(minBid);
+    this.bidPass.classList.toggle("hidden", isOpening);
     this.show(this.bidPanel);
   }
 

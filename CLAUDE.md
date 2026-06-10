@@ -21,6 +21,7 @@ External repositories may be vendored under `repos/` for agent reference.
 ### Racket (from repo root)
 - `racket server.rkt` — start WebSocket server on port 8081
 - `racket server.rkt --port 9000` — custom port
+- `raco test game.rkt` — run game-logic unit tests (rackunit submodule)
 - `raco test -t tests.rkt` — run integration tests
 - `racket client.rkt` — run bot simulation helpers
 
@@ -32,12 +33,15 @@ External repositories may be vendored under `repos/` for agent reference.
 
 ## Testing
 
-Three layers; run all of them after non-trivial changes.
+Four layers; run all of them after non-trivial changes.
 
-1. **Unit** — `cd app && npm test` (vitest: sexpr/protocol codecs).
-2. **Server integration** — `raco test -t tests.rkt` (boots a server on port
+1. **Game logic unit** — `raco test game.rkt` (rackunit: dealing, bidding,
+   trick resolution incl. trump-exposure timing, scoring).
+2. **Frontend unit** — `cd app && npm test` (vitest: sexpr/protocol codecs,
+   game model reducer and play-legality rules).
+3. **Server integration** — `raco test -t tests.rkt` (boots a server on port
    18081 so it never collides with a dev server).
-3. **Browser end-to-end** — Playwright scripts under `app/scripts/`, run from
+4. **Browser end-to-end** — Playwright scripts under `app/scripts/`, run from
    `app/` with both servers up (`racket server.rkt --port 8082` and
    `npm run dev -- --port 5179`; pass the page URL as the argument).
    **Run these headed (`HEADED=1`) by default** — a visible browser window —
@@ -91,7 +95,7 @@ and `--enable-unsafe-swiftshader --use-angle=swiftshader` for headless WebGL.
 
 Three main files with clear responsibilities:
 
-- **`game.rkt`** — Pure game logic: card definitions (`card` prefab struct with name/rank/suit/point), deck generation (32 cards, 4 suits, 8 ranks), card distribution, bidding validation (16–28 range), trump selection, trick resolution, and point calculation. No external dependencies.
+- **`game.rkt`** — Pure game logic: card definitions (`card` prefab struct with name/rank/suit/point; the numeric rank doubles as trick strength J>9>A>10>K>Q>8>7), per-game shuffled decks (`fresh-deck`), card distribution, the auction (opener must bid ≥16, raises strictly higher, three consecutive passes end it), play validation (follow suit; must trump right after calling for the exposure), trick resolution honouring trump-exposure timing, and team scoring (`score-game`). No external dependencies; rackunit tests live in its `test` submodule.
 
 - **`server.rkt`** — WebSocket service with three internal modules:
   - **User module**: `user` struct (connection, email, hand, comm-channel, pic-url), global `*connected-users*` hash
