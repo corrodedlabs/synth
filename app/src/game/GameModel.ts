@@ -23,7 +23,8 @@ export type GamePhase =
   | "bidding"
   | "choosing-trump"
   | "playing"
-  | "finished";
+  | "hand-finished" // between hands: result up, waiting on the host's deal
+  | "finished"; // the whole match is over
 
 // What the server is currently waiting on from us.
 export type PendingRequest =
@@ -62,6 +63,12 @@ export interface GameModel {
   readonly trumpExposed: boolean;
   readonly pendingRequest: PendingRequest | null;
   readonly points: readonly number[] | null; // by view index, set at hand end
+  // Match state — survives between hands, cleared only on RoomLeft.
+  readonly matchUs: number; // our team's game points
+  readonly matchThem: number;
+  readonly matchTarget: number;
+  readonly handNumber: number;
+  readonly matchWinner: "us" | "them" | null;
 }
 
 export type GameAction =
@@ -90,7 +97,25 @@ export type GameAction =
       readonly winner: PlayerIndex | null;
       readonly points: number;
     }
-  | { readonly _tag: "GameFinished"; readonly points: readonly number[] };
+  | { readonly _tag: "HandFinished"; readonly points: readonly number[] }
+  | {
+      // game points after a hand (already translated to our perspective)
+      readonly _tag: "HandResult";
+      readonly bidder: PlayerIndex;
+      readonly bid: number;
+      readonly made: boolean;
+      readonly us: number;
+      readonly them: number;
+      readonly target: number;
+    }
+  | { readonly _tag: "HandReset" } // next hand is being dealt
+  | {
+      readonly _tag: "MatchOver";
+      readonly winner: "us" | "them";
+      readonly us: number;
+      readonly them: number;
+      readonly hands: number;
+    };
 
 export const initialGameModel: GameModel = {
   phase: "idle",
@@ -113,6 +138,11 @@ export const initialGameModel: GameModel = {
   trumpExposed: false,
   pendingRequest: null,
   points: null,
+  matchUs: 0,
+  matchThem: 0,
+  matchTarget: 6,
+  handNumber: 1,
+  matchWinner: null,
 };
 
 export function gameReducer(state: GameModel, action: GameAction): GameModel {
@@ -220,13 +250,56 @@ export function gameReducer(state: GameModel, action: GameAction): GameModel {
       };
     }
 
-    case "GameFinished":
+    case "HandFinished":
       return {
         ...state,
-        phase: "finished",
+        phase: "hand-finished",
         points: action.points,
         score: action.points[0] + action.points[2],
         theirScore: action.points[1] + action.points[3],
+        activePlayer: null,
+        pendingRequest: null,
+      };
+
+    case "HandResult":
+      return {
+        ...state,
+        matchUs: action.us,
+        matchThem: action.them,
+        matchTarget: action.target,
+      };
+
+    case "HandReset":
+      // everything a single hand owns goes back to its initial value;
+      // the room, the seats, and the match score live on
+      return {
+        ...state,
+        phase: "bidding",
+        hand: [],
+        playedCards: [],
+        activePlayer: null,
+        score: 0,
+        tricks: 0,
+        theirScore: 0,
+        theirTricks: 0,
+        currentBid: 16,
+        bidsPlaced: 0,
+        bidWinner: null,
+        finalBid: null,
+        trumpSuit: null,
+        trumpExposed: false,
+        pendingRequest: null,
+        points: null,
+        handNumber: state.handNumber + 1,
+      };
+
+    case "MatchOver":
+      return {
+        ...state,
+        phase: "finished",
+        matchWinner: action.winner,
+        matchUs: action.us,
+        matchThem: action.them,
         activePlayer: null,
         pendingRequest: null,
       };

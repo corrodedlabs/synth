@@ -610,6 +610,12 @@
         opacity: 0.8;
         white-space: pre-line;
       }
+      #result-panel #result-wait {
+        font-size: 18px;
+        opacity: 0.6;
+        font-style: italic;
+        min-height: 24px;
+      }
     </style>
   </head>
   <body>
@@ -619,6 +625,8 @@
         <span class="label">You — Them:</span><span id="score-value" class="value">0 — 0</span>
         <span class="divider">|</span>
         <span class="label">Tricks:</span><span id="tricks-value" class="value">0 — 0</span>
+        <span class="divider">|</span>
+        <span class="label">Match:</span><span id="match-value" class="value">0 — 0</span>
       </div>
       <div id="status-line"></div>
       <div id="trump-indicator"></div>
@@ -639,6 +647,7 @@
           <li>Follow the led suit if you can. If you can't, play anything — or reveal the trump to start trumping.</li>
           <li>Highest card of the led suit wins the trick; once trump is revealed, trumps beat everything.</li>
           <li>Make at least your bid in points and your team wins the hand — fall short and you're <i>set</i>.</li>
+          <li>Each hand moves the bidders' match score: bids under 20 are worth +1 (−2 if set), 20 and up +2 (−4). First team to +6 wins the match; the deal passes around the table.</li>
         </ul>
         <button id="help-close" type="button">Close</button>
       </div>
@@ -662,6 +671,8 @@
       <div id="result-panel" class="panel hidden">
         <div id="result-title"></div>
         <div id="result-detail"></div>
+        <button id="next-hand" type="button" class="hidden">Deal the next hand</button>
+        <div id="result-wait" class="hidden">waiting for the host to deal…</div>
         <button id="play-again" type="button">Play again</button>
       </div>
 

@@ -40,6 +40,7 @@ export class GameState {
 
   private scoreElement: HTMLElement | null = null;
   private tricksElement: HTMLElement | null = null;
+  private matchElement: HTMLElement | null = null;
 
   constructor(sceneManager: SceneManager) {
     this.sceneManager = sceneManager;
@@ -74,11 +75,13 @@ export class GameState {
       onPass: () => this.session?.submitBid("pass"),
       onTrump: (suit) => this.session?.chooseTrump(suit),
       onExpose: () => this.session?.exposeTrump(),
+      onNextHand: () => this.session?.nextHand(),
       onPlayAgain: () => window.location.reload(),
     });
 
     this.scoreElement = document.getElementById("score-value");
     this.tricksElement = document.getElementById("tricks-value");
+    this.matchElement = document.getElementById("match-value");
     this.sound.bindToggle(document.getElementById("sound-button"));
 
     this.applyViewportLayout();
@@ -285,7 +288,8 @@ export class GameState {
         break;
 
       case "RoomLeft":
-        // tear down any in-progress game (aborted games land here mid-hand)
+        // tear down any in-progress game (aborted games land here mid-hand
+        // or while the between-hands result panel is up)
         for (const card of [...this.hand.getCards()]) {
           this.hand.removeCard(card);
           this.sceneManager.scene.remove(card.mesh);
@@ -296,6 +300,7 @@ export class GameState {
         this.ui.hideBidPanel();
         this.ui.hideTrumpPanel();
         this.ui.setExposeVisible(false);
+        this.ui.hideResult();
         this.renderScore();
         this.ui.hideLobby();
         this.ui.showStartScreen();
@@ -390,24 +395,58 @@ export class GameState {
         break;
       }
 
-      case "GameFinished": {
-        const points = action.points;
-        const ourPoints = points[0] + points[2];
-        const theirPoints = points[1] + points[3];
+      case "HandFinished":
+        // the hand's card points are final; the panel waits for HandResult,
+        // which carries the authoritative verdict and the match score
         this.renderScore();
-        let detail = "";
-        let weWon = ourPoints > theirPoints;
-        if (this.model.finalBid !== null && this.model.bidWinner !== null) {
-          const bidderOurs = this.model.bidWinner === 0 || this.model.bidWinner === 2;
-          const bidderPoints = bidderOurs ? ourPoints : theirPoints;
-          const made = bidderPoints >= this.model.finalBid;
-          const bidderName = this.model.bidWinner === 0 ? "Your" : `${this.seatName(this.model.bidWinner)}'s`;
-          detail = `${bidderName} team bid ${this.model.finalBid} and took ${bidderPoints} — ${made ? "made it" : "set"}`;
-          weWon = bidderOurs ? made : !made;
+        this.ui.hideBidPanel();
+        this.ui.hideTrumpPanel();
+        this.ui.setExposeVisible(false);
+        break;
+
+      case "HandResult": {
+        this.renderScore(); // match HUD segment just changed
+        // when a team has reached the target, match-over is already in
+        // flight — its panel and fanfare replace the between-hands ones
+        if (
+          this.model.matchUs >= this.model.matchTarget ||
+          this.model.matchThem >= this.model.matchTarget
+        ) {
+          break;
         }
-        this.sound.result(weWon);
+        const bidderOurs = action.bidder === 0 || action.bidder === 2;
+        const bidderPoints = bidderOurs ? this.model.score : this.model.theirScore;
+        const bidderName = action.bidder === 0 ? "Your" : `${this.seatName(action.bidder)}'s`;
+        const detail =
+          `${bidderName} team bid ${action.bid} and took ${bidderPoints} — ${action.made ? "made it" : "set"}\n` +
+          `Match: ${this.model.matchUs} — ${this.model.matchThem} (first to ${this.model.matchTarget})`;
+        this.sound.result(bidderOurs ? action.made : !action.made);
         this.ui.status("");
-        this.ui.showResult(ourPoints, theirPoints, detail);
+        this.ui.showHandResult(this.model.score, this.model.theirScore, detail, this.model.isHost);
+        break;
+      }
+
+      case "HandReset":
+        // the next deal is landing: clear the table but keep the seats,
+        // their name labels, and the match HUD
+        for (const card of [...this.hand.getCards()]) {
+          this.hand.removeCard(card);
+          this.sceneManager.scene.remove(card.mesh);
+        }
+        this.playArea.clearTable();
+        this.playArea.clearActivePlayer();
+        this.ui.setTrump(null, false);
+        this.ui.hideBidPanel();
+        this.ui.hideTrumpPanel();
+        this.ui.setExposeVisible(false);
+        this.ui.hideResult();
+        this.renderScore();
+        break;
+
+      case "MatchOver": {
+        this.sound.result(action.winner === "us");
+        this.ui.status("");
+        this.ui.showMatchOver(action.us, action.them, action.winner === "us", action.hands);
         break;
       }
     }
@@ -458,6 +497,9 @@ export class GameState {
     }
     if (this.tricksElement) {
       this.tricksElement.textContent = `${this.model.tricks} — ${this.model.theirTricks}`;
+    }
+    if (this.matchElement) {
+      this.matchElement.textContent = `${this.model.matchUs} — ${this.model.matchThem}`;
     }
   }
 }

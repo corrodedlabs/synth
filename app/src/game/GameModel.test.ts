@@ -145,17 +145,88 @@ describe("gameReducer", () => {
       trumpSuit: "clubs",
       trumpExposed: true,
       seatNames: ["a", "b", "c", "d"],
+      matchUs: 4,
+      matchThem: -2,
+      handNumber: 5,
     });
     expect(gameReducer(midGame, { _tag: "RoomLeft" })).toEqual(initialGameModel);
   });
 
-  it("totals team points when the game finishes", () => {
+  it("totals team points when a hand finishes", () => {
     const model = gameReducer(playing({}), {
-      _tag: "GameFinished",
+      _tag: "HandFinished",
       points: [10, 6, 9, 3],
     });
-    expect(model.phase).toBe("finished");
+    expect(model.phase).toBe("hand-finished");
     expect(model.score).toBe(19);
     expect(model.theirScore).toBe(9);
+  });
+
+  it("records the match score from a hand result", () => {
+    const model = gameReducer(playing({}), {
+      _tag: "HandResult",
+      bidder: 1,
+      bid: 17,
+      made: false,
+      us: 2,
+      them: -2,
+      target: 6,
+    });
+    expect(model.matchUs).toBe(2);
+    expect(model.matchThem).toBe(-2);
+    expect(model.matchTarget).toBe(6);
+  });
+
+  it("resets the hand but preserves the room and the match on HandReset", () => {
+    const betweenHands: GameModel = {
+      ...initialGameModel,
+      phase: "hand-finished",
+      roomName: "table",
+      members: ["a", "b", "c", "d"],
+      isHost: true,
+      seatNames: ["You", "b", "c", "d"],
+      hand: [h8],
+      playedCards: [{ card: c7, playerIndex: 2 }],
+      activePlayer: 2,
+      score: 19,
+      tricks: 5,
+      theirScore: 9,
+      theirTricks: 3,
+      currentBid: 21,
+      bidsPlaced: 4,
+      bidWinner: 1,
+      finalBid: 21,
+      trumpSuit: "clubs",
+      trumpExposed: true,
+      pendingRequest: { kind: "trump" },
+      points: [10, 6, 9, 3],
+      matchUs: 2,
+      matchThem: -2,
+      matchTarget: 6,
+      handNumber: 3,
+    };
+    const model = gameReducer(betweenHands, { _tag: "HandReset" });
+    expect(model).toEqual({
+      ...initialGameModel,
+      phase: "bidding",
+      roomName: "table",
+      members: ["a", "b", "c", "d"],
+      isHost: true,
+      seatNames: ["You", "b", "c", "d"],
+      matchUs: 2,
+      matchThem: -2,
+      handNumber: 4,
+    });
+  });
+
+  it("ends the match", () => {
+    const model = gameReducer(
+      { ...initialGameModel, phase: "hand-finished", matchUs: 4, matchThem: -2 },
+      { _tag: "MatchOver", winner: "us", us: 6, them: -2, hands: 7 }
+    );
+    expect(model.phase).toBe("finished");
+    expect(model.matchWinner).toBe("us");
+    expect(model.matchUs).toBe(6);
+    expect(model.matchThem).toBe(-2);
   });
 });

@@ -137,6 +137,37 @@ describe("decodeServerEvent", () => {
     }
   });
 
+  it("decodes the match flow", () => {
+    expect(
+      decodeServerEvent(
+        "(hand-result ((hand . 2) (bidder . 1) (bid . 19) (made . #t) (delta . 1) (evens . -2) (odds . 1) (target . 6)))"
+      )
+    ).toEqual({
+      _tag: "HandResult",
+      hand: 2, bidder: 1, bid: 19, made: true, delta: 1, evens: -2, odds: 1, target: 6,
+    });
+    expect(
+      decodeServerEvent(
+        "(hand-result ((hand . 1) (bidder . 0) (bid . 20) (made . #f) (delta . -4) (evens . -4) (odds . 0) (target . 6)))"
+      )
+    ).toEqual({
+      _tag: "HandResult",
+      hand: 1, bidder: 0, bid: 20, made: false, delta: -4, evens: -4, odds: 0, target: 6,
+    });
+    expect(
+      decodeServerEvent("(match-over ((winner . odds) (evens . -2) (odds . 6) (hands . 7)))")
+    ).toEqual({ _tag: "MatchOver", winner: "odds", evens: -2, odds: 6, hands: 7 });
+    // malformed bodies fall through instead of crashing the event loop
+    expect(decodeServerEvent("(hand-result ((hand . 1)))")).toEqual({
+      _tag: "Ignored",
+      raw: "(hand-result ((hand . 1)))",
+    });
+    expect(decodeServerEvent("(match-over ((winner . nobody)))")).toEqual({
+      _tag: "Ignored",
+      raw: "(match-over ((winner . nobody)))",
+    });
+  });
+
   it("passes unknown frames through as Ignored", () => {
     expect(decodeServerEvent("(done)")).toEqual({ _tag: "Ignored", raw: "(done)" });
     expect(decodeServerEvent("invalid-request")).toEqual({ _tag: "Ignored", raw: "invalid-request" });
@@ -183,6 +214,7 @@ describe("encodeCommand", () => {
       })
     ).toBe('(card-played "a@b" #s(card jack 7 club 3))');
     expect(encodeCommand({ _tag: "ExposeTrump", email: "a@b" })).toBe('(card-played "a@b" expose-trump)');
+    expect(encodeCommand({ _tag: "NextHand", email: "a@b" })).toBe('(next-hand "a@b")');
   });
 
   it("uses sym helper consistently", () => {

@@ -105,6 +105,26 @@ export type ServerEvent =
       readonly firstSuit: Suit | null;
     }
   | { readonly _tag: "PointsWon"; readonly points: ReadonlyMap<number, number> }
+  | {
+      // game points after a hand; bidder is a *server* seat index and
+      // evens/odds are the server-side teams (seat parity)
+      readonly _tag: "HandResult";
+      readonly hand: number;
+      readonly bidder: number;
+      readonly bid: number;
+      readonly made: boolean;
+      readonly delta: number;
+      readonly evens: number;
+      readonly odds: number;
+      readonly target: number;
+    }
+  | {
+      readonly _tag: "MatchOver";
+      readonly winner: "evens" | "odds";
+      readonly evens: number;
+      readonly odds: number;
+      readonly hands: number;
+    }
   | { readonly _tag: "ServerError"; readonly message: string }
   | { readonly _tag: "Disconnected" }
   | { readonly _tag: "Ignored"; readonly raw: string };
@@ -238,6 +258,46 @@ export function decodeServerEvent(frame: string): ServerEvent | null {
       return { _tag: "PointsWon", points };
     }
 
+    case "hand-result": {
+      const body = rest[0];
+      const num = (key: string) => assocValue(body, key);
+      const hand = num("hand");
+      const bidder = num("bidder");
+      const bid = num("bid");
+      const delta = num("delta");
+      const evens = num("evens");
+      const odds = num("odds");
+      const target = num("target");
+      if (
+        typeof hand !== "number" || typeof bidder !== "number" || typeof bid !== "number" ||
+        typeof delta !== "number" || typeof evens !== "number" || typeof odds !== "number" ||
+        typeof target !== "number"
+      ) {
+        return { _tag: "Ignored", raw: trimmed };
+      }
+      return {
+        _tag: "HandResult",
+        hand, bidder, bid,
+        made: assocValue(body, "made") === true,
+        delta, evens, odds, target,
+      };
+    }
+
+    case "match-over": {
+      const body = rest[0];
+      const winner = assocValue(body, "winner") ?? false;
+      const evens = assocValue(body, "evens");
+      const odds = assocValue(body, "odds");
+      const hands = assocValue(body, "hands");
+      if (
+        !(isSym(winner, "evens") || isSym(winner, "odds")) ||
+        typeof evens !== "number" || typeof odds !== "number" || typeof hands !== "number"
+      ) {
+        return { _tag: "Ignored", raw: trimmed };
+      }
+      return { _tag: "MatchOver", winner: (winner as Sym).name as "evens" | "odds", evens, odds, hands };
+    }
+
     case "error":
       return { _tag: "ServerError", message: writeSExpr(rest[0] ?? sym("unknown")) };
 
@@ -266,7 +326,8 @@ export type ClientCommand =
   | { readonly _tag: "PutBid"; readonly email: string; readonly bid: BidValue }
   | { readonly _tag: "SelectTrump"; readonly email: string; readonly suit: Suit }
   | { readonly _tag: "PlayCard"; readonly email: string; readonly card: CardModel }
-  | { readonly _tag: "ExposeTrump"; readonly email: string };
+  | { readonly _tag: "ExposeTrump"; readonly email: string }
+  | { readonly _tag: "NextHand"; readonly email: string };
 
 export function encodeCommand(command: ClientCommand): string {
   switch (command._tag) {
@@ -305,5 +366,7 @@ export function encodeCommand(command: ClientCommand): string {
       return writeSExpr([sym("card-played"), command.email, encodeCard(command.card)]);
     case "ExposeTrump":
       return writeSExpr([sym("card-played"), command.email, sym("expose-trump")]);
+    case "NextHand":
+      return writeSExpr([sym("next-hand"), command.email]);
   }
 }

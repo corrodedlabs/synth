@@ -182,6 +182,13 @@ export class GameSession {
     this.callbacks.dispatch({ _tag: "RequestCleared" });
   }
 
+  // Host only, between hands: ask the server to deal the next one.
+  nextHand() {
+    const model = this.callbacks.getModel();
+    if (!this.socket || !model.isHost || model.phase !== "hand-finished") return;
+    this.socket.send({ _tag: "NextHand", email: this.email });
+  }
+
   // Back to the start screen: reset lobby state and refresh the table list
   // so the user can immediately join or host again on the same connection.
   private exitRoom(message: string) {
@@ -326,6 +333,19 @@ export class GameSession {
           return false;
 
         case "HandDealt": {
+          // A deal landing between hands starts the next hand of the match:
+          // clear the per-hand session state before the model reset. Played
+          // card ids recur across hands, so a stale locallyPlayed entry
+          // would swallow a future broadcast.
+          if (this.callbacks.getModel().phase === "hand-finished") {
+            this.cardsInTrick = 0;
+            this.trickPoints = 0;
+            this.pointsTaken = [0, 0, 0, 0];
+            this.locallyPlayed.clear();
+            this.chosenTrump = null;
+            this.justExposed = false;
+            dispatch({ _tag: "HandReset" });
+          }
           // First deal: seats are final now, pin everyone's display name.
           const model = this.callbacks.getModel();
           if (model.seatNames === null && model.members.length === 4) {
@@ -407,7 +427,36 @@ export class GameSession {
                 ) ?? null)
               : null;
           yield* this.finishTrickIfComplete(lastWinner);
-          dispatch({ _tag: "GameFinished", points });
+          // only the hand is over — hand-result (and possibly match-over)
+          // follow on the same socket, so the loop keeps running
+          dispatch({ _tag: "HandFinished", points });
+          return false;
+        }
+
+        case "HandResult": {
+          // evens is the team of even *server* seats; ours iff we sit even
+          const usEvens = this.myServerIndex % 2 === 0;
+          dispatch({
+            _tag: "HandResult",
+            bidder: this.toView(event.bidder),
+            bid: event.bid,
+            made: event.made,
+            us: usEvens ? event.evens : event.odds,
+            them: usEvens ? event.odds : event.evens,
+            target: event.target,
+          });
+          return false;
+        }
+
+        case "MatchOver": {
+          const usEvens = this.myServerIndex % 2 === 0;
+          dispatch({
+            _tag: "MatchOver",
+            winner: (event.winner === "evens") === usEvens ? "us" : "them",
+            us: usEvens ? event.evens : event.odds,
+            them: usEvens ? event.odds : event.evens,
+            hands: event.hands,
+          });
           return true;
         }
 

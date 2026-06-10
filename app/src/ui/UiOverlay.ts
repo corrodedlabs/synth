@@ -14,6 +14,7 @@ export interface UiCallbacks {
   readonly onPass: () => void;
   readonly onTrump: (suit: Suit) => void;
   readonly onExpose: () => void;
+  readonly onNextHand: () => void;
   readonly onPlayAgain: () => void;
 }
 
@@ -56,6 +57,9 @@ export class UiOverlay {
   private resultPanel = element("result-panel");
   private resultTitle = element("result-title");
   private resultDetail = element("result-detail");
+  private nextHandButton = element("next-hand") as HTMLButtonElement;
+  private resultWait = element("result-wait");
+  private playAgainButton = element("play-again") as HTMLButtonElement;
   private trumpIndicator = element("trump-indicator");
   private statusTimer: number | null = null;
 
@@ -85,7 +89,15 @@ export class UiOverlay {
     });
 
     this.exposeButton.addEventListener("click", () => callbacks.onExpose());
-    element("play-again").addEventListener("click", () => callbacks.onPlayAgain());
+    this.nextHandButton.addEventListener("click", () => {
+      // one deal per gate: the button goes away as soon as it is used
+      // (the server also drains stale repeats)
+      this.hide(this.nextHandButton);
+      this.resultWait.textContent = "dealing…";
+      this.show(this.resultWait);
+      callbacks.onNextHand();
+    });
+    this.playAgainButton.addEventListener("click", () => callbacks.onPlayAgain());
 
     // how-to-play overlay is pure UI — no game state involved
     const helpPanel = element("help-panel");
@@ -246,10 +258,36 @@ export class UiOverlay {
         : "Trump: hidden";
   }
 
-  showResult(ourPoints: number, theirPoints: number, detail: string) {
+  // Between hands: the hand's card points, the verdict + match score, and
+  // either the host's deal button or a waiting note for everyone else.
+  showHandResult(ourPoints: number, theirPoints: number, detail: string, isHost: boolean) {
     this.resultTitle.textContent = `${ourPoints} — ${theirPoints}`;
     this.resultDetail.textContent = detail;
+    this.hide(this.playAgainButton);
+    if (isHost) {
+      this.show(this.nextHandButton);
+      this.hide(this.resultWait);
+    } else {
+      this.hide(this.nextHandButton);
+      this.resultWait.textContent = "waiting for the host to deal…";
+      this.show(this.resultWait);
+    }
     this.show(this.resultPanel);
+  }
+
+  showMatchOver(ourGamePoints: number, theirGamePoints: number, weWon: boolean, hands: number) {
+    this.resultTitle.textContent = weWon ? "Match won" : "Match lost";
+    this.resultDetail.textContent =
+      `${ourGamePoints} — ${theirGamePoints} in game points after ` +
+      `${hands} hand${hands === 1 ? "" : "s"}`;
+    this.hide(this.nextHandButton);
+    this.hide(this.resultWait);
+    this.show(this.playAgainButton);
+    this.show(this.resultPanel);
+  }
+
+  hideResult() {
+    this.hide(this.resultPanel);
   }
 
   private show(el: HTMLElement) {
