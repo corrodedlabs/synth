@@ -9,6 +9,8 @@
          trick-winner
          play-game
          score-game
+         hand-game-points
+         match-winner
          card
          card-name
          card-rank
@@ -16,7 +18,8 @@
          card-point
          print-card
          +min-bid+
-         +max-bid+)
+         +max-bid+
+         +match-target+)
 
 ;; 28 is usually played by four players in fixed partnerships, partners facing each other.
 ;;
@@ -119,10 +122,12 @@
 ;; notify-bid-func: (player-index bid-or-pass) -> void, only for accepted bids
 ;; error-func: (player-index error-symbol offending-value) -> void; the same
 ;;   player is then asked again
+;; first-player: the seat that opens the auction (rotates between hands)
 ;; returns (cons winning-bid winner-index)
 (define start-bidding
-  (λ (request-bid-func notify-bid-func error-func)
-    (let loop ([player-num 0]
+  (λ (request-bid-func notify-bid-func error-func
+                       #:first-player (first-player 0))
+    (let loop ([player-num first-player]
                [high-bid #f] ; (cons value bidder) once the auction opens
                [consecutive-passes 0])
       (cond
@@ -214,11 +219,13 @@
 ;;   where trump-suit stays #f until exposed
 ;; notify-play-func: (seat card-or-'expose-trump) -> void, accepted plays only
 ;; error-func: (seat error-symbol) -> void; the same seat is then asked again
+;; first-leader: the seat that leads the first trick (rotates between hands)
 ;; returns an immutable hash seat -> card points taken
 (define play-game
   (λ (player-cards selected-trump-suit request-play-func
                    #:notify-play (notify-play-func void)
-                   #:error-func (error-func void))
+                   #:error-func (error-func void)
+                   #:first-leader (first-leader 0))
 
     (define (has-suit? hand suit)
       (ormap (λ (k) (equal? suit (card-suit k))) hand))
@@ -226,7 +233,7 @@
     (let loop ([hands player-cards]
                [exposed? #f]
                [plays '()] ; current trick, play order: (list seat card trump?)
-               [leader 0]
+               [leader first-leader]
                [tricks-left (length (car player-cards))]
                [must-trump-seat #f] ; seat that just exposed, if any
                [points-earned (make-immutable-hash
@@ -308,6 +315,27 @@
            [defender-team (if (even? bid-player) odds evens)])
       (list (>= bidder-team bid-value) bidder-team defender-team))))
 
+;; A match is many hands: each hand moves only the bidding team's game
+;; points — +1 made / -2 set for bids under 20, +2 / -4 from 20 up. The
+;; defenders never score. First team to +match-target+ wins the match.
+
+(define +match-target+ 6)
+
+(define hand-game-points
+  (λ (bid-value made?)
+    (if (< bid-value 20)
+        (if made? 1 -2)
+        (if made? 2 -4))))
+
+;; 'evens, 'odds, or #f while the match is still going. Only one team's
+;; score moves per hand, so both reaching the target at once is impossible.
+(define match-winner
+  (λ (evens odds #:target (target +match-target+))
+    (cond
+      [(>= evens target) 'evens]
+      [(>= odds target) 'odds]
+      [else #f])))
+
 
 (module+ test
   (require rackunit)
@@ -376,7 +404,7 @@
   ;; --- bidding ---
 
   ;; drives start-bidding from a per-player queue of responses
-  (define (run-auction scripts)
+  (define (run-auction scripts #:first-player (first-player 0))
     (define remaining (make-vector +num-players+ '()))
     (for ([i (range +num-players+)])
       (vector-set! remaining i (list-ref scripts i)))
@@ -392,7 +420,8 @@
            (let ([entry (car script)])
              (if (procedure? entry) (entry min-bid) entry))))
        (λ (player bid) (set! bids (append bids (list (cons player bid)))))
-       (λ (player err value) (set! errors (append errors (list (cons player err)))))))
+       (λ (player err value) (set! errors (append errors (list (cons player err)))))
+       #:first-player first-player))
     (values result bids errors))
 
   (test-case "auction ends after three consecutive passes, not one"
@@ -440,6 +469,22 @@
                        (list (λ (m) (record-min m) 25) 'pass)
                        (list (λ (m) (record-min m) 'pass))))
     (check-equal? (take asked 4) '(16 21 21 26)))
+
+  (test-case "the auction opens at #:first-player and wraps around"
+    ;; seat 1 opens, 2 and 3 pass, 0 raises, 1 2 3 pass -> seat 0 wins
+    (define-values (result bids errors)
+      (run-auction '((17 pass) (16 pass) (pass pass) (pass pass))
+                   #:first-player 1))
+    (check-equal? result '(17 . 0))
+    (check-equal? (car bids) '(1 . 16))
+    (check-equal? errors '()))
+
+  (test-case "the opener obligation follows #:first-player"
+    ;; seat 3 opens: their pass is rejected, everyone else may pass freely
+    (define-values (result bids errors)
+      (run-auction '((pass) (pass) (pass) (pass 16)) #:first-player 3))
+    (check-equal? result '(16 . 3))
+    (check-equal? errors '((3 . must-open-bid))))
 
   ;; --- card legality ---
 
@@ -502,7 +547,7 @@
   ;; --- play-game ---
 
   ;; drives play-game from per-seat response queues
-  (define (run-hand hands trump scripts)
+  (define (run-hand hands trump scripts #:first-leader (first-leader 0))
     (define remaining (make-vector +num-players+ '()))
     (for ([i (range +num-players+)])
       (vector-set! remaining i (list-ref scripts i)))
@@ -519,7 +564,8 @@
                  #:notify-play (λ (seat what)
                                  (set! notified (append notified (list (cons seat what)))))
                  #:error-func (λ (seat err)
-                                (set! errors (append errors (list (cons seat err)))))))
+                                (set! errors (append errors (list (cons seat err)))))
+                 #:first-leader first-leader))
     (values points notified errors))
 
   (define (cards . name-suit-pairs)
@@ -608,6 +654,23 @@
                       (cards '(ace . heart)))))
     (check-equal? errors '((1 . invalid-expose))))
 
+  (test-case "#:first-leader leads the first trick; play wraps around"
+    ;; seat 2 leads the h8, 3-0-1 follow; seat 3's ace takes the point
+    (define hands (list (cards '(king . heart))
+                        (cards '(seven . heart))
+                        (cards '(eight . heart))
+                        (cards '(ace . heart))))
+    (define-values (points notified errors)
+      (run-hand hands 'club
+                (list (cards '(king . heart))
+                      (cards '(seven . heart))
+                      (cards '(eight . heart))
+                      (cards '(ace . heart)))
+                #:first-leader 2))
+    (check-equal? errors '())
+    (check-equal? (map car notified) '(2 3 0 1))
+    (check-equal? points (hash 0 0 1 0 2 0 3 1)))
+
   ;; --- scoring ---
 
   (test-case "the bidding team is scored against the bid"
@@ -615,7 +678,29 @@
     (check-equal? (score-game points 19 0) '(#t 19 9))
     (check-equal? (score-game points 20 2) '(#f 19 9))
     (check-equal? (score-game points 9 1) '(#t 9 19))
-    (check-equal? (score-game points 10 3) '(#f 9 19))))
+    (check-equal? (score-game points 10 3) '(#f 9 19)))
+
+  ;; --- match scoring ---
+
+  (test-case "game points double at the bid-20 boundary"
+    (check-equal? (hand-game-points 16 #t) 1)
+    (check-equal? (hand-game-points 16 #f) -2)
+    (check-equal? (hand-game-points 19 #t) 1)
+    (check-equal? (hand-game-points 19 #f) -2)
+    (check-equal? (hand-game-points 20 #t) 2)
+    (check-equal? (hand-game-points 20 #f) -4)
+    (check-equal? (hand-game-points 28 #t) 2)
+    (check-equal? (hand-game-points 28 #f) -4))
+
+  (test-case "the match ends when a team reaches the target"
+    (check-equal? (match-winner 0 0) #f)
+    (check-equal? (match-winner 5 -4) #f)
+    (check-equal? (match-winner +match-target+ 3) 'evens)
+    (check-equal? (match-winner -2 +match-target+) 'odds)
+    (check-equal? (match-winner 7 0) 'evens)
+    ;; the target is tunable (the server reads it from MATCH-TARGET)
+    (check-equal? (match-winner 1 0 #:target 1) 'evens)
+    (check-equal? (match-winner 0 0 #:target 1) #f)))
 
 ;; sorts a deck into a canonical order for set comparisons in tests
 (define (sort-deck deck)
