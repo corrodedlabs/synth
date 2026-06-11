@@ -109,10 +109,12 @@ for (let bots = 1; bots <= 3; bots++) {
 await shot("03-lobby");
 await page.tap("#start-game");
 
-// play the hand: bid panel, then tap cards to play
+// play the hand: bid panel, then tap cards to play (two-step on touch)
 let tappedPlays = 0;
 let shotHand = false;
 let shotTrick = false;
+let checkedDimming = false;
+let checkedArming = false;
 const deadline = Date.now() + 180_000;
 while (Date.now() < deadline) {
   const snapshot = await state();
@@ -147,11 +149,30 @@ while (Date.now() < deadline) {
       await page.waitForTimeout(300);
       continue;
     }
-    // play by real touch tap on the card
+    // unplayable cards must be dimmed while the server waits on us
+    if (!checkedDimming) {
+      const states = await page.evaluate(() => window.__game.cardStates());
+      const wrong = states.filter(
+        (s) => s.dimmed === snapshot.legal.includes(s.id)
+      );
+      check("illegal cards (and only those) are dimmed", wrong.length === 0);
+      if (wrong.length) console.log("  mismatches:", JSON.stringify(wrong));
+      checkedDimming = true;
+    }
+    // touch plays are two-step: the first tap arms the card…
     const cardId = snapshot.legal[0];
     const pos = await page.evaluate((id) => window.__game.cardScreenPos(id), cardId);
     if (pos) {
       await page.touchscreen.tap(pos.x, pos.y);
+      await page.waitForTimeout(400);
+      const armed = await state();
+      if (!checkedArming) {
+        check("first tap arms the card instead of playing it", armed.hand.includes(cardId));
+        checkedArming = true;
+      }
+      // …and a second tap on the raised card commits it
+      const raised = await page.evaluate((id) => window.__game.cardScreenPos(id), cardId);
+      if (raised) await page.touchscreen.tap(raised.x, raised.y);
       await page.waitForTimeout(500);
       const after = await state();
       const played = !after.hand.includes(cardId);

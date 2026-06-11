@@ -3,11 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>🎴</text></svg>" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&display=swap" rel="stylesheet" />
-    <title>Card Game</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/icon-180.png" />
+    <meta name="theme-color" content="#f7f1e7" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <title>28 — a trick-taking game</title>
     <style>
       html, body {
         height: 100%;
@@ -153,6 +158,15 @@
         display: flex;
         gap: 16px;
       }
+      /* the invite-link entry: one emphasized action above the usual two */
+      #join-link {
+        margin-bottom: 18px;
+        background: rgba(59, 47, 42, 0.07) !important;
+        max-width: 86vw;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
       #room-browser {
         margin-top: 30px;
         display: flex;
@@ -261,6 +275,20 @@
         margin-top: 10px;
         min-height: 22px;
       }
+      /* #lobby-panel prefix outranks the generic .panel button rules */
+      #lobby-panel #copy-invite {
+        font-size: 16px;
+        border: none;
+        border-bottom: 1px solid rgba(59, 47, 42, 0.35);
+        border-radius: 0;
+        padding: 2px 2px;
+        margin-top: 6px;
+        opacity: 0.65;
+      }
+      #lobby-panel #copy-invite:hover {
+        opacity: 1;
+        background: transparent;
+      }
       #leave-table {
         position: absolute;
         top: 12px;
@@ -352,7 +380,8 @@
         pointer-events: none;
       }
       #sound-button,
-      #leave-match {
+      #leave-match,
+      #emote-button {
         pointer-events: auto;
         font-family: inherit;
         font-size: 17px;
@@ -366,7 +395,8 @@
         opacity: 0.6;
       }
       #sound-button:hover,
-      #leave-match:hover {
+      #leave-match:hover,
+      #emote-button:hover {
         opacity: 1;
       }
       /* armed = one more click abandons the match for everyone */
@@ -374,6 +404,62 @@
         color: #a33c2e;
         border-bottom-color: rgba(163, 60, 46, 0.6);
         opacity: 1;
+      }
+      #emote-strip {
+        position: absolute;
+        bottom: 52px;
+        left: 16px;
+        z-index: 32;
+        display: flex;
+        gap: 4px;
+        pointer-events: auto;
+        background: rgba(253, 250, 243, 0.95);
+        border: 1px solid rgba(59, 47, 42, 0.2);
+        border-radius: 26px;
+        padding: 6px 10px;
+        box-shadow: 0 8px 22px rgba(59, 47, 42, 0.14);
+      }
+      #emote-strip button {
+        font-size: 26px;
+        line-height: 1;
+        background: transparent;
+        border: none;
+        padding: 4px 6px;
+        cursor: pointer;
+        border-radius: 50%;
+        transition: transform 120ms ease;
+      }
+      #emote-strip button:hover {
+        transform: scale(1.2);
+      }
+      .emote-bubble {
+        position: absolute;
+        transform: translate(-50%, -50%);
+        font-size: 42px;
+        pointer-events: none;
+        z-index: 40;
+        animation: emote-float 2.4s ease-out forwards;
+        text-shadow: 0 4px 14px rgba(59, 47, 42, 0.25);
+      }
+      @keyframes emote-float {
+        0% {
+          opacity: 0;
+          transform: translate(-50%, -30%) scale(0.4);
+        }
+        12% {
+          opacity: 1;
+          transform: translate(-50%, -55%) scale(1.18);
+        }
+        22% {
+          transform: translate(-50%, -60%) scale(1);
+        }
+        72% {
+          opacity: 1;
+        }
+        100% {
+          opacity: 0;
+          transform: translate(-50%, -170%) scale(1);
+        }
       }
       #help-panel {
         top: 50%;
@@ -485,22 +571,22 @@
         }
         /* stack the HUD rows so score, status, and trump never collide */
         #score-display {
-          top: 10px;
-          right: 12px;
+          top: calc(10px + env(safe-area-inset-top));
+          right: calc(12px + env(safe-area-inset-right));
           font-size: 15px;
         }
         #score-display .divider {
           margin: 0 6px;
         }
         #status-line {
-          top: 36px;
-          left: 14px;
+          top: calc(36px + env(safe-area-inset-top));
+          left: calc(14px + env(safe-area-inset-left));
           font-size: 15px;
           max-width: 86vw;
         }
         #trump-indicator {
-          top: 60px;
-          right: 14px;
+          top: calc(60px + env(safe-area-inset-top));
+          right: calc(14px + env(safe-area-inset-right));
           font-size: 15px;
         }
         .panel {
@@ -510,6 +596,14 @@
           font-size: 18px;
           padding: 7px 16px;
           margin: 4px;
+        }
+        /* the two auction answers are the most-tapped controls in the
+           game: give thumbs something to hit */
+        #bid-panel button {
+          font-size: 21px;
+          padding: 13px 10px;
+          min-width: 36vw;
+          margin: 5px;
         }
         #lobby-panel {
           min-width: 0;
@@ -542,12 +636,13 @@
           font-size: 17px;
         }
         #trump-panel button {
-          font-size: 26px;
-          padding: 5px 13px;
+          font-size: 30px;
+          padding: 10px 15px;
         }
         #expose-button {
           bottom: 28vh;
-          font-size: 16px;
+          font-size: 18px;
+          padding: 11px 22px;
         }
         #result-panel {
           min-width: 0;
@@ -574,18 +669,32 @@
           padding-left: 18px;
         }
         #help-button {
-          bottom: 12px;
-          right: 14px;
+          bottom: calc(12px + env(safe-area-inset-bottom));
+          right: calc(14px + env(safe-area-inset-right));
           font-size: 15px;
+          padding: 6px 2px;
         }
         #corner-actions {
-          bottom: 12px;
-          left: 14px;
+          bottom: calc(12px + env(safe-area-inset-bottom));
+          left: calc(14px + env(safe-area-inset-left));
           gap: 12px;
         }
         #sound-button,
-        #leave-match {
+        #leave-match,
+        #emote-button {
           font-size: 15px;
+          padding: 6px 2px;
+        }
+        #emote-strip {
+          bottom: calc(52px + env(safe-area-inset-bottom));
+          left: 10px;
+        }
+        #emote-strip button {
+          font-size: 24px;
+          padding: 6px 5px;
+        }
+        .emote-bubble {
+          font-size: 34px;
         }
         .seat-name-label {
           font-size: 15px;
@@ -655,8 +764,10 @@
       <button id="help-button" type="button">how to play</button>
       <div id="corner-actions">
         <button id="sound-button" type="button">sound on</button>
+        <button id="emote-button" type="button" class="hidden">emote</button>
         <button id="leave-match" type="button" class="hidden">leave match</button>
       </div>
+      <div id="emote-strip" class="hidden"></div>
       <div id="help-panel" class="panel hidden">
         <div class="panel-title">Twenty-Eight</div>
         <ul id="help-rules">
@@ -703,6 +814,7 @@
         <button id="add-bot" type="button">Add a bot</button>
         <button id="start-game" type="button" disabled>Start game</button>
         <div id="lobby-hint"></div>
+        <button id="copy-invite" type="button">copy invite link</button>
         <button id="leave-table" type="button">Leave table</button>
       </div>
 
@@ -710,6 +822,7 @@
         <h1>28</h1>
         <p>a trick-taking game</p>
         <input id="player-name" type="text" placeholder="your name" maxlength="20" autocomplete="off" />
+        <button id="join-link" type="button" class="hidden"></button>
         <div id="start-actions">
           <button id="create-button" type="button">Create a table</button>
           <button id="browse-button" type="button">Join a table</button>

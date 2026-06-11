@@ -248,6 +248,21 @@
                      '((bid-placed 0 16) (bid-placed 1 pass)
                        (bid-placed 2 pass) (bid-placed 3 pass)))
 
+       ;; emotes: the whitelist broadcasts to every seat, junk and rapid
+       ;; repeats are dropped (per-sender cooldown)
+       (let ((guest (first players)))
+         (send-msg (scripted-connection guest) '(emote match-j3 laugh))
+         (send-msg (scripted-connection guest) '(emote match-j3 fire))   ; throttled
+         (send-msg (scripted-connection guest) '(emote match-j3 hack!))  ; not a word
+         (check-equal? (await host (λ (events) (findf (tagged 'emote-played) events))
+                              #:label 'emote-seen)
+                       '(emote-played 0 laugh))
+         (sleep 0.5)
+         (check-equal? (length ((events-tagged 'emote-played)
+                                (unbox (scripted-events host))))
+                       1
+                       "the cooldown swallows the second emote"))
+
        ;; only the host can advance the match
        (send-msg (scripted-connection host) '(next-hand match-host))
 

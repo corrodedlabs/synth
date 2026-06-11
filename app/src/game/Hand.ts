@@ -8,11 +8,19 @@ export class Hand {
   private handCenter = new THREE.Vector3(0, 0.3, 2.0);
   // Narrow screens compress the fan (more overlap) so it stays in frame.
   private widthScale = 1;
+  // Phones blow the cards up a little so ranks stay thumb-readable.
+  private cardScale = 1;
 
   public setWidthScale(scale: number) {
     if (scale === this.widthScale) return;
     this.widthScale = scale;
     this.arrangeCards();
+  }
+
+  public setCardScale(scale: number) {
+    if (scale === this.cardScale) return;
+    this.cardScale = scale;
+    this.cards.forEach((card) => card.mesh.scale.setScalar(scale));
   }
 
   constructor(scene: THREE.Scene, camera: THREE.Camera) {
@@ -28,6 +36,7 @@ export class Hand {
 
   public addCard(card: Card) {
     this.cards.push(card);
+    card.mesh.scale.setScalar(this.cardScale);
     card.mesh.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
         obj.castShadow = true;

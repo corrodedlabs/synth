@@ -100,7 +100,8 @@ Drive decisions through the `window.__game` debug bridge instead of 3D
 gestures: `state()` (the reducer model — poll it with `waitForFunction`),
 `legalCards()`, `play(id)`, `bid(n)`, `pass()`, `trump(suit)`, `expose()`,
 `nextHand()`, `addBot()`, `startGame()`, `leaveTable()`, `leaveMatch()`,
-`kick(member)`, `roomName()`.
+`kick(member)`, `roomName()`, `cardStates()` (dimming), `emote(id)`,
+`inviteLink()`, `joinByLink(name, room)`.
 Launch with `channel: "chrome"` locally (`/usr/bin/chromium` in CI sandboxes)
 and `--enable-unsafe-swiftshader --use-angle=swiftshader` for headless WebGL.
 
@@ -143,14 +144,19 @@ Server events drive a pure reducer; rendering reacts to dispatched actions
   (Effect program: lobby ops, event loop, seat translation, heartbeat),
   `GameState.ts` (dispatch → Three.js/DOM rendering), `Card.ts`/`Hand.ts`/
   `PlayArea.ts` (scene objects), `MockGameProgram.ts` (`?mock=1` offline mode)
-- `app/src/ui/UiOverlay.ts` — DOM overlay: start screen, room browser, lobby,
-  bid/trump panels, help overlay
+- `app/src/ui/UiOverlay.ts` — DOM overlay: start screen (incl. the `?join=`
+  invite-link entry), room browser, lobby (copy-invite button), bid/trump
+  panels, emote strip + bubbles, help overlay
 - `app/src/utils/Sound.ts` — synthesized Web Audio effects (card swishes,
   turn chimes, results) reacting to dispatched actions in `GameState`; mute
   toggle persisted in localStorage; `__game.sounds()` exposes attempt counters
 - `app/src/main.ts` — bootstrapping plus the `window.__game` debug bridge
   used by the Playwright suites
-- URL params: `?port=`/`?server=` (game server), `?mock=1`, `?debug`
+- URL params: `?port=`/`?server=` (game server), `?join=<table>` (invite
+  link), `?mock=1`, `?debug`
+- Touch plays are two-step (first tap arms/raises the card, second commits);
+  mouse clicks and drags play directly. Unplayable cards dim while the
+  server waits on the player.
 
 ## Code Style
 

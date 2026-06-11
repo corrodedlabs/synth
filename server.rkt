@@ -247,7 +247,8 @@
            send-datum-to-all
            request-leave!
            user-in-running-game?
-           rejoin-snapshot)
+           rejoin-snapshot
+           broadcast-emote)
 
   (require net/rfc6455)
   (require racket/async-channel)
@@ -287,6 +288,33 @@
   (define *gone-since* (make-hash))
   ;; emails that asked to leave: no grace, the match aborts at once
   (define *leavers* (make-hash))
+
+  ;; --- table emotes ---
+  ;; a fixed vocabulary (anything else is dropped) and a per-player
+  ;; cooldown so the table cannot be flooded
+
+  (define +emotes+ '(nice ouch wow think laugh fire))
+  (define *last-emote* (make-hash))
+
+  (define (broadcast-emote email emote)
+    (cond
+      ((not (memq emote +emotes+)) 'invalid-emote)
+      (else
+       (let ((name (user-in-running-game? email)))
+         (cond
+           ((not name) '(no-running-game))
+           (else
+            (let ((now (current-inexact-milliseconds))
+                  (last (hash-ref *last-emote* email 0)))
+              (cond
+                ((< (- now last) 1500) 'emote-throttled)
+                (else
+                 (hash-set! *last-emote* email now)
+                 (let* ((players (hash-ref *running-games* name))
+                        (seat (index-where players
+                                           (λ (p) (email=? (user-email p) email)))))
+                   (send-datum-to-all players `(emote-played ,seat ,emote))
+                   'emote-sent))))))))))
 
   (define (request-leave! email)
     (hash-set! *leavers* email #t))
@@ -562,6 +590,7 @@
     (hash-remove! *match-states* name)
     (forget-liveness! members)
     (for-each (λ (member)
+                (hash-remove! *last-emote* (user-email member))
                 (cond
                   ((bot-user? member) (release-user member))
                   ((ws-conn-closed? (user-connection member))
@@ -859,6 +888,10 @@
 ;;   rebinds the seat), fetch the full mid-match snapshot; replies
 ;;   (game-snapshot <alist>) or (no-running-game)
 ;;
+;; (emote <email> <emote-id>) => broadcast (emote-played <seat> <emote-id>)
+;;   to the sender's table; ids outside the fixed vocabulary are dropped and
+;;   senders are rate-limited
+;;
 (define (dispatch connection message)
   (with-handlers ((exn:fail? (λ (e)
                                (displayln (format "dispatch error: ~a" (exn-message e)))
@@ -916,6 +949,8 @@
            (else '(no-running-game)))))
 
       ((rejoin) (rejoin-snapshot (cadr message)))
+
+      ((emote) (broadcast-emote (cadr message) (caddr message)))
 
       ;; catch all
       (else 'invalid-request)))))

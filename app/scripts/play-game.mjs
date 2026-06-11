@@ -91,6 +91,7 @@ let didBid = false;
 let shotFullHand = false;
 let shotTrick = false;
 let shotTrickEnd = false;
+let dimmingChecked = false;
 let lastLog = "";
 let playsMade = 0;
 const gestureResults = [];
@@ -168,6 +169,18 @@ while (Date.now() < deadline) {
   }
 
   if (state.pending?.kind === "play") {
+    // dimming must mirror legality exactly (checked once, mid-hand)
+    if (!dimmingChecked && state.hand.length <= 6 && state.legal.length < state.hand.length) {
+      const cardStates = await page.evaluate(() => window.__game.cardStates());
+      const wrong = cardStates.filter((s) => s.dimmed === state.legal.includes(s.id));
+      if (wrong.length) {
+        console.log("DIMMING MISMATCH:", JSON.stringify(wrong));
+        errors.push("dimming does not mirror legality");
+      } else {
+        console.log(`dimming mirrors legality (${state.legal.length}/${state.hand.length} playable)`);
+      }
+      dimmingChecked = true;
+    }
     const exposable = await page.evaluate(() => {
       const button = document.getElementById("expose-button");
       return button && !button.classList.contains("hidden");

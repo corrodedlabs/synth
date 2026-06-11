@@ -5,6 +5,8 @@ export interface UiCallbacks {
   readonly onCreate: (playerName: string) => void;
   readonly onBrowse: (playerName: string) => void;
   readonly onJoin: (roomName: string) => void;
+  readonly onJoinLink: (playerName: string, roomName: string) => void;
+  readonly onEmote: (emote: string) => void;
   readonly onRefreshRooms: () => void;
   readonly onAddBot: () => void;
   readonly onStartGame: () => void;
@@ -26,6 +28,16 @@ const SUIT_GLYPHS: Record<Suit, string> = {
   diamonds: "♦",
   clubs: "♣",
   spades: "♠",
+};
+
+// the emote vocabulary; ids must match the server's whitelist
+export const EMOTES: Record<string, string> = {
+  nice: "👍",
+  ouch: "😖",
+  wow: "😮",
+  think: "🤔",
+  laugh: "😂",
+  fire: "🔥",
 };
 
 // "antash-x7k2p9@game.local" → "antash", "bot-2" → "Bot 2"
@@ -62,9 +74,17 @@ export class UiOverlay {
   private resultWait = element("result-wait");
   private playAgainButton = element("play-again") as HTMLButtonElement;
   private leaveMatchButton = element("leave-match") as HTMLButtonElement;
+  private joinLinkButton = element("join-link") as HTMLButtonElement;
+  private copyInviteButton = element("copy-invite") as HTMLButtonElement;
+  private emoteButton = element("emote-button") as HTMLButtonElement;
+  private emoteStrip = element("emote-strip");
+  private uiLayer = element("ui-layer");
   private trumpIndicator = element("trump-indicator");
   private statusTimer: number | null = null;
   private leaveArmTimer: number | null = null;
+  private copyResetTimer: number | null = null;
+  private joinTarget: string | null = null;
+  private currentRoomName: string | null = null;
 
   constructor(private callbacks: UiCallbacks) {
     element("create-button").addEventListener("click", () => {
@@ -119,6 +139,72 @@ export class UiOverlay {
     const helpPanel = element("help-panel");
     element("help-button").addEventListener("click", () => this.show(helpPanel));
     element("help-close").addEventListener("click", () => this.hide(helpPanel));
+
+    // an invite link's one-tap entry into the named table
+    this.joinLinkButton.addEventListener("click", () => {
+      if (this.joinTarget === null) return;
+      this.hide(this.startScreen);
+      callbacks.onJoinLink(this.playerNameInput.value, this.joinTarget);
+    });
+
+    this.copyInviteButton.addEventListener("click", () => {
+      if (this.currentRoomName === null) return;
+      const link = inviteLink(this.currentRoomName);
+      void navigator.clipboard
+        ?.writeText(link)
+        .then(() => this.flashCopied())
+        .catch(() => window.prompt("Copy this invite link:", link));
+    });
+
+    this.emoteButton.addEventListener("click", () => {
+      this.emoteStrip.classList.toggle("hidden");
+    });
+    for (const [id, glyph] of Object.entries(EMOTES)) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = glyph;
+      button.dataset.emote = id;
+      button.addEventListener("click", () => {
+        this.hide(this.emoteStrip);
+        callbacks.onEmote(id);
+      });
+      this.emoteStrip.append(button);
+    }
+  }
+
+  private flashCopied() {
+    if (this.copyResetTimer !== null) window.clearTimeout(this.copyResetTimer);
+    this.copyInviteButton.textContent = "copied ✓";
+    this.copyResetTimer = window.setTimeout(() => {
+      this.copyInviteButton.textContent = "copy invite link";
+      this.copyResetTimer = null;
+    }, 2000);
+  }
+
+  // The start screen collapses to a single "join this table" action when the
+  // page was opened from an invite link; the usual actions stay underneath.
+  setJoinTarget(roomName: string | null) {
+    this.joinTarget = roomName;
+    if (roomName === null) {
+      this.hide(this.joinLinkButton);
+    } else {
+      this.joinLinkButton.textContent = `Join “${roomName}”`;
+      this.show(this.joinLinkButton);
+    }
+  }
+
+  // An emote bubble that pops near a seat and drifts away.
+  showEmoteAt(x: number, y: number, emote: string) {
+    const glyph = EMOTES[emote];
+    if (!glyph) return;
+    const bubble = document.createElement("div");
+    bubble.className = "emote-bubble";
+    bubble.dataset.emote = emote;
+    bubble.textContent = glyph;
+    bubble.style.left = `${x}px`;
+    bubble.style.top = `${y}px`;
+    this.uiLayer.append(bubble);
+    window.setTimeout(() => bubble.remove(), 2400);
   }
 
   showStartScreen() {
@@ -158,6 +244,7 @@ export class UiOverlay {
     // entering a lobby always hides the start screen — sessions driven via
     // the debug bridge never go through the start-button click handlers
     this.hide(this.startScreen);
+    this.currentRoomName = model.roomName;
     this.lobbyTitle.textContent = model.roomName ?? "";
     this.lobbySubtitle.textContent = model.isHost
       ? "You are hosting this table"
@@ -306,10 +393,13 @@ export class UiOverlay {
     this.hide(this.resultPanel);
   }
 
-  // The in-game escape hatch: visible only while a match is in progress.
+  // The in-game escape hatches (leave + emotes): visible only while a
+  // match is in progress.
   setLeaveMatchVisible(visible: boolean) {
     this.disarmLeaveMatch();
     this.leaveMatchButton.classList.toggle("hidden", !visible);
+    this.emoteButton.classList.toggle("hidden", !visible);
+    if (!visible) this.hide(this.emoteStrip);
   }
 
   private disarmLeaveMatch() {
@@ -334,4 +424,17 @@ function element(id: string): HTMLElement {
   const el = document.getElementById(id);
   if (!el) throw new Error(`UiOverlay: missing #${id}`);
   return el;
+}
+
+// A shareable URL that drops a friend straight into this table. Dev-server
+// params (?port/?server) ride along so local links keep working.
+export function inviteLink(roomName: string): string {
+  const params = new URLSearchParams();
+  const current = new URLSearchParams(window.location.search);
+  for (const key of ["server", "port"]) {
+    const value = current.get(key);
+    if (value) params.set(key, value);
+  }
+  params.set("join", roomName);
+  return `${window.location.origin}${window.location.pathname}?${params.toString()}`;
 }

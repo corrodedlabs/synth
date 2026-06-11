@@ -136,6 +136,35 @@ const stale = await guest.evaluate(
 );
 check("closed table no longer listed", !stale);
 
+// --- invite links: a shared URL drops a friend straight into the table ---
+await host.click("#create-button");
+await host.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });
+const inviteUrl = await host.evaluate(() => window.__game.inviteLink());
+console.log(`invite link: ${inviteUrl}`);
+check("lobby offers a copy-invite button", await host.evaluate(
+  () => !document.getElementById("copy-invite").classList.contains("hidden")
+));
+const invited = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+invited.on("pageerror", (error) => errors.push(`[invited] ${error}`));
+await invited.goto(inviteUrl);
+await invited.waitForSelector("#join-link:not(.hidden)", { timeout: 15000 });
+const joinLabel = await invited.evaluate(() => document.getElementById("join-link").textContent);
+const inviteRoom = await host.evaluate(() => window.__game.state().roomName);
+check(`invite start screen names the table ("${joinLabel}")`, joinLabel.includes(inviteRoom));
+await invited.fill("#player-name", "Linked");
+await invited.click("#join-link");
+await invited.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });
+await invited.waitForFunction(() => window.__game.state().members.length === 2, undefined, {
+  timeout: 10000,
+});
+check("invited friend lands in the host's lobby", true);
+await host.waitForFunction(() => window.__game.state().members.length === 2, undefined, {
+  timeout: 10000,
+});
+await invited.close();
+await host.click("#leave-table"); // close this table before the next section
+await host.waitForSelector("#start-screen:not(.hidden)", { timeout: 10000 });
+
 // --- disconnect cleanup: host makes a new table, then the tab dies ---
 await host.click("#create-button");
 await host.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });

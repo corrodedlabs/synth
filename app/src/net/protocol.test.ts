@@ -168,6 +168,18 @@ describe("decodeServerEvent", () => {
     });
   });
 
+  it("decodes emotes", () => {
+    expect(decodeServerEvent("(emote-played 2 laugh)")).toEqual({
+      _tag: "EmotePlayed",
+      seat: 2,
+      emote: "laugh",
+    });
+    expect(decodeServerEvent("(emote-played x laugh)")).toEqual({
+      _tag: "Ignored",
+      raw: "(emote-played x laugh)",
+    });
+  });
+
   it("decodes the reconnection flow", () => {
     expect(decodeServerEvent('(player-disconnected "a@x" 45)')).toEqual({
       _tag: "PlayerDisconnected",
@@ -296,6 +308,9 @@ describe("encodeCommand", () => {
     expect(encodeCommand({ _tag: "NextHand", email: "a@b" })).toBe('(next-hand "a@b")');
     expect(encodeCommand({ _tag: "LeaveGame", email: "a@b" })).toBe('(leave-game "a@b")');
     expect(encodeCommand({ _tag: "Rejoin", email: "a@b" })).toBe('(rejoin "a@b")');
+    expect(encodeCommand({ _tag: "SendEmote", email: "a@b", emote: "fire" })).toBe(
+      '(emote "a@b" fire)'
+    );
   });
 
   it("uses sym helper consistently", () => {

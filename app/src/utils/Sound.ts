@@ -105,6 +105,15 @@ export class SoundService {
     this.tone(ctx, { delay: 0.09, freq: 880, duration: 0.16, peak: 0.03 });
   }
 
+  // a playful blip under an emote bubble
+  emote() {
+    this.count("emote");
+    const ctx = this.ready();
+    if (!ctx) return;
+    this.tone(ctx, { freq: 740, duration: 0.07, peak: 0.03, type: "triangle" });
+    this.tone(ctx, { delay: 0.06, freq: 988, duration: 0.09, peak: 0.025, type: "triangle" });
+  }
+
   // a tiny tick for each bid or pass in the auction
   bidTick() {
     this.count("bidTick");

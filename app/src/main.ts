@@ -1,6 +1,7 @@
 import { SceneManager } from './scene/SceneManager';
 import { GameState } from './game/GameState';
 import { storedActiveMatch, storedPlayerName } from './game/GameSession';
+import { inviteLink } from './ui/UiOverlay';
 import { DebugUI } from './debug/DebugUI';
 
 const container = document.getElementById('app')!;
@@ -24,12 +25,16 @@ const rememberedName = storedPlayerName();
 if (playerNameInput && rememberedName) playerNameInput.value = rememberedName;
 
 const interrupted = storedActiveMatch();
+const joinTarget = params.get('join');
 if (params.has('mock')) {
   gameState.startMock();
 } else if (interrupted) {
   // the previous page load was mid-match: reconnect straight into it
   // (the server answers no-running-game if it has since ended)
   gameState.rejoinMatch(interrupted.name, interrupted.email);
+} else if (joinTarget) {
+  // an invite link: the start screen leads with "Join <table>"
+  gameState.prepareJoinLink(joinTarget);
 } else {
   gameState.showStartScreen();
 }
@@ -56,6 +61,13 @@ if (params.has('mock')) {
   kick: (member: string) => gameState.getSession()?.kick(member),
   roomName: () => gameState.getSession()?.roomName,
   sounds: () => gameState.soundState(),
+  cardStates: () => gameState.handCardStates(),
+  emote: (id: string) => gameState.getSession()?.sendEmote(id),
+  joinByLink: (name: string, roomName: string) => gameState.joinTable(name, roomName),
+  inviteLink: () => {
+    const room = gameState.getModel().roomName;
+    return room ? inviteLink(room) : null;
+  },
 };
 
 function animate() {

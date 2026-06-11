@@ -18,10 +18,12 @@ export interface SessionCallbacks {
   readonly getModel: () => GameModel;
   readonly status: (text: string) => void;
   readonly rooms: (rooms: readonly RoomInfo[]) => void;
+  // a table-mate's emote, already translated to a view seat
+  readonly emote: (seat: PlayerIndex, emote: string) => void;
 }
 
 // What the session should do once the socket is up.
-export type SessionIntent = "create-room" | "browse-rooms" | "rejoin";
+export type SessionIntent = "create-room" | "browse-rooms" | "rejoin" | "join";
 
 // Identity persists across refreshes so a reconnecting page presents the
 // same email and gets its seat back; the active-match key tells the next
@@ -128,9 +130,9 @@ export class GameSession {
     }
   }
 
-  start(intent: SessionIntent) {
+  start(intent: SessionIntent, joinRoom?: string) {
     this.fiber = Effect.runFork(
-      this.program(intent).pipe(
+      this.program(intent, joinRoom).pipe(
         Effect.catchAll((error) =>
           Effect.sync(() => {
             this.callbacks.status(error.message);
@@ -250,6 +252,17 @@ export class GameSession {
     this.socket?.send({ _tag: "LeaveGame", email: this.email });
   }
 
+  // A quick table emote; the server validates and rate-limits, we just
+  // need to be in a running match for it to mean anything.
+  sendEmote(emote: string) {
+    const phase = this.callbacks.getModel().phase;
+    const inMatch =
+      phase === "bidding" || phase === "choosing-trump" ||
+      phase === "playing" || phase === "hand-finished";
+    if (!this.socket || !inMatch) return;
+    this.socket.send({ _tag: "SendEmote", email: this.email, emote });
+  }
+
   // Back to the start screen: reset lobby state and refresh the table list
   // so the user can immediately join or host again on the same connection.
   private exitRoom(message: string) {
@@ -280,7 +293,7 @@ export class GameSession {
 
   // --- session program ---
 
-  private program(intent: SessionIntent): Effect.Effect<void, SocketError> {
+  private program(intent: SessionIntent, joinRoom?: string): Effect.Effect<void, SocketError> {
     return Effect.gen(this, function* () {
       const { dispatch } = this.callbacks;
       dispatch({ _tag: "PhaseChanged", phase: "connecting" });
@@ -308,6 +321,9 @@ export class GameSession {
       } else if (intent === "rejoin") {
         this.callbacks.status("Rejoining your match…");
         socket.send({ _tag: "Rejoin", email: this.email });
+      } else if (intent === "join" && joinRoom) {
+        // an invite link: go straight to that table
+        this.join(joinRoom);
       } else {
         this.refreshRooms();
       }
@@ -542,6 +558,10 @@ export class GameSession {
           if (event.email !== this.email) {
             this.callbacks.status(`${memberDisplayName(event.email)} is back.`);
           }
+          return false;
+
+        case "EmotePlayed":
+          this.callbacks.emote(this.toView(event.seat), event.emote);
           return false;
 
         case "NoRunningGame":

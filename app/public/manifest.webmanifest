@@ -1,0 +1,14 @@
+{
+  "name": "Twenty-Eight",
+  "short_name": "28",
+  "description": "Real-time 28 — a trick-taking card game for four players.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f1e7",
+  "theme_color": "#f7f1e7",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

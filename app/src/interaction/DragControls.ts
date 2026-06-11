@@ -5,6 +5,8 @@ import { Hand } from '../game/Hand';
 export interface DragGate {
   // Whether hand cards may be picked up right now.
   canDrag(): boolean;
+  // Whether this specific card would be a legal play right now.
+  canPlay(card: Card): boolean;
   // Attempt to play the dropped card; false means it returns to the hand.
   tryPlay(card: Card): boolean;
 }
@@ -29,6 +31,9 @@ export class DragControls {
   private hoveredCard: Card | null = null;
   private downPoint = new THREE.Vector2();
   private dragMoved = false;
+  // Touch plays are two-step: the first tap raises the card, a second tap
+  // on the same card commits it. Mouse keeps direct click-to-play.
+  private armedCard: Card | null = null;
 
   constructor(
     camera: THREE.Camera,
@@ -92,7 +97,7 @@ export class DragControls {
       while (obj.parent && obj.parent.type !== 'Scene' && !obj.userData.card) {
         obj = obj.parent;
       }
-      
+
       if (obj.userData.card) {
         this.selectedObject = obj;
         this.selectedCard = obj.userData.card as Card;
@@ -102,6 +107,9 @@ export class DragControls {
 
         this.clearHover();
       }
+    } else {
+      // a tap on empty felt stands the armed card back down
+      this.disarm();
     }
   }
 
@@ -223,30 +231,75 @@ export class DragControls {
     }
   }
 
+  // Raise a card out of the fan so it reads as "about to be played".
+  private raise(card: Card) {
+    const layout = this.hand.layoutOf(card);
+    const basePos = layout ? layout.position : card.mesh.position.clone();
+    const toCamera = this.camera.position.clone().sub(basePos).normalize();
+    const targetPos = basePos.clone().addScaledVector(toCamera, 0.55);
+    card.setPosition(targetPos.x, targetPos.y, targetPos.z, false, 160);
+    card.mesh.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) {
+        obj.renderOrder = 100;
+      }
+    });
+  }
+
+  private disarm() {
+    if (this.armedCard) {
+      this.unhover(this.armedCard);
+      this.armedCard = null;
+    }
+  }
+
+  // The table moved on (request answered, new deal, room left): nothing
+  // should stay raised or armed.
+  public clearSelection() {
+    this.disarm();
+    this.clearHover();
+  }
+
   private onUp(event: MouseEvent | TouchEvent) {
     if (!this.isDragging || !this.selectedCard) return;
     event.preventDefault();
 
     this.isDragging = false;
+    const card = this.selectedCard;
+    this.selectedCard = null;
+    this.selectedObject = null;
 
     if (!this.dragMoved) {
-      // Tap on a card plays it directly (legality is checked by the gate)
-      if (!this.gate.tryPlay(this.selectedCard)) {
+      const isTouch = window.TouchEvent && event instanceof TouchEvent;
+      if (isTouch) {
+        // fat fingers get a confirmation step: first tap arms, second plays
+        if (this.armedCard === card) {
+          this.armedCard = null;
+          if (!this.gate.tryPlay(card)) this.hand.arrangeCards();
+        } else if (this.gate.canPlay(card)) {
+          this.disarm();
+          this.armedCard = card;
+          this.raise(card);
+        } else {
+          // unplayable (it is dimmed): stand everything back down
+          this.disarm();
+          this.hand.arrangeCards();
+        }
+        return;
+      }
+      // mouse click plays directly (legality is checked by the gate)
+      if (!this.gate.tryPlay(card)) {
         this.hand.arrangeCards();
       }
-      this.selectedCard = null;
-      this.selectedObject = null;
       return;
     }
 
     // Generous drop zone: anywhere forward of the hand counts as a play
-    const currentPos = this.selectedCard.mesh.position;
+    this.disarm();
+    const currentPos = card.mesh.position;
     const inPlayArea = currentPos.z < 2.0 && currentPos.z > -1.8 && Math.abs(currentPos.x) < 2.4;
-    if (!inPlayArea || !this.gate.tryPlay(this.selectedCard)) {
+    if (!inPlayArea || !this.gate.tryPlay(card)) {
       // Not a play (or an illegal one) — return the card to the hand
       this.hand.arrangeCards();
     }
-    this.selectedCard = null;
-    this.selectedObject = null;
   }
 }

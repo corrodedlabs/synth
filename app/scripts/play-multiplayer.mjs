@@ -90,6 +90,14 @@ for (const [label, page] of [["host", host], ["guest", guest]]) {
 await host.screenshot({ path: `${SHOTS}/03-host-lobby-full.png` });
 await host.click("#start-game");
 
+// --- an emote crosses the table once the match is live ---
+await host.waitForFunction(() => window.__game.state().phase !== "lobby", undefined, {
+  timeout: 15000,
+});
+await host.evaluate(() => window.__game.emote("nice"));
+await guest.waitForSelector('.emote-bubble[data-emote="nice"]', { timeout: 10000 });
+console.log("emote bubble reached the guest");
+
 // --- both browsers play the hand out ---
 const playLoop = async (label, page) => {
   const deadline = Date.now() + 240_000;

@@ -29,8 +29,9 @@ export class GameState {
   private hand: Hand;
   private playArea: PlayArea;
   private zenTextures: ZenCardTextures;
-  // @ts-ignore kept alive for event listeners
   private dragControls: DragControls;
+  // Phones render cards larger; applied to the hand fan and played cards.
+  private cardScale = 1;
   private ui: UiOverlay;
   private sound = new SoundService();
   private session: GameSession | null = null;
@@ -58,6 +59,7 @@ export class GameState {
       this.hand,
       {
         canDrag: () => this.mockMode || this.model.pendingRequest?.kind === "play",
+        canPlay: (card) => this.cardIsPlayable(card),
         tryPlay: (card) => this.tryPlayCard(card),
       }
     );
@@ -66,6 +68,8 @@ export class GameState {
       onCreate: (name) => this.createTable(name),
       onBrowse: (name) => this.browseTables(name),
       onJoin: (roomName) => this.session?.join(roomName),
+      onJoinLink: (name, roomName) => this.joinTable(name, roomName),
+      onEmote: (emote) => this.session?.sendEmote(emote),
       onRefreshRooms: () => this.session?.refreshRooms(),
       onAddBot: () => this.session?.addBot(),
       onStartGame: () => this.session?.startGame(),
@@ -92,10 +96,29 @@ export class GameState {
     });
   }
 
-  // Portrait/narrow screens get a tighter hand fan.
+  // Portrait/narrow screens get a tighter fan of larger cards so ranks
+  // stay readable under a thumb.
   private applyViewportLayout() {
     const portrait = window.innerWidth < window.innerHeight;
-    this.hand.setWidthScale(portrait ? 0.82 : 1);
+    this.cardScale = portrait ? 1.18 : 1;
+    this.hand.setWidthScale(portrait ? 0.78 : 1);
+    this.hand.setCardScale(this.cardScale);
+  }
+
+  private cardIsPlayable(card: Card): boolean {
+    if (this.mockMode) return true;
+    const cardId = card.mesh.userData.modelId as string | undefined;
+    const model = cardId ? this.model.hand.find((handCard) => handCard.id === cardId) : undefined;
+    return model !== undefined && isLegalPlay(this.model, model);
+  }
+
+  // While the server waits on our play, unplayable cards fade; any other
+  // time the whole hand sits at full strength.
+  private renderLegality() {
+    const playing = !this.mockMode && this.model.pendingRequest?.kind === "play";
+    for (const card of this.hand.getCards()) {
+      card.setDimmed(playing && !this.cardIsPlayable(card));
+    }
   }
 
   // "You" for ourselves, the real player name (set at deal time) otherwise.
@@ -131,7 +154,7 @@ export class GameState {
       const down = compact ? 34 : 54;
       const offset =
         seat === 2
-          ? { x: 0, y: compact ? -64 : -96 }
+          ? { x: 0, y: compact ? -78 : -96 } // clear of the larger phone trick cards
           : seat === 1
             ? { x: out, y: down }
             : { x: -out, y: down };
@@ -142,6 +165,12 @@ export class GameState {
   }
 
   public showStartScreen() {
+    this.ui.showStartScreen();
+  }
+
+  // An invite link was opened: the start screen leads with that table.
+  public prepareJoinLink(roomName: string) {
+    this.ui.setJoinTarget(roomName);
     this.ui.showStartScreen();
   }
 
@@ -165,17 +194,24 @@ export class GameState {
   // Page load found an interrupted match in localStorage: reconnect under
   // the exact email that holds the seat and ask for the snapshot.
   public rejoinMatch(playerName: string, email: string) {
-    this.startSession(playerName, "rejoin", email);
+    this.startSession(playerName, "rejoin", undefined, email);
+  }
+
+  // An invite link: connect and sit straight down at the named table.
+  public joinTable(playerName: string, roomName: string) {
+    this.startSession(playerName, "join", roomName);
   }
 
   private startSession(
     playerName: string,
-    intent: "create-room" | "browse-rooms" | "rejoin",
+    intent: "create-room" | "browse-rooms" | "rejoin" | "join",
+    joinRoom?: string,
     rejoinEmail?: string
   ) {
     if (this.session) {
       // already connected (e.g. browsing) — just issue the new intent
       if (intent === "create-room") this.session.createRoom();
+      else if (intent === "join" && joinRoom) this.session.join(joinRoom);
       else this.session.refreshRooms();
       return;
     }
@@ -186,6 +222,7 @@ export class GameState {
         getModel: () => this.model,
         status: (text) => this.ui.status(text),
         rooms: (rooms) => this.ui.showRooms(rooms),
+        emote: (seat, emote) => this.showEmote(seat, emote),
       },
       playerName,
       rejoinEmail
@@ -195,9 +232,22 @@ export class GameState {
     Effect.runFork(
       Effect.gen(this, function* () {
         yield* this.loadTextures();
-        session.start(intent);
+        session.start(intent, joinRoom);
       })
     );
+  }
+
+  // Float an emote bubble by its sender's seat: opponents at their enso
+  // markers, our own from the bottom edge (clear of the bid/result panels).
+  private showEmote(seat: PlayerIndex, emote: string) {
+    const canvas = this.sceneManager.renderer.domElement;
+    const screen =
+      seat === 0
+        ? { x: canvas.clientWidth / 2, y: canvas.clientHeight - 150 }
+        : this.playArea.markerScreenPosition(seat, canvas);
+    if (!screen) return;
+    this.sound.emote();
+    this.ui.showEmoteAt(screen.x, screen.y, emote);
   }
 
   public getModel(): GameModel {
@@ -235,6 +285,14 @@ export class GameState {
 
   public legalCardIds(): string[] {
     return this.model.hand.filter((card) => isLegalPlay(this.model, card)).map((card) => card.id);
+  }
+
+  // visual state of the rendered hand, for the debug bridge and UI tests
+  public handCardStates(): Array<{ id: string; dimmed: boolean }> {
+    return this.hand.getCards().map((card) => ({
+      id: (card.mesh.userData.modelId as string) ?? "",
+      dimmed: card.isDimmed(),
+    }));
   }
 
   // Screen-space position of a hand card; used by automated UI tests to drive
@@ -324,6 +382,7 @@ export class GameState {
       case "RoomLeft":
         // tear down any in-progress game (aborted games land here mid-hand
         // or while the between-hands result panel is up)
+        this.dragControls.clearSelection();
         for (const card of [...this.hand.getCards()]) {
           this.hand.removeCard(card);
           this.sceneManager.scene.remove(card.mesh);
@@ -352,6 +411,7 @@ export class GameState {
         this.ui.setLeaveMatchVisible(this.session !== null);
         this.sound.deal(action.cards.length);
         action.cards.forEach((card) => this.hand.addCard(this.createCard(card)));
+        this.renderLegality();
         break;
 
       case "CardPlayed":
@@ -405,12 +465,15 @@ export class GameState {
             this.ui.setExposeVisible(canExposeTrump(this.model));
             break;
         }
+        this.renderLegality();
         break;
 
       case "RequestCleared":
         this.ui.hideBidPanel();
         this.ui.hideTrumpPanel();
         this.ui.setExposeVisible(false);
+        this.dragControls.clearSelection();
+        this.renderLegality();
         break;
 
       case "TrickCleared":
@@ -469,6 +532,7 @@ export class GameState {
       case "HandReset":
         // the next deal is landing: clear the table but keep the seats,
         // their name labels, and the match HUD
+        this.dragControls.clearSelection();
         for (const card of [...this.hand.getCards()]) {
           this.hand.removeCard(card);
           this.sceneManager.scene.remove(card.mesh);
@@ -496,6 +560,7 @@ export class GameState {
         // a reconnect: rebuild the whole scene from the restored model;
         // any pending request/result is re-dispatched right after and
         // brings its own panel back up
+        this.dragControls.clearSelection();
         for (const card of [...this.hand.getCards()]) {
           this.hand.removeCard(card);
           this.sceneManager.scene.remove(card.mesh);
@@ -542,6 +607,9 @@ export class GameState {
       this.sceneManager.scene.add(card.mesh);
     }
 
+    // table cards match the hand's phone-friendly sizing, never dimmed
+    card.setDimmed(false);
+    card.mesh.scale.setScalar(this.cardScale);
     this.playArea.playCard(card, playerIndex);
   }
 

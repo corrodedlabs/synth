@@ -7,9 +7,11 @@ export class Card {
   public rank: string;
   public isSelected: boolean = false;
   public isDraggable: boolean = true;
-  
+
   private frontMaterial: THREE.MeshStandardMaterial;
   private backMaterial: THREE.MeshStandardMaterial;
+  private sideMaterial: THREE.MeshStandardMaterial;
+  private dimmed = false;
   private positionTween: TWEEN.Tween<THREE.Vector3> | null = null;
   private rotationTween: TWEEN.Tween<THREE.Euler> | null = null;
 
@@ -35,7 +37,7 @@ export class Card {
     });
 
     // Cream colored sides to match zen style
-    const sideMaterial = new THREE.MeshStandardMaterial({ 
+    this.sideMaterial = new THREE.MeshStandardMaterial({
       color: 0xf5f0e6,
       roughness: 1.0,
       metalness: 0.0
@@ -43,10 +45,10 @@ export class Card {
 
     // Mesh with multi-material
     const mesh = new THREE.Mesh(geometry, [
-      sideMaterial, // Right
-      sideMaterial, // Left
-      sideMaterial, // Top
-      sideMaterial, // Bottom
+      this.sideMaterial, // Right
+      this.sideMaterial, // Left
+      this.sideMaterial, // Top
+      this.sideMaterial, // Bottom
       this.frontMaterial, // Front
       this.backMaterial  // Back
     ]);
@@ -102,6 +104,21 @@ export class Card {
     } else {
       this.mesh.position.y -= 0.15;
     }
+  }
+
+  // Unplayable cards fade into the felt while the table waits on us; the
+  // material color multiplies the face texture, so no texture work needed.
+  public setDimmed(dimmed: boolean) {
+    if (this.dimmed === dimmed) return;
+    this.dimmed = dimmed;
+    const shade = dimmed ? 0x8f8a82 : 0xffffff;
+    this.frontMaterial.color.setHex(shade);
+    this.backMaterial.color.setHex(shade);
+    this.sideMaterial.color.setHex(dimmed ? 0xa8a298 : 0xf5f0e6);
+  }
+
+  public isDimmed(): boolean {
+    return this.dimmed;
   }
 
   public flip() {
