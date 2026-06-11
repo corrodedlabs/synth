@@ -1,6 +1,8 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for coding agents working in this repository. (`AGENTS.md` is a
+symlink to this file, so every tool reads the same source of truth — keep
+it that way.)
 
 ## Project Overview
 
@@ -26,12 +28,19 @@ External repositories may be vendored under `repos/` for agent reference.
 - `raco test storage.rkt` — run persistence/leaderboard unit tests
 - `raco test -t tests.rkt` — run integration tests
 - `racket client.rkt` — run bot simulation helpers
-- `GAME-DB` env sets the SQLite path (default `game.db`; gitignored)
+
+Server env vars (all optional):
+- `GAME-DB` — SQLite path (default `game.db`, gitignored; prod uses
+  `/data/game.db`). Booting also restores any interrupted matches from it.
+- `MATCH-TARGET` — game points to win a match (default 6; tests use 0).
+- `RECONNECT-GRACE` — seconds a dropped seat waits for its owner
+  (default 45; the integration suite runs at 2).
+- `GAME-PORT` — set automatically by `--port`; bots dial back through it.
 
 ### Frontend (from `app/`)
 - `npm run dev` — Vite dev server with HMR
 - `npm run build` — typecheck (tsc) + production build
-- `npm test` — vitest unit suite (s-expression codec, protocol)
+- `npm test` — vitest unit suite (codecs, protocol, reducer, play legality)
 - Effect is available in the frontend via the `effect` npm package
 
 ## Testing
@@ -40,9 +49,10 @@ Four layers; run all of them after non-trivial changes. CI
 (`.github/workflows/ci.yml`) runs every layer — including the browser
 suites, headless — on each push.
 
-1. **Game logic unit** — `raco test game.rkt` (rackunit: dealing, bidding,
-   trick resolution incl. trump-exposure timing, scoring) and
-   `raco test client.rkt` (bot bidding/trump/play heuristics).
+1. **Racket unit** — `raco test game.rkt` (dealing, bidding, trick
+   resolution incl. trump-exposure timing, scoring), `raco test client.rkt`
+   (bot bidding/trump/play heuristics), and `raco test storage.rkt`
+   (persistence rows, history, leaderboard).
 2. **Frontend unit** — `cd app && npm test` (vitest: sexpr/protocol codecs,
    game model reducer and play-legality rules).
 3. **Server integration** — `raco test -t tests.rkt` (boots a server on port
@@ -62,21 +72,25 @@ suites, headless — on each push.
    HEADED=1 node scripts/test-lobby-controls.mjs "http://localhost:5179/?port=8082"
    HEADED=1 node scripts/test-multi-tables.mjs   "http://localhost:5179/?port=8082"
    HEADED=1 node scripts/test-mobile.mjs         "http://localhost:5179/?port=8082"
+   HEADED=1 node scripts/test-restart.mjs        "http://localhost:5179/?port=8082"  # local only
    ```
 
    - `play-game.mjs` — one human + 3 bots: lobby → bid → trump → all 8 tricks
      → the between-hands result; first plays use real drag/click gestures.
    - `play-multiplayer.mjs` — two browser pages play one table through the
-     first hand.
+     first hand; an emote bubble crosses the table on the way.
    - `test-match.mjs` — host + guest + 2 bots play a two-hand match: the
      between-hands panel (host deal button vs guest waiting note), match
-     scores mirroring, dealer rotation, and the leave-match button (two-step
-     confirm; leaver gets a fresh start screen, the rest are aborted).
+     scores mirroring, dealer rotation, then the guest leaves (two-step
+     confirm) — the host gets the abandon panel, replaces the seat with a
+     bot, plays hand 3 against it, and the last human's leave closes the
+     match.
    - `test-reconnect.mjs` — mid-hand page reload: localStorage identity
      auto-rejoins the seat, the snapshot restores hand/trick/scores/labels,
      and the hand plays out; leaving clears the stored match.
-   - `test-lobby-controls.mjs` — kick bot/human, leave, close table,
-     disconnect cleanup.
+   - `test-lobby-controls.mjs` — standings panel, invite links (incl. a
+     stale invite recovering to the start screen), kick bot/human, leave,
+     close table, disconnect cleanup.
    - `test-multi-tables.mjs` — several concurrent tables, room browser, join.
    - `test-mobile.mjs` — phone viewport (390×844, touch emulation): panels and
      hand must fit the screen, full hand played with real taps.
@@ -105,8 +119,9 @@ Drive decisions through the `window.__game` debug bridge instead of 3D
 gestures: `state()` (the reducer model — poll it with `waitForFunction`),
 `legalCards()`, `play(id)`, `bid(n)`, `pass()`, `trump(suit)`, `expose()`,
 `nextHand()`, `addBot()`, `startGame()`, `leaveTable()`, `leaveMatch()`,
-`kick(member)`, `roomName()`, `cardStates()` (dimming), `emote(id)`,
-`inviteLink()`, `joinByLink(name, room)`.
+`resolveAbandon('replace'|'close')`, `kick(member)`, `roomName()`,
+`cardStates()` (dimming), `emote(id)`, `inviteLink()`,
+`joinByLink(name, room)`, `standings(name)`.
 Launch with `channel: "chrome"` locally (`/usr/bin/chromium` in CI sandboxes)
 and `--enable-unsafe-swiftshader --use-angle=swiftshader` for headless WebGL.
 
@@ -114,7 +129,7 @@ and `--enable-unsafe-swiftshader --use-angle=swiftshader` for headless WebGL.
 
 ### Backend (Racket)
 
-Three main files with clear responsibilities:
+Four main files with clear responsibilities:
 
 - **`game.rkt`** — Pure game logic: card definitions (`card` prefab struct with name/rank/suit/point; the numeric rank doubles as trick strength J>9>A>10>K>Q>8>7), per-game shuffled decks (`fresh-deck`), card distribution, the auction (opener must bid ≥16, raises strictly higher, three consecutive passes end it; `#:first-player` rotates the opener), play validation (follow suit; must trump right after calling for the exposure), trick resolution honouring trump-exposure timing (`#:first-leader` rotates the lead), team scoring (`score-game`), and match scoring (`hand-game-points`: +1/−2 under bid 20, +2/−4 from 20; `match-winner` against `+match-target+` 6). No external dependencies; rackunit tests live in its `test` submodule.
 
@@ -137,7 +152,23 @@ Three main files with clear responsibilities:
 
 ### Concurrency Model
 
-Players communicate with the game thread via Racket channels (`channel-put`/`channel-get`). The WebSocket listener fills a player's channel when their message arrives; the game thread blocks on `channel-get` waiting for the active player's decision. Long-running game operations run on separate threads to avoid blocking the listener.
+Each player has an async-channel on their `user` struct; the WebSocket
+listener `async-channel-put`s game messages into it, and the match thread
+reads the active player's channel with 1-second `sync/timeout` polls. Every
+timeout tick runs `check-liveness!` over all four seats — that is where
+disconnect grace, reconnection notices, and the abandonment gate live, so
+no wait can hang forever. One `user` struct per identity is shared by the
+room and the match and mutated in place (connection rebinds on reconnect,
+hands reset per hand, email changes on bot takeover) — never copy it.
+
+**Custodian rule (learned the hard way):** web-server shuts down each
+connection's custodian on disconnect, silently killing any thread or socket
+created while dispatching that connection's messages. Anything long-lived
+spawned from `dispatch` — match threads, bot sockets/threads — MUST be
+wrapped in `(parameterize ((current-custodian *game-custodian*)) …)` (or
+`*bot-custodian*`); a bare `(thread …)` there dies with the websocket that
+sent the message. Regression coverage: the host-at-gate scenario in
+tests.rkt.
 
 ### Message Protocol
 
@@ -156,12 +187,15 @@ Server events drive a pure reducer; rendering reacts to dispatched actions
   `ServerEvent`/`ClientCommand` ↔ s-expr), `SocketService.ts` (Effect-based
   WebSocket client exposing an event `Queue`)
 - `app/src/game/` — `GameModel.ts` (reducer + model), `GameSession.ts`
-  (Effect program: lobby ops, event loop, seat translation, heartbeat),
+  (Effect program: lobby ops, event loop, seat translation, heartbeat;
+  identity persists in localStorage and a dropped mid-match socket retries
+  its rejoin every ~3s until the snapshot restores or the match is gone),
   `GameState.ts` (dispatch → Three.js/DOM rendering), `Card.ts`/`Hand.ts`/
   `PlayArea.ts` (scene objects), `MockGameProgram.ts` (`?mock=1` offline mode)
 - `app/src/ui/UiOverlay.ts` — DOM overlay: start screen (incl. the `?join=`
-  invite-link entry), room browser, lobby (copy-invite button), bid/trump
-  panels, emote strip + bubbles, help overlay
+  invite-link entry and the standings panel), room browser (list is pushed
+  live by the server), lobby (copy-invite button), bid/trump panels, the
+  abandon (replace-with-bot) panel, emote strip + bubbles, help overlay
 - `app/src/utils/Sound.ts` — synthesized Web Audio effects (card swishes,
   turn chimes, results) reacting to dispatched actions in `GameState`; mute
   toggle persisted in localStorage; `__game.sounds()` exposes attempt counters
@@ -172,6 +206,8 @@ Server events drive a pure reducer; rendering reacts to dispatched actions
 - Touch plays are two-step (first tap arms/raises the card, second commits);
   mouse clicks and drags play directly. Unplayable cards dim while the
   server waits on the player.
+- Installable as a PWA (`app/public/manifest.webmanifest` + icons; no
+  service worker by design — the game needs the server anyway).
 
 ## Code Style
 
