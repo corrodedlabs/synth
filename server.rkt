@@ -196,29 +196,40 @@
            room-update-members!
            close-room!
            rooms-with-member
-           game-room)
+           (struct-out game-room))
   
   ;; game room is always public
   ;; name => is the game romm name
   ;; members => list of members who have joined the game room and are online
-  (serializable-struct game-room (host name members))
+  ;; target => game points to win the match this table will play
+  ;;   (2 = quick, 6 = classic)
+  (serializable-struct game-room (host name members target))
 
   (define game-room->list
     (lambda (room)
       (match room
-        ((game-room host name members)
+        ((game-room host name members target)
          `((host . ,(user-email host))
            (name . ,name)
-           (members . ,(map user-email members)))))))
+           (members . ,(map user-email members))
+           (target . ,target))))))
 
   ;; hash from host email to game-room struct
   (define *game-rooms* (make-hash))
 
-  (define (add-game-room host-email room-name)
+  ;; the protocol is unauthenticated, so the host's chosen target is
+  ;; clamped to something sane rather than trusted
+  (define (sane-target requested)
+    (if (and (exact-integer? requested) (<= 1 requested 10))
+        requested
+        6))
+
+  (define (add-game-room host-email room-name requested-target)
     (let ((host-user (get-user-by-email host-email)))
       (hash-set! *game-rooms*
                  host-email
-                 (game-room host-user room-name (list host-user)))
+                 (game-room host-user room-name (list host-user)
+                            (sane-target requested-target)))
       'room-created))
 
   (define (get-room-details host-email)
@@ -247,7 +258,7 @@
   (define add-user-to-game-room
     (λ (room user)
       (match room
-        [(game-room host _ _)
+        [(game-room host _ _ _)
          (call-with-semaphore
           *join-lock*
           (λ ()
@@ -259,7 +270,8 @@
                 (else
                  (let ((members (cons user (game-room-members current))))
                    (hash-set! *game-rooms* (user-email host)
-                              (game-room host (game-room-name current) members))
+                              (game-room host (game-room-name current) members
+                                         (game-room-target current)))
                    members))))))])))
 
   ;; #f when the table is full: the bot is released, not left dangling
@@ -273,19 +285,20 @@
 
   (define (room-update-members! room new-members)
     (match room
-      ((game-room host name _)
-       (hash-set! *game-rooms* (user-email host) (game-room host name new-members)))))
+      ((game-room host name _ target)
+       (hash-set! *game-rooms* (user-email host)
+                  (game-room host name new-members target)))))
 
   (define (close-room! room)
     (match room
-      ((game-room host _ _) (hash-remove! *game-rooms* (user-email host)))))
+      ((game-room host _ _ _) (hash-remove! *game-rooms* (user-email host)))))
 
   ;; every room a user (by email, symbol or string) is currently seated in
   (define (rooms-with-member email)
     (define (same? a b) (equal? (format "~a" a) (format "~a" b)))
     (filter (λ (room)
               (match room
-                ((game-room _ _ members)
+                ((game-room _ _ members _)
                  (findf (λ (m) (same? (user-email m) email)) members))))
             (hash-values *game-rooms*))))
 
@@ -319,11 +332,14 @@
 
   (define +max-players+ 4)
 
-  ;; game points a team needs to take the match; the MATCH-TARGET environment
-  ;; variable shortens matches for tests (same pattern as GAME-PORT)
-  (define (match-target)
+  ;; game points a team needs to take the match: the table's own choice
+  ;; (quick 2 / classic 6), with the MATCH-TARGET environment variable as a
+  ;; test override (same pattern as GAME-PORT)
+  (define (match-target room-target)
     (let ([configured (getenv "MATCH-TARGET")])
-      (or (and configured (string->number configured)) +match-target+)))
+      (or (and configured (string->number configured))
+          room-target
+          +match-target+)))
 
   ;; how long a dead socket may wait for its owner to come back before the
   ;; match is abandoned; RECONNECT-GRACE (seconds) is the test hook
@@ -502,6 +518,7 @@
   ;; between-hands. awaiting: (seat . request-message) while the game waits
   ;; on someone. trick entries: (list seat card counts-as-trump?).
   (struct match-state (players
+                       target
                        [hand-number #:mutable]
                        [evens #:mutable]
                        [odds #:mutable]
@@ -744,12 +761,13 @@
   ;; everything a restart needs to pick a match back up at the top of the
   ;; hand it was in: who sits where (and which seats are bots), the hand
   ;; number, and the running game points
-  (define (live-snapshot room started hand evens odds members)
+  (define (live-snapshot room started hand evens odds members target)
     `((room . ,room)
       (started . ,started)
       (hand . ,hand)
       (evens . ,evens)
       (odds . ,odds)
+      (target . ,target)
       (members . ,(map (λ (m) (cons (user-email m) (bot-user? m))) members))))
 
   (define start-game
@@ -758,7 +776,7 @@
         [#f (if (hash-ref *running-games* room-name #f)
                 'game-already-started
                 'room-not-ready)]
-        [(and room (game-room host name members))
+        [(and room (game-room host name members room-target))
          (cond
            [(hash-ref *running-games* name #f)
             'game-already-started]
@@ -772,7 +790,8 @@
             (hash-set! *running-games* name members)
             (close-room! room)
             (broadcast-room-list!)
-            (run-match name host members)]
+            (run-match name host members
+                       #:target (match-target room-target))]
 
            [else 'room-not-ready])])))
 
@@ -786,8 +805,9 @@
                      #:first-hand (first-hand 1)
                      #:evens (evens0 0)
                      #:odds (odds0 0)
+                     #:target (target +match-target+)
                      #:started-at (started-at (current-seconds)))
-    (let ((state (match-state members first-hand evens0 odds0 'bidding
+    (let ((state (match-state members target first-hand evens0 odds0 'bidding
                               #f #f #f #f '() 0 (fresh-seat-alist)
                               (fresh-seat-alist) #f #f)))
       (hash-set! *match-states* name state)
@@ -806,13 +826,12 @@
         ;; first leader sit at seat (N-1) mod 4, so the deal rotates.
         (let match-loop ((hand-number first-hand) (evens evens0) (odds odds0))
           (save-live-match! name (live-snapshot name started-at hand-number
-                                                evens odds members))
+                                                evens odds members target))
           (check-liveness! members)
           ;; the shared user structs carry live hands: empty them
           ;; and reset the state view for the new hand
           (for-each (λ (member) (set-user-hand! member '())) members)
-          (let ((first-seat (remainder (sub1 hand-number) +max-players+))
-                (target (match-target)))
+          (let ((first-seat (remainder (sub1 hand-number) +max-players+)))
             (reset-state-for-hand! state hand-number first-seat)
             (let-values (((points-won bid-value bid-winner)
                           (play-one-hand members first-seat state)))
@@ -838,7 +857,8 @@
                    ;; replay a result the table already watched
                    (save-live-match! name (live-snapshot name started-at
                                                          (add1 hand-number)
-                                                         evens odds members))
+                                                         evens odds members
+                                                         target))
                    ;; drain the deciding seat *before* the broadcast:
                    ;; a genuine next-hand can only be sent after
                    ;; hand-result lands, so anything in there is stale
@@ -878,19 +898,23 @@
                 (hand-number (cdr (assq 'hand snapshot)))
                 (evens (cdr (assq 'evens snapshot)))
                 (odds (cdr (assq 'odds snapshot)))
+                ;; rows written before tables had a choice carry no target
+                (target (let ((entry (assq 'target snapshot)))
+                          (if entry (cdr entry) +match-target+)))
                 (members (map (λ (seat)
                                 (if (cdr seat)
                                     (create-bot-user)
                                     (make-ghost-user (car seat))))
                               (cdr (assq 'members snapshot)))))
-           (displayln (format "restoring match ~a at hand ~a (~a — ~a)"
-                              room hand-number evens odds))
+           (displayln (format "restoring match ~a at hand ~a (~a — ~a, to ~a)"
+                              room hand-number evens odds target))
            (hash-set! *running-games* room members)
            (thread (λ ()
                      (run-match room (last members) members
                                 #:first-hand hand-number
                                 #:evens evens
                                 #:odds odds
+                                #:target target
                                 #:started-at started))))))
      (load-live-matches)))
 
@@ -921,7 +945,7 @@
                    (hand-number . ,(match-state-hand-number state))
                    (evens . ,(match-state-evens state))
                    (odds . ,(match-state-odds state))
-                   (target . ,(match-target))
+                   (target . ,(match-state-target state))
                    (stage . ,(match-state-stage state))
                    (high-bid . ,(match-state-high-bid state))
                    (bid-result . ,bid-result)
@@ -956,14 +980,14 @@
 
 (define (find-member room email)
   (match room
-    ((game-room _ _ members)
+    ((game-room _ _ members _)
      (findf (λ (m) (email=? (user-email m) email)) members))))
 
 ;; Tears a room down: bots are released, humans are told the table is gone.
 ;; except: email of the member who triggered the close (no note to self).
 (define (close-room-and-notify! room #:except (except #f))
   (match room
-    ((game-room host name members)
+    ((game-room host name members _)
      (close-room! room)
      (for-each (λ (member)
                  (cond
@@ -976,7 +1000,7 @@
 ;; leaving closes the whole table. Returns a result symbol for the caller.
 (define (depart-room! room email)
   (match room
-    ((game-room host name members)
+    ((game-room host name members _)
      (cond
        ((email=? (user-email host) email)
         (close-room-and-notify! room #:except email)
@@ -987,7 +1011,9 @@
                (room-update-members! room new-members)
                (when (bot-user? target) (release-user target))
                (send-datum-to-all new-members
-                                  `(room-members ,name ,(map user-email new-members)))
+                                  `(room-members ,name
+                                                 ,(map user-email new-members)
+                                                 ,(game-room-target room)))
                'room-left)))
        (else '(error not-a-member))))))
 
@@ -1006,7 +1032,7 @@
      (let ((room (find-room-by-name room-name)))
        (match room
          (#f '(error no-such-room))
-         ((game-room host name _)
+         ((game-room host name _ _)
           (cond
             ((not (email=? (user-email host) requester-email)) '(error not-host))
             ((email=? requester-email target-email) '(error cannot-kick-host))
@@ -1054,9 +1080,12 @@
               ((not members) '(error room-full))
               (else
                ;; same shape as the add-bot-to-room broadcast so clients have
-               ;; one code path for member updates
+               ;; one code path for member updates; the trailing target lets
+               ;; every lobby show what the table plays to
                (send-datum-to-all members
-                                  `(room-members ,room-name ,(map user-email members)))
+                                  `(room-members ,room-name
+                                                 ,(map user-email members)
+                                                 ,(game-room-target room)))
                'room-joined)))))))
     (_ '(error invalid-message))))
 
@@ -1067,7 +1096,10 @@
         ((not members) '(error room-full))
         (else
          (send-datum-to-all members
-                            `(room-members ,room-name ,(map user-email members)))
+                            `(room-members ,room-name
+                                           ,(map user-email members)
+                                           ,(game-room-target
+                                             (find-room-by-name room-name))))
          'bot-added)))))
 
 ;; accepted messages:
@@ -1133,7 +1165,12 @@
       ;; room messages — each change pushes the fresh table list to every
       ;; connected browser-screen user, so "open tables" stays live
       ((make-room)
-       (let ((result (add-game-room (cadr message) (caddr message))))
+       ;; (make-room <host> <name> [<target>]) — older clients omit the
+       ;; match target and get the classic first-to-6 table
+       (let ((result (add-game-room (cadr message) (caddr message)
+                                    (if (> (length message) 3)
+                                        (cadddr message)
+                                        6))))
          (broadcast-room-list!)
          result))
       ((join-room)

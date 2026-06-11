@@ -135,14 +135,16 @@
 ;; connects four scripted users and seats them at a new table; returns them
 ;; in *seat order* — the server seats the newest joiner first and the host
 ;; last, so (list seat0 seat1 seat2 host). mute maps email -> muted tags.
-(define (seat-scripted-table table-name emails #:mute (mute (hash)))
+(define (seat-scripted-table table-name emails
+                             #:mute (mute (hash))
+                             #:target (target 6))
   (match-let (((list host-email join1 join2 join3) emails))
     (define (fresh email)
       (let ((connection (connect-to-ws)))
         (connect-user connection email)
         (cons email connection)))
     (let ((host (fresh host-email)))
-      (check-equal? (create-room (cdr host) host-email table-name)
+      (check-equal? (create-room (cdr host) host-email table-name target)
                     'room-created)
       (let ((joined (map (λ (email)
                            (let ((joiner (fresh email)))
@@ -329,6 +331,39 @@
        (for-each close-scripted! players)
        (sleep 4)
        (check-equal? (load-live-matches) '() "abandoned match leaves no row")))
+
+   ;; the host picks the table type: a quick table plays to 2 and says so
+   ;; everywhere — the lobby broadcasts, the open-tables list, hand-result,
+   ;; and the resume row on disk
+   (test-begin
+     (let* ((players (seat-scripted-table 'quick-room
+                                          '(quick-host quick-j1 quick-j2 quick-j3)
+                                          #:target 2))
+            (host (last players)))
+       (check-pred pair?
+                   (await host
+                          (λ (events)
+                            (findf (λ (m) (and ((tagged 'room-members) m)
+                                               (= (length m) 4)
+                                               (equal? (cadddr m) 2)))
+                                   events))
+                          #:label 'lobby-knows-target))
+       (let ((probe (connect-to-ws)))
+         (let ((rooms (cadr (get-active-rooms probe))))
+           (check-equal? (cdr (assq 'target (first rooms))) 2
+                         "the open-tables list shows the table type"))
+         (ws-close! probe))
+       (send-msg (scripted-connection host) '(start-game quick-room))
+       (let ((result (await host (λ (events) (nth-hand-result events 1))
+                            #:label 'quick-hand-1)))
+         (check-equal? (result-ref result 'target) 2))
+       (let ((row (findf (λ (r) (eq? (cdr (assq 'room r)) 'quick-room))
+                         (load-live-matches))))
+         (check-pred pair? row "the quick match has a resume row")
+         (check-equal? (cdr (assq 'target row)) 2
+                       "the resume row remembers the table type"))
+       (for-each close-scripted! players)
+       (sleep 4)))
 
    ;; a guest dead past their grace at the between-hands gate: the table is
    ;; told who abandoned, and choosing to end the match aborts it
@@ -534,6 +569,7 @@
                          (hand . 3)
                          (evens . -2)
                          (odds . 1)
+                         (target . 5)
                          (members . ((rest-j3 . #f) (rest-j2 . #f)
                                      (ignored-bot . #t) (rest-host . #f)))))
      ;; make sure the row is flushed, then restore from it
@@ -551,6 +587,8 @@
          (check-equal? (cdr (assoc 'hand-number body)) 3)
          (check-equal? (cdr (assoc 'evens body)) -2)
          (check-equal? (cdr (assoc 'odds body)) 1)
+         (check-equal? (cdr (assoc 'target body)) 5
+                       "the restored match keeps its own table type")
          (check-equal? (cdr (assoc 'stage body)) 'bidding)
          ;; hand 3's first four cards were dealt by the restored thread
          (check-equal? (length (cdr (assoc 'your-hand body))) 4)

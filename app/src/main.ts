@@ -54,7 +54,7 @@ if (params.has('mock')) {
   expose: () => gameState.getSession()?.exposeTrump(),
   nextHand: () => gameState.getSession()?.nextHand(),
   // lobby controls
-  createTable: (name: string) => gameState.createTable(name ?? 'tester'),
+  createTable: (name: string, target?: number) => gameState.createTable(name ?? 'tester', target ?? 6),
   browseTables: (name: string) => gameState.browseTables(name ?? 'tester'),
   joinTable: (roomName: string) => gameState.getSession()?.join(roomName),
   addBot: () => gameState.getSession()?.addBot(),

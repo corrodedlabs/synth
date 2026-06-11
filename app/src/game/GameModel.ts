@@ -78,8 +78,13 @@ export type GameAction =
       readonly roomName: string;
       readonly members: readonly string[];
       readonly isHost: boolean;
+      readonly target?: number; // what this table plays to, when known
     }
-  | { readonly _tag: "MembersChanged"; readonly members: readonly string[] }
+  | {
+      readonly _tag: "MembersChanged";
+      readonly members: readonly string[];
+      readonly target?: number;
+    }
   | { readonly _tag: "RoomLeft" }
   | { readonly _tag: "SeatNamesSet"; readonly names: readonly string[] }
   | { readonly _tag: "HandDealt"; readonly cards: readonly CardModel[] }
@@ -160,10 +165,15 @@ export function gameReducer(state: GameModel, action: GameAction): GameModel {
         roomName: action.roomName,
         members: action.members,
         isHost: action.isHost,
+        matchTarget: action.target ?? state.matchTarget,
       };
 
     case "MembersChanged":
-      return { ...state, members: action.members };
+      return {
+        ...state,
+        members: action.members,
+        matchTarget: action.target ?? state.matchTarget,
+      };
 
     case "RoomLeft":
       // back to the start screen — also wipes any in-progress game state

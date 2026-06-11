@@ -46,6 +46,12 @@ describe("decodeServerEvent", () => {
       _tag: "RoomMembers",
       members: ["bot-2", "bot-1", "me@x"],
     });
+    // newer servers append what the table plays to
+    expect(decodeServerEvent('(room-members "r" ("me@x") 2)')).toEqual({
+      _tag: "RoomMembers",
+      members: ["me@x"],
+      target: 2,
+    });
     expect(decodeServerEvent("(game-started)")).toEqual({ _tag: "GameStarted" });
   });
 
@@ -60,16 +66,17 @@ describe("decodeServerEvent", () => {
       _tag: "StartGameFailed",
       reason: "room-not-ready",
     });
-    // exact shape the server's game-room->list produces
+    // exact shape the server's game-room->list produces; rooms without a
+    // target (older servers) read as classic
     expect(
       decodeServerEvent(
-        '(active-rooms (((host . "a@x") (name . "a\'s table") (members "bot-1" "a@x")) ((host . "b@x") (name . "b\'s table") (members "b@x"))))'
+        '(active-rooms (((host . "a@x") (name . "a\'s table") (members "bot-1" "a@x") (target . 2)) ((host . "b@x") (name . "b\'s table") (members "b@x"))))'
       )
     ).toEqual({
       _tag: "ActiveRooms",
       rooms: [
-        { host: "a@x", name: "a's table", members: ["bot-1", "a@x"] },
-        { host: "b@x", name: "b's table", members: ["b@x"] },
+        { host: "a@x", name: "a's table", members: ["bot-1", "a@x"], target: 2 },
+        { host: "b@x", name: "b's table", members: ["b@x"], target: 6 },
       ],
     });
     expect(decodeServerEvent("(active-rooms ())")).toEqual({ _tag: "ActiveRooms", rooms: [] });
@@ -315,7 +322,9 @@ describe("encodeCommand", () => {
     expect(encodeCommand({ _tag: "ConnectUser", email: "a@b", picUrl: "p.png" })).toBe(
       '(connect-user "a@b" "p.png")'
     );
-    expect(encodeCommand({ _tag: "MakeRoom", hostEmail: "a@b", roomName: "r1" })).toBe('(make-room "a@b" "r1")');
+    expect(encodeCommand({ _tag: "MakeRoom", hostEmail: "a@b", roomName: "r1", target: 2 })).toBe(
+      '(make-room "a@b" "r1" 2)'
+    );
     expect(encodeCommand({ _tag: "AddBot", roomName: "r1" })).toBe('(add-bot-to-room "r1")');
     expect(encodeCommand({ _tag: "StartGame", roomName: "r1" })).toBe('(start-game "r1")');
     expect(encodeCommand({ _tag: "PutBid", email: "a@b", bid: 17 })).toBe('(put-bid "a@b" 17)');

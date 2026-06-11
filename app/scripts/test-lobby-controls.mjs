@@ -45,21 +45,41 @@ const waitMembers = (page, expected) =>
 const atStartScreen = (page) =>
   page.evaluate(() => !document.getElementById("start-screen").classList.contains("hidden"));
 
-// --- setup: host table with 1 bot, guest joins ---
+// --- setup: host picks a QUICK table (first to 2), bot + guest join ---
 const host = await newPlayer("host", "Host");
+check(
+  "classic is the default table type",
+  await host.evaluate(
+    () => document.querySelector("#table-type .selected")?.dataset.target === "6"
+  )
+);
+await host.click('#table-type [data-target="2"]');
 await host.click("#create-button");
 await host.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });
 const roomName = await host.evaluate(() => window.__game.roomName());
+const subtitle = await host.evaluate(() => document.getElementById("lobby-subtitle").textContent);
+check(`host lobby names the table type ("${subtitle}")`, subtitle.includes("to 2"));
 await host.click("#add-bot");
 await waitMembers(host, 2);
 
 const guest = await newPlayer("guest", "Guest");
 await guest.click("#browse-button");
 await guest.waitForSelector(".room-row button", { timeout: 15000 });
+const rowText = await guest
+  .locator(".room-row", { hasText: roomName })
+  .locator(".room-count")
+  .textContent();
+check(`the open-tables row shows the type ("${rowText}")`, rowText.includes("to 2"));
 await guest.locator(".room-row", { hasText: roomName }).locator("button").click();
 await guest.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });
 await waitMembers(host, 3);
 await waitMembers(guest, 3);
+check(
+  "the joining guest's lobby names the table type too",
+  (await guest.evaluate(() => document.getElementById("lobby-subtitle").textContent)).includes(
+    "to 2"
+  )
+);
 check("host + bot + guest seated", true);
 await host.screenshot({ path: `${SHOTS}/01-host-lobby-kick-buttons.png` });
 

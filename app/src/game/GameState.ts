@@ -66,7 +66,7 @@ export class GameState {
     );
 
     this.ui = new UiOverlay({
-      onCreate: (name) => this.createTable(name),
+      onCreate: (name, target) => this.createTable(name, target),
       onBrowse: (name) => this.browseTables(name),
       onJoin: (roomName) => this.session?.join(roomName),
       onJoinLink: (name, roomName) => this.joinTable(name, roomName),
@@ -196,8 +196,8 @@ export class GameState {
     this.mockFiber = Effect.runFork(program);
   }
 
-  public createTable(playerName: string) {
-    this.startSession(playerName, "create-room");
+  public createTable(playerName: string, target = 6) {
+    this.startSession(playerName, "create-room", undefined, undefined, target);
   }
 
   public browseTables(playerName: string) {
@@ -225,12 +225,15 @@ export class GameState {
     playerName: string,
     intent: "create-room" | "browse-rooms" | "rejoin" | "join" | "standings",
     joinRoom?: string,
-    rejoinEmail?: string
+    rejoinEmail?: string,
+    tableTarget?: number
   ) {
     if (this.session) {
       // already connected (e.g. browsing) — just issue the new intent
-      if (intent === "create-room") this.session.createRoom();
-      else if (intent === "join" && joinRoom) this.session.join(joinRoom);
+      if (intent === "create-room") {
+        if (tableTarget !== undefined) this.session.tableTarget = tableTarget;
+        this.session.createRoom();
+      } else if (intent === "join" && joinRoom) this.session.join(joinRoom);
       else this.session.refreshRooms();
       return;
     }
@@ -257,6 +260,7 @@ export class GameState {
       playerName,
       rejoinEmail
     );
+    if (tableTarget !== undefined) this.session.tableTarget = tableTarget;
 
     const session = this.session;
     Effect.runFork(

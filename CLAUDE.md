@@ -32,7 +32,11 @@ External repositories may be vendored under `repos/` for agent reference.
 Server env vars (all optional):
 - `GAME-DB` — SQLite path (default `game.db`, gitignored; prod uses
   `/data/game.db`). Booting also restores any interrupted matches from it.
-- `MATCH-TARGET` — game points to win a match (default 6; tests use 0).
+- `MATCH-TARGET` — overrides every table's match target (tests use 0).
+  Normally the target is per-table: the host picks Quick (first to 2) or
+  Classic (first to 6, the default) at creation; `(make-room host name
+  [target])` carries it, `room-members`/`active-rooms` broadcast it, and
+  it rides the resume row so restored matches keep their type.
 - `RECONNECT-GRACE` — seconds a dropped seat waits for its owner
   (default 45; the integration suite runs at 2).
 - `GAME-PORT` — set automatically by `--port`; bots dial back through it.

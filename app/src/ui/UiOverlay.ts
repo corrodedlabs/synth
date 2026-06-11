@@ -2,7 +2,7 @@ import { GameModel, Suit } from "../game/GameModel";
 import { RoomInfo } from "../net/protocol";
 
 export interface UiCallbacks {
-  readonly onCreate: (playerName: string) => void;
+  readonly onCreate: (playerName: string, target: number) => void;
   readonly onBrowse: (playerName: string) => void;
   readonly onJoin: (roomName: string) => void;
   readonly onJoinLink: (playerName: string, roomName: string) => void;
@@ -94,9 +94,18 @@ export class UiOverlay {
   private currentRoomName: string | null = null;
 
   constructor(private callbacks: UiCallbacks) {
+    // the table-type picker: classic (first to 6) unless quick is chosen
+    for (const button of document.querySelectorAll<HTMLButtonElement>("#table-type [data-target]")) {
+      button.addEventListener("click", () => {
+        document
+          .querySelectorAll("#table-type [data-target]")
+          .forEach((other) => other.classList.toggle("selected", other === button));
+      });
+    }
+
     element("create-button").addEventListener("click", () => {
       this.hide(this.startScreen);
-      callbacks.onCreate(this.playerNameInput.value);
+      callbacks.onCreate(this.playerNameInput.value, this.selectedTarget());
     });
     element("browse-button").addEventListener("click", () => {
       this.show(this.roomBrowser);
@@ -217,6 +226,12 @@ export class UiOverlay {
     }, 2000);
   }
 
+  private selectedTarget(): number {
+    const selected = document.querySelector<HTMLElement>("#table-type .selected");
+    const target = Number(selected?.dataset.target);
+    return Number.isInteger(target) && target >= 1 ? target : 6;
+  }
+
   // The start screen collapses to a single "join this table" action when the
   // page was opened from an invite link; the usual actions stay underneath.
   setJoinTarget(roomName: string | null) {
@@ -263,7 +278,7 @@ export class UiOverlay {
       name.textContent = room.name;
       const count = document.createElement("span");
       count.className = "room-count";
-      count.textContent = `${room.members.length} of 4`;
+      count.textContent = `${room.members.length} of 4 · to ${room.target}`;
       const joinButton = document.createElement("button");
       joinButton.type = "button";
       joinButton.textContent = "Join";
@@ -282,9 +297,10 @@ export class UiOverlay {
     this.hide(this.startScreen);
     this.currentRoomName = model.roomName;
     this.lobbyTitle.textContent = model.roomName ?? "";
+    const kind = model.matchTarget === 2 ? "quick match" : "match";
     this.lobbySubtitle.textContent = model.isHost
-      ? "You are hosting this table"
-      : "Waiting for the host to start";
+      ? `You are hosting this table — ${kind} to ${model.matchTarget}`
+      : `Waiting for the host to start — ${kind} to ${model.matchTarget}`;
 
     // members arrive in server order (newest first, host last); show host first
     const seated = [...model.members].reverse();

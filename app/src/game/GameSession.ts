@@ -122,6 +122,8 @@ export class GameSession {
   readonly email: string;
   readonly displayName: string;
   readonly roomName: string;
+  // game points the table we create will play to (quick 2 / classic 6)
+  tableTarget = 6;
 
   constructor(private callbacks: SessionCallbacks, playerName: string, rejoinEmail?: string) {
     const id = persistentPlayerId();
@@ -165,7 +167,12 @@ export class GameSession {
 
   createRoom() {
     if (!this.socket || this.inRoom) return;
-    this.socket.send({ _tag: "MakeRoom", hostEmail: this.email, roomName: this.roomName });
+    this.socket.send({
+      _tag: "MakeRoom",
+      hostEmail: this.email,
+      roomName: this.roomName,
+      target: this.tableTarget,
+    });
   }
 
   refreshRooms() {
@@ -394,6 +401,7 @@ export class GameSession {
             roomName: this.roomName,
             members: [this.email],
             isHost: true,
+            target: this.tableTarget,
           });
           this.callbacks.status("Your table is ready — fill the seats, then start.");
           return false;
@@ -405,7 +413,7 @@ export class GameSession {
         case "RoomMembers": {
           this.myServerIndex = event.members.indexOf(this.email);
           if (this.inRoom) {
-            dispatch({ _tag: "MembersChanged", members: event.members });
+            dispatch({ _tag: "MembersChanged", members: event.members, target: event.target });
           } else if (this.myServerIndex >= 0) {
             // our join went through — this broadcast is our welcome
             this.inRoom = true;
@@ -414,6 +422,7 @@ export class GameSession {
               roomName: this.joinedRoomName ?? "table",
               members: event.members,
               isHost: false,
+              target: event.target,
             });
           }
           return false;

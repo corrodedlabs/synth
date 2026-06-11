@@ -322,8 +322,8 @@
     (receive-data connection)))
 
 (define create-room
-  (lambda (connection user-id room-name)
-    (send-ws-message connection `(make-room ,user-id ,room-name))
+  (lambda (connection user-id room-name (target 6))
+    (send-ws-message connection `(make-room ,user-id ,room-name ,target))
     (receive-data connection)))
 
 (define join-room

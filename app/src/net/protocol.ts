@@ -77,6 +77,7 @@ export interface RoomInfo {
   readonly host: string;
   readonly name: string;
   readonly members: readonly string[];
+  readonly target: number; // game points this table plays to
 }
 
 // Mid-match view for a reconnecting client, straight from the server's
@@ -112,7 +113,11 @@ export type ServerEvent =
   | { readonly _tag: "RemovedFromRoom" }
   | { readonly _tag: "ActiveRooms"; readonly rooms: readonly RoomInfo[] }
   | { readonly _tag: "StartGameFailed"; readonly reason: string }
-  | { readonly _tag: "RoomMembers"; readonly members: readonly string[] }
+  | {
+      readonly _tag: "RoomMembers";
+      readonly members: readonly string[];
+      readonly target?: number; // what the table plays to, when broadcast
+    }
   | { readonly _tag: "GameStarted" }
   | { readonly _tag: "GameAborted" }
   | { readonly _tag: "HandDealt"; readonly cards: readonly CardModel[] }
@@ -208,7 +213,12 @@ export function decodeServerExpr(expr: SExpr, trimmed = writeSExpr(expr)): Serve
     case "room-members": {
       const members = rest[1];
       if (!Array.isArray(members)) return { _tag: "Ignored", raw: trimmed };
-      return { _tag: "RoomMembers", members: members.map(memberName) };
+      const target = rest[2];
+      return {
+        _tag: "RoomMembers",
+        members: members.map(memberName),
+        ...(typeof target === "number" ? { target } : {}),
+      };
     }
 
     case "game-started":
@@ -235,11 +245,13 @@ export function decodeServerExpr(expr: SExpr, trimmed = writeSExpr(expr)): Serve
         const host = assocValue(entry, "host");
         const name = assocValue(entry, "name");
         const members = assocValue(entry, "members");
+        const target = assocValue(entry, "target");
         if (typeof name !== "string" && !(name instanceof Sym)) return [];
         return [{
           host: typeof host === "string" || host instanceof Sym ? memberName(host) : "",
           name: memberName(name),
           members: Array.isArray(members) ? members.map(memberName) : [],
+          target: typeof target === "number" ? target : 6,
         }];
       });
       return { _tag: "ActiveRooms", rooms };
@@ -541,7 +553,12 @@ function decodeSnapshot(body: SExpr | undefined): MatchSnapshot | null {
 
 export type ClientCommand =
   | { readonly _tag: "ConnectUser"; readonly email: string; readonly picUrl: string }
-  | { readonly _tag: "MakeRoom"; readonly hostEmail: string; readonly roomName: string }
+  | {
+      readonly _tag: "MakeRoom";
+      readonly hostEmail: string;
+      readonly roomName: string;
+      readonly target: number;
+    }
   | { readonly _tag: "JoinRoom"; readonly roomName: string; readonly email: string }
   | { readonly _tag: "LeaveRoom"; readonly roomName: string; readonly email: string }
   | {
@@ -571,7 +588,7 @@ export function encodeCommand(command: ClientCommand): string {
     case "ConnectUser":
       return writeSExpr([sym("connect-user"), command.email, command.picUrl]);
     case "MakeRoom":
-      return writeSExpr([sym("make-room"), command.hostEmail, command.roomName]);
+      return writeSExpr([sym("make-room"), command.hostEmail, command.roomName, command.target]);
     case "JoinRoom":
       return writeSExpr([sym("join-room"), command.roomName, command.email]);
     case "LeaveRoom":

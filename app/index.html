@@ -158,6 +158,35 @@
         display: flex;
         gap: 16px;
       }
+      /* the table-type picker: what the new table plays to */
+      #table-type {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 20px;
+      }
+      #table-type button {
+        font-family: inherit;
+        font-size: 18px;
+        color: #3b2f2a;
+        background: transparent;
+        border: 1px solid rgba(59, 47, 42, 0.35);
+        border-radius: 4px;
+        padding: 7px 22px;
+        cursor: pointer;
+        letter-spacing: 0.6px;
+        opacity: 0.65;
+      }
+      #table-type button span {
+        display: block;
+        font-size: 13px;
+        opacity: 0.7;
+        letter-spacing: 0.8px;
+      }
+      #table-type button.selected {
+        background: rgba(59, 47, 42, 0.08);
+        border-color: rgba(59, 47, 42, 0.6);
+        opacity: 1;
+      }
       /* the invite-link entry: one emphasized action above the usual two */
       #join-link {
         margin-bottom: 18px;
@@ -665,25 +694,32 @@
           gap: 10px;
           padding: 7px 10px;
         }
-        /* stack the HUD rows so score, status, and trump never collide */
+        /* stack the HUD rows so score, status, and trump never collide:
+           the score strip must fit a 360px screen on one line, and a long
+           status may wrap — keep it in the left column, clear of the
+           right-aligned trump indicator */
         #score-display {
           top: calc(10px + env(safe-area-inset-top));
           right: calc(12px + env(safe-area-inset-right));
-          font-size: 15px;
+          font-size: 13px;
+          max-width: calc(100vw - 20px);
+          white-space: nowrap;
         }
         #score-display .divider {
-          margin: 0 6px;
+          margin: 0 5px;
         }
         #status-line {
-          top: calc(36px + env(safe-area-inset-top));
+          top: calc(34px + env(safe-area-inset-top));
           left: calc(14px + env(safe-area-inset-left));
-          font-size: 15px;
-          max-width: 86vw;
+          font-size: 14px;
+          max-width: 58vw;
         }
         #trump-indicator {
-          top: calc(60px + env(safe-area-inset-top));
+          top: calc(36px + env(safe-area-inset-top));
           right: calc(14px + env(safe-area-inset-right));
-          font-size: 15px;
+          font-size: 14px;
+          max-width: 36vw;
+          text-align: right;
         }
         .panel {
           padding: 14px 16px;
@@ -800,9 +836,36 @@
           font-size: 34px;
         }
         #abandon-panel {
-          top: 16%;
+          top: 6%; /* clear of the centered between-hands result panel */
           width: 86vw;
           box-sizing: border-box;
+        }
+        #leaderboard-panel {
+          min-width: 0;
+          width: 86vw;
+          max-height: 80vh;
+          overflow-y: auto;
+          box-sizing: border-box;
+        }
+        #help-panel {
+          max-height: 84vh;
+          overflow-y: auto;
+        }
+        /* short phones: the start column must scroll, never clip ("safe"
+           keeps centering from cutting off the top when it overflows) */
+        #start-screen {
+          overflow-y: auto;
+          justify-content: safe center;
+          padding: 18px 0 max(18px, env(safe-area-inset-bottom));
+          box-sizing: border-box;
+        }
+        #table-type {
+          gap: 8px;
+          margin-bottom: 16px;
+        }
+        #table-type button {
+          font-size: 16px;
+          padding: 6px 16px;
         }
         .seat-name-label {
           font-size: 15px;
@@ -942,6 +1005,10 @@
         <h1>28</h1>
         <p>a trick-taking game</p>
         <input id="player-name" type="text" placeholder="your name" maxlength="20" autocomplete="off" />
+        <div id="table-type">
+          <button type="button" data-target="6" class="selected">Classic<span>first to 6</span></button>
+          <button type="button" data-target="2">Quick<span>first to 2</span></button>
+        </div>
         <button id="join-link" type="button" class="hidden"></button>
         <div id="start-actions">
           <button id="create-button" type="button">Create a table</button>
