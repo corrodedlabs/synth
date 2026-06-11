@@ -147,6 +147,39 @@ export class SoundService {
     }
   }
 
+  // a soft fingertip tick under every pressed button
+  uiClick() {
+    this.count("uiClick");
+    const ctx = this.ready();
+    if (!ctx) return;
+    this.tone(ctx, { freq: 1180, duration: 0.05, peak: 0.04, type: "triangle" });
+    this.tone(ctx, { freq: 320, duration: 0.04, peak: 0.025 });
+  }
+
+  // the match is decided: a victory arpeggio with a held chord on top,
+  // or a quiet two-note bow for the losing side
+  fanfare(won: boolean) {
+    this.count(won ? "fanfare-win" : "fanfare-lose");
+    const ctx = this.ready();
+    if (!ctx) return;
+    if (won) {
+      const notes = [523.25, 659.25, 783.99, 1046.5]; // C5 E5 G5 C6
+      notes.forEach((freq, i) =>
+        this.tone(ctx, {
+          delay: i * 0.16,
+          freq,
+          duration: i === notes.length - 1 ? 0.7 : 0.24,
+          peak: 0.06,
+        })
+      );
+      this.tone(ctx, { delay: 0.48, freq: 659.25, duration: 0.7, peak: 0.03 });
+      this.tone(ctx, { delay: 0.48, freq: 783.99, duration: 0.7, peak: 0.03 });
+    } else {
+      this.tone(ctx, { freq: 392, duration: 0.45, peak: 0.045 }); // G4
+      this.tone(ctx, { delay: 0.3, freq: 311.13, duration: 0.8, peak: 0.04 }); // Eb4
+    }
+  }
+
   // --- plumbing ---
 
   private count(name: string) {

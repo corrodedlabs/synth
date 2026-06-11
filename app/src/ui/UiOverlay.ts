@@ -21,7 +21,7 @@ export interface UiCallbacks {
   readonly onLeaveMatch: () => void;
   readonly onReplaceBot: () => void;
   readonly onEndMatch: () => void;
-  readonly onPlayAgain: () => void;
+  readonly onGoHome: () => void;
 }
 
 export const SEAT_NAMES = ["You", "Right", "Partner", "Left"] as const;
@@ -71,11 +71,13 @@ export class UiOverlay {
   private trumpPanel = element("trump-panel");
   private exposeButton = element("expose-button") as HTMLButtonElement;
   private resultPanel = element("result-panel");
+  private resultIcon = element("result-icon");
   private resultTitle = element("result-title");
   private resultDetail = element("result-detail");
+  private resultHands = element("result-hands");
   private nextHandButton = element("next-hand") as HTMLButtonElement;
   private resultWait = element("result-wait");
-  private playAgainButton = element("play-again") as HTMLButtonElement;
+  private goHomeButton = element("go-home") as HTMLButtonElement;
   private leaveMatchButton = element("leave-match") as HTMLButtonElement;
   private joinLinkButton = element("join-link") as HTMLButtonElement;
   private copyInviteButton = element("copy-invite") as HTMLButtonElement;
@@ -145,7 +147,7 @@ export class UiOverlay {
       this.show(this.resultWait);
       callbacks.onNextHand();
     });
-    this.playAgainButton.addEventListener("click", () => callbacks.onPlayAgain());
+    this.goHomeButton.addEventListener("click", () => callbacks.onGoHome());
 
     // leaving abandons the match for all four seats, so the first click
     // only arms the button; a second within a few seconds confirms
@@ -422,7 +424,9 @@ export class UiOverlay {
   showHandResult(ourPoints: number, theirPoints: number, detail: string, isHost: boolean) {
     this.resultTitle.textContent = `${ourPoints} — ${theirPoints}`;
     this.resultDetail.textContent = detail;
-    this.hide(this.playAgainButton);
+    this.hide(this.resultIcon);
+    this.hide(this.resultHands);
+    this.hide(this.goHomeButton);
     if (isHost) {
       this.show(this.nextHandButton);
       this.hide(this.resultWait);
@@ -434,14 +438,37 @@ export class UiOverlay {
     this.show(this.resultPanel);
   }
 
-  showMatchOver(ourGamePoints: number, theirGamePoints: number, weWon: boolean, hands: number) {
-    this.resultTitle.textContent = weWon ? "Match won" : "Match lost";
+  showMatchOver(
+    ourGamePoints: number,
+    theirGamePoints: number,
+    weWon: boolean,
+    hands: number,
+    target: number,
+    handResults: readonly number[]
+  ) {
+    this.resultIcon.textContent = weWon ? "🏆" : "🍂";
+    this.show(this.resultIcon);
+    this.resultTitle.textContent = weWon ? "You win the match!" : "Match lost";
     this.resultDetail.textContent =
-      `${ourGamePoints} — ${theirGamePoints} in game points after ` +
-      `${hands} hand${hands === 1 ? "" : "s"}`;
+      `${ourGamePoints} — ${theirGamePoints} in game points\n` +
+      `first to ${target} · ${hands} hand${hands === 1 ? "" : "s"} played`;
+    // hand-by-hand swing chips — only when we saw every hand (a mid-match
+    // reconnect starts the tally over)
+    this.resultHands.innerHTML = "";
+    if (handResults.length === hands && hands > 0) {
+      for (const swing of handResults) {
+        const chip = document.createElement("span");
+        chip.className = `hand-chip ${swing > 0 ? "gain" : "loss"}`;
+        chip.textContent = swing > 0 ? `+${swing}` : `−${-swing}`;
+        this.resultHands.append(chip);
+      }
+      this.show(this.resultHands);
+    } else {
+      this.hide(this.resultHands);
+    }
     this.hide(this.nextHandButton);
     this.hide(this.resultWait);
-    this.show(this.playAgainButton);
+    this.show(this.goHomeButton);
     this.show(this.resultPanel);
   }
 
@@ -464,7 +491,7 @@ export class UiOverlay {
   // the open result panel between the deal button and the waiting note.
   setNextHandRole(isActingHost: boolean) {
     if (this.resultPanel.classList.contains("hidden")) return;
-    if (this.playAgainButton.classList.contains("hidden") === false) return; // match-over panel
+    if (this.goHomeButton.classList.contains("hidden") === false) return; // match-over panel
     if (isActingHost) {
       this.show(this.nextHandButton);
       this.hide(this.resultWait);

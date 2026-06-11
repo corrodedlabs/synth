@@ -67,6 +67,9 @@ export interface GameModel {
   readonly matchUs: number; // our team's game points
   readonly matchThem: number;
   readonly matchTarget: number;
+  // per-hand swing from our side: +N when our score moved up, −N when
+  // theirs did — the match-over panel renders these as chips
+  readonly handResults: readonly number[];
   readonly handNumber: number;
   readonly matchWinner: "us" | "them" | null;
 }
@@ -149,6 +152,7 @@ export const initialGameModel: GameModel = {
   matchUs: 0,
   matchThem: 0,
   matchTarget: 6,
+  handResults: [],
   handNumber: 1,
   matchWinner: null,
 };
@@ -166,6 +170,7 @@ export function gameReducer(state: GameModel, action: GameAction): GameModel {
         members: action.members,
         isHost: action.isHost,
         matchTarget: action.target ?? state.matchTarget,
+        handResults: [],
       };
 
     case "MembersChanged":
@@ -274,13 +279,18 @@ export function gameReducer(state: GameModel, action: GameAction): GameModel {
         pendingRequest: null,
       };
 
-    case "HandResult":
+    case "HandResult": {
+      // exactly one team's score moves per hand; a zero swing is a restored
+      // snapshot re-announcing a hand already counted
+      const swing = action.us - state.matchUs - (action.them - state.matchThem);
       return {
         ...state,
         matchUs: action.us,
         matchThem: action.them,
         matchTarget: action.target,
+        handResults: swing === 0 ? state.handResults : [...state.handResults, swing],
       };
+    }
 
     case "HandReset":
       // everything a single hand owns goes back to its initial value;

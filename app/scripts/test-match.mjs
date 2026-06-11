@@ -143,7 +143,7 @@ check(
 check("host sees the result panel", await visible(host, "result-panel"));
 check("host sees the deal button", await visible(host, "next-hand"));
 check("host does not see the waiting note", !(await visible(host, "result-wait")));
-check("host does not see play-again between hands", !(await visible(host, "play-again")));
+check("host does not see the go-home button between hands", !(await visible(host, "go-home")));
 check("guest sees the result panel", await visible(guest, "result-panel"));
 check("guest does not see the deal button", !(await visible(guest, "next-hand")));
 check("guest sees the waiting note", await visible(guest, "result-wait"));

@@ -85,13 +85,21 @@ export class GameState {
       onLeaveMatch: () => this.leaveMatch(),
       onReplaceBot: () => this.session?.resolveAbandon("replace"),
       onEndMatch: () => this.session?.resolveAbandon("close"),
-      onPlayAgain: () => window.location.reload(),
+      // a reload is the cleanest road home: the match is over, the stored
+      // identity survives, and every scrap of scene state resets
+      onGoHome: () => window.location.reload(),
     });
 
     this.scoreElement = document.getElementById("score-value");
     this.tricksElement = document.getElementById("tricks-value");
     this.matchElement = document.getElementById("match-value");
     this.sound.bindToggle(document.getElementById("sound-button"));
+    // every button answers the finger with a tick (pointerdown beats click
+    // so the sound lands on the press, not the release)
+    document.addEventListener("pointerdown", (event) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest?.("button")) this.sound.uiClick();
+    });
 
     this.applyViewportLayout();
     window.addEventListener("resize", () => {
@@ -612,11 +620,18 @@ export class GameState {
         break;
 
       case "MatchOver": {
-        this.sound.result(action.winner === "us");
+        this.sound.fanfare(action.winner === "us");
         this.ui.status("");
-        // the match is decided — the panel's Play again takes it from here
+        // the match is decided — the panel's Back to home takes it from here
         this.ui.setLeaveMatchVisible(false);
-        this.ui.showMatchOver(action.us, action.them, action.winner === "us", action.hands);
+        this.ui.showMatchOver(
+          action.us,
+          action.them,
+          action.winner === "us",
+          action.hands,
+          this.model.matchTarget,
+          this.model.handResults
+        );
         break;
       }
 

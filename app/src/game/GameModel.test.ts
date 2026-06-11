@@ -192,6 +192,22 @@ describe("gameReducer", () => {
     expect(model.matchTarget).toBe(6);
   });
 
+  it("accumulates per-hand swings for the match-over chips", () => {
+    // hand 1: we made +2; hand 2: they made +1 (a −1 swing for us)
+    const afterHand1 = gameReducer(playing({}), {
+      _tag: "HandResult", bidder: 0, bid: 20, made: true, us: 2, them: 0, target: 6,
+    });
+    const afterHand2 = gameReducer(afterHand1, {
+      _tag: "HandResult", bidder: 1, bid: 16, made: true, us: 2, them: 1, target: 6,
+    });
+    expect(afterHand2.handResults).toEqual([2, -1]);
+    // a restored snapshot re-announcing the same scores adds no chip
+    const replayed = gameReducer(afterHand2, {
+      _tag: "HandResult", bidder: 1, bid: 16, made: true, us: 2, them: 1, target: 6,
+    });
+    expect(replayed.handResults).toEqual([2, -1]);
+  });
+
   it("resets the hand but preserves the room and the match on HandReset", () => {
     const betweenHands: GameModel = {
       ...initialGameModel,

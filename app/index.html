@@ -261,6 +261,8 @@
         transform: translate(-50%, -50%);
         min-width: 380px;
         padding: 26px 40px;
+        /* near-opaque: the 3D seat markers sit right behind this panel */
+        background: rgba(253, 250, 243, 0.98);
       }
       #lobby-title {
         font-size: 30px;
@@ -755,7 +757,10 @@
         }
         #lobby-title {
           font-size: 22px;
-          padding: 0 58px;
+          /* a fixed-width phone panel can't spare side padding for a long
+             table name: drop below the corner Close/Leave button instead */
+          padding: 0 12px;
+          margin-top: 26px;
         }
         #lobby-subtitle {
           font-size: 15px;
@@ -767,9 +772,12 @@
         #lobby-hint {
           font-size: 15px;
         }
+        /* top-anchored on phones: a centered panel lands exactly on the
+           hand fan, and the player must see their cards while answering */
         #bid-panel,
         #trump-panel {
-          bottom: 33vh;
+          bottom: auto;
+          top: calc(88px + env(safe-area-inset-top));
           width: 86vw;
           box-sizing: border-box;
         }
@@ -797,6 +805,13 @@
         }
         #result-panel #result-detail {
           font-size: 17px;
+        }
+        #result-panel #result-icon {
+          font-size: 48px;
+        }
+        #result-hands .hand-chip {
+          font-size: 14px;
+          padding: 2px 8px;
         }
         #help-panel {
           width: 88vw;
@@ -907,6 +922,32 @@
         min-width: 320px;
         padding: 30px 44px;
       }
+      #result-panel #result-icon {
+        font-size: 60px;
+        line-height: 1.1;
+        margin-bottom: 4px;
+      }
+      #result-panel #result-hands {
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: -8px 0 20px;
+      }
+      #result-hands .hand-chip {
+        font-size: 16px;
+        padding: 2px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(59, 47, 42, 0.3);
+      }
+      #result-hands .hand-chip.gain {
+        color: #3f6f3f;
+        border-color: rgba(63, 111, 63, 0.5);
+      }
+      #result-hands .hand-chip.loss {
+        color: #a33c2e;
+        border-color: rgba(163, 60, 46, 0.45);
+      }
       #result-panel #result-title {
         font-size: 52px;
         margin: 0 0 6px;
@@ -1005,11 +1046,13 @@
       <button id="expose-button" type="button" class="hidden">Reveal trump</button>
 
       <div id="result-panel" class="panel hidden">
+        <div id="result-icon" class="hidden"></div>
         <div id="result-title"></div>
         <div id="result-detail"></div>
+        <div id="result-hands" class="hidden"></div>
         <button id="next-hand" type="button" class="hidden">Deal the next hand</button>
         <div id="result-wait" class="hidden">waiting for the host to deal…</div>
-        <button id="play-again" type="button">Play again</button>
+        <button id="go-home" type="button">Back to home</button>
       </div>
 
       <div id="lobby-panel" class="panel hidden">
