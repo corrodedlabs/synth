@@ -3,3 +3,4 @@
 !game.rkt
 !client.rkt
 !server.rkt
+!storage.rkt

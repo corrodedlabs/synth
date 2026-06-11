@@ -1212,6 +1212,8 @@
 
 
 (module+ main
+  ;; container logs are useless when block-buffered: flush per line
+  (file-stream-buffer-mode (current-output-port) 'line)
   ;; matches survive restarts: open the book, start serving, then put
   ;; every interrupted match back on the table (its players' browsers
   ;; auto-rejoin within the grace window)
