@@ -136,6 +136,20 @@ const stale = await guest.evaluate(
 );
 check("closed table no longer listed", !stale);
 
+// --- standings: the leaderboard panel answers from the start screen ---
+await host.click("#standings-button");
+await host.waitForSelector("#leaderboard-panel:not(.hidden)", { timeout: 15000 });
+await host.waitForFunction(
+  () => {
+    const list = document.getElementById("leaderboard-list");
+    return list.children.length >= 1 && !list.textContent.includes("fetching");
+  },
+  undefined,
+  { timeout: 10000 }
+);
+check("standings panel opens with an answer", true);
+await host.click("#leaderboard-close");
+
 // --- invite links: a shared URL drops a friend straight into the table ---
 await host.click("#create-button");
 await host.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });

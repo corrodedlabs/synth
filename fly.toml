@@ -1,14 +1,22 @@
 # fly.io config for the 28 game server.
 #
-# All game state (users, rooms, running games) lives in process memory, so
-# this must run as a SINGLE always-on machine: never scale above 1 and never
-# let the proxy stop it mid-game.
+# Game state lives in process memory, with running matches and history
+# persisted to SQLite on the attached volume — so restarts and deploys
+# resume interrupted matches. Still a SINGLE always-on machine: never
+# scale above 1 and never let the proxy stop it mid-game.
 
 app = "twenty-eight-game"
 primary_region = "bom"
 
 [build]
   dockerfile = "Dockerfile"
+
+[env]
+  GAME-DB = "/data/game.db"
+
+[mounts]
+  source = "data"
+  destination = "/data"
 
 [http_service]
   internal_port = 8080

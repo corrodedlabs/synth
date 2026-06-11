@@ -30,6 +30,8 @@ jobs:
         run: raco test game.rkt
       - name: Bot heuristic unit tests
         run: raco test client.rkt
+      - name: Storage unit tests
+        run: raco test storage.rkt
       - name: Server integration tests
         run: raco test -t tests.rkt
 

@@ -6,12 +6,18 @@
          racket/port
          "./server.rkt"
          "./client.rkt"
-         "./game.rkt")
+         "./game.rkt"
+         "./storage.rkt")
 
 (define *service* #f)
 
 ;; off the default port so tests don't collide with a dev server
 (define test-port 18081)
+
+;; a throwaway database per run: matches persist and restore against it
+(define test-db (build-path (find-system-path 'temp-dir)
+                            (format "game28-itest-~a.db"
+                                    (current-inexact-milliseconds))))
 
 (define user1-id 'user1-email)
 (define room-name 'my-test-room)
@@ -196,6 +202,7 @@
    (begin (displayln "starting server")
           (putenv "GAME-PORT" (number->string test-port))
           (putenv "RECONNECT-GRACE" "2")
+          (storage-start! test-db)
           (set! *service* (start-service test-port))
           (sleep 3))
 
@@ -306,9 +313,22 @@
                                4)
                      '(bid-placed 1 16))
 
-       ;; abandon the match (everyone leaves)
+       ;; the resume row on disk tracks the gate: hand 3 is next, with the
+       ;; running scores and every seat
+       (let ((result2 (nth-hand-result (unbox (scripted-events host)) 2))
+             (rows (load-live-matches)))
+         (check-equal? (length rows) 1 "one running match, one resume row")
+         (let ((row (first rows)))
+           (check-equal? (cdr (assq 'room row)) 'match-room)
+           (check-equal? (cdr (assq 'hand row)) 3)
+           (check-equal? (cdr (assq 'evens row)) (result-ref result2 'evens))
+           (check-equal? (cdr (assq 'odds row)) (result-ref result2 'odds))
+           (check-equal? (length (cdr (assq 'members row))) 4)))
+
+       ;; abandon the match (everyone leaves); the abort clears the row
        (for-each close-scripted! players)
-       (sleep 1.5)))
+       (sleep 4)
+       (check-equal? (load-live-matches) '() "abandoned match leaves no row")))
 
    ;; a guest dead past their grace at the between-hands gate: the table is
    ;; told who abandoned, and choosing to end the match aborts it
@@ -502,6 +522,50 @@
        (sleep 1.5))
      (putenv "RECONNECT-GRACE" "2"))
 
+   ;; a server restart: a synthetic resume row becomes a running match —
+   ;; ghost seats wait inside their grace, a fresh bot fills the bot seat,
+   ;; and a returning player rejoins straight into the restored hand with
+   ;; the carried score
+   (test-begin
+     (putenv "RECONNECT-GRACE" "30")
+     (save-live-match! 'restore-room
+                       '((room . restore-room)
+                         (started . 12345)
+                         (hand . 3)
+                         (evens . -2)
+                         (odds . 1)
+                         (members . ((rest-j3 . #f) (rest-j2 . #f)
+                                     (ignored-bot . #t) (rest-host . #f)))))
+     ;; make sure the row is flushed, then restore from it
+     (check-equal? (length (load-live-matches)) 1)
+     (restore-live-matches!)
+     (sleep 0.5)
+
+     ;; the owner of a ghost seat comes back: same email, fresh socket
+     (let ((connection (connect-to-ws)))
+       (check-equal? (connect-user connection 'rest-host) 'user-reconnected)
+       (send-msg connection '(rejoin rest-host))
+       (let* ((snapshot (recv-until connection (tagged 'game-snapshot)))
+              (body (cadr snapshot)))
+         (check-equal? (cdr (assoc 'your-seat body)) 3)
+         (check-equal? (cdr (assoc 'hand-number body)) 3)
+         (check-equal? (cdr (assoc 'evens body)) -2)
+         (check-equal? (cdr (assoc 'odds body)) 1)
+         (check-equal? (cdr (assoc 'stage body)) 'bidding)
+         ;; hand 3's first four cards were dealt by the restored thread
+         (check-equal? (length (cdr (assoc 'your-hand body))) 4)
+         ;; seat 2 is a fresh bot now
+         (check-pred (λ (m) (regexp-match? #rx"^bot-" (format "~a" (caddr m))))
+                     (cdr (assoc 'members body))))
+       ;; the lone returner walks out again: no other live human → the
+       ;; restored match closes and its row is gone
+       (send-msg connection '(leave-game rest-host))
+       (recv-until connection (tagged 'game-aborted) #:attempts 30)
+       (sleep 1)
+       (check-equal? (load-live-matches) '() "closed restore leaves no row")
+       (ws-close! connection))
+     (putenv "RECONNECT-GRACE" "2"))
+
    ;; MATCH-TARGET=0 ends the match after exactly one hand, whatever the
    ;; cards: a made bid lifts the bidders to the target, a set leaves the
    ;; defenders already on it. (Target 1 would be probabilistic — under
@@ -523,6 +587,20 @@
          ;; match-over repeats the totals the final hand-result reported
          (check-equal? (cdr (assoc 'evens body)) (result-ref result 'evens))
          (check-equal? (cdr (assoc 'odds body)) (result-ref result 'odds)))
+
+       ;; the finished match is in the books: all four humans on the board
+       (sleep 0.5)
+       (let ((probe (connect-to-ws)))
+         (send-msg probe '(get-leaderboard))
+         (let* ((reply (recv-until probe (tagged 'leaderboard)))
+                (rows (cadr reply)))
+           (check-equal? (length rows) 4 "four humans played the match")
+           (let ((host-row (findf (λ (r) (equal? (format "~a" (first r))
+                                                 "target-host"))
+                                  rows)))
+             (check-pred pair? host-row "the host is on the board")
+             (check-equal? (second host-row) 1 "one match played")))
+         (ws-close! probe))
        (for-each close-scripted! players))
      (putenv "MATCH-TARGET" ""))
 
@@ -560,7 +638,9 @@
          ;; the host vanishing tears the match down (suite grace is 2s)
          (sleep 3))))
 
-   ;; stop server after tests
-   (*service*)))
+   ;; stop server after tests, release the throwaway database
+   (begin (*service*)
+          (storage-stop!)
+          (when (file-exists? test-db) (delete-file test-db)))))
 
 (run-tests game-tests)

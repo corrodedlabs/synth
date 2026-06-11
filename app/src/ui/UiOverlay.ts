@@ -7,6 +7,7 @@ export interface UiCallbacks {
   readonly onJoin: (roomName: string) => void;
   readonly onJoinLink: (playerName: string, roomName: string) => void;
   readonly onEmote: (emote: string) => void;
+  readonly onStandings: (playerName: string) => void;
   readonly onRefreshRooms: () => void;
   readonly onAddBot: () => void;
   readonly onStartGame: () => void;
@@ -82,6 +83,8 @@ export class UiOverlay {
   private emoteStrip = element("emote-strip");
   private abandonPanel = element("abandon-panel");
   private abandonText = element("abandon-text");
+  private leaderboardPanel = element("leaderboard-panel");
+  private leaderboardList = element("leaderboard-list");
   private uiLayer = element("ui-layer");
   private trumpIndicator = element("trump-indicator");
   private statusTimer: number | null = null;
@@ -143,6 +146,16 @@ export class UiOverlay {
     const helpPanel = element("help-panel");
     element("help-button").addEventListener("click", () => this.show(helpPanel));
     element("help-close").addEventListener("click", () => this.hide(helpPanel));
+
+    // the standings: ask the server, the panel opens when rows arrive
+    element("standings-button").addEventListener("click", () => {
+      this.leaderboardList.innerHTML = `<li class="leaderboard-empty">fetching…</li>`;
+      this.show(this.leaderboardPanel);
+      callbacks.onStandings(this.playerNameInput.value);
+    });
+    element("leaderboard-close").addEventListener("click", () =>
+      this.hide(this.leaderboardPanel)
+    );
 
     // an invite link's one-tap entry into the named table; the offer is
     // one-shot so a failed join (or a later return to the start screen)
@@ -447,6 +460,30 @@ export class UiOverlay {
   resetRoomBrowser() {
     this.hide(this.roomBrowser);
     this.roomList.innerHTML = "";
+  }
+
+  // Completed-match standings, best first.
+  showLeaderboard(rows: ReadonlyArray<{ name: string; played: number; won: number }>) {
+    this.leaderboardList.innerHTML = "";
+    if (rows.length === 0) {
+      this.leaderboardList.innerHTML =
+        `<li class="leaderboard-empty">no completed matches yet — finish one!</li>`;
+    }
+    rows.forEach((row, index) => {
+      const item = document.createElement("li");
+      const rank = document.createElement("span");
+      rank.className = "leaderboard-rank";
+      rank.textContent = `${index + 1}.`;
+      const name = document.createElement("span");
+      name.className = "leaderboard-name";
+      name.textContent = row.name;
+      const score = document.createElement("span");
+      score.className = "leaderboard-score";
+      score.textContent = `${row.won} of ${row.played} won`;
+      item.append(rank, name, score);
+      this.leaderboardList.append(item);
+    });
+    this.show(this.leaderboardPanel);
   }
 
   // The in-game escape hatches (leave + emotes): visible only while a

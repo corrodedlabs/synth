@@ -9,7 +9,8 @@
 (require racket/serialize)
 (require racket/match)
 
-(provide start-service)
+(provide start-service
+         restore-live-matches!)
 
 (define port 8081)
 (define idle-timeout #f)
@@ -62,7 +63,8 @@
            bot-user?
            release-user
            create-bot-user
-           convert-to-bot!)
+           convert-to-bot!
+           make-ghost-user)
 
   (require net/rfc6455)
   (require racket/async-channel)
@@ -143,6 +145,24 @@
           (connect-user connection bot-name)
           (spawn-bot bot-name connection)
           (get-user-by-email bot-name)))))
+
+  ;; a placeholder seat for a match restored from disk: registered and
+  ;; rejoinable like anyone else, but its connection starts closed, so the
+  ;; match counts the owner as inside their reconnect grace until their
+  ;; browser comes back. One shared pre-closed connection serves them all.
+  (define *ghost-connection* (box #f))
+
+  (define (ghost-connection)
+    (or (unbox *ghost-connection*)
+        (let ((c (connect-to-ws)))
+          (ws-close! c)
+          (set-box! *ghost-connection* c)
+          c)))
+
+  (define (make-ghost-user email)
+    (let ((u (user (ghost-connection) email '() (make-async-channel) "none")))
+      (hash-set! *connected-users* email u)
+      u))
 
   ;; an abandoned seat keeps its struct (the running match holds it
   ;; everywhere) but becomes a bot: new identity, new socket, new brain.
@@ -281,7 +301,8 @@
            user-in-running-game?
            rejoin-snapshot
            broadcast-emote
-           broadcast-room-list!)
+           broadcast-room-list!
+           restore-live-matches!)
 
   (require net/rfc6455)
   (require racket/async-channel)
@@ -291,6 +312,7 @@
   (require (submod ".." user))
   (require (submod ".." room))
   (require "./game.rkt")
+  (require "./storage.rkt")
 
   ;; running games: room name → players in seat order
   (define *running-games* (make-hash))
@@ -704,10 +726,12 @@
              (loop)])))))
 
   ;; a match is over, won or abandoned: free the table name, the state
-  ;; views, the bots, and any seat whose owner is no longer connected
+  ;; views, the resume row on disk, the bots, and any seat whose owner is
+  ;; no longer connected
   (define (end-match! name members)
     (hash-remove! *running-games* name)
     (hash-remove! *match-states* name)
+    (clear-live-match! name)
     (forget-liveness! members)
     (for-each (λ (member)
                 (hash-remove! *last-emote* (user-email member))
@@ -716,6 +740,17 @@
                   ((ws-conn-closed? (user-connection member))
                    (remove-user (user-email member)))))
               members))
+
+  ;; everything a restart needs to pick a match back up at the top of the
+  ;; hand it was in: who sits where (and which seats are bots), the hand
+  ;; number, and the running game points
+  (define (live-snapshot room started hand evens odds members)
+    `((room . ,room)
+      (started . ,started)
+      (hand . ,hand)
+      (evens . ,evens)
+      (odds . ,odds)
+      (members . ,(map (λ (m) (cons (user-email m) (bot-user? m))) members))))
 
   (define start-game
     (λ (room-name)
@@ -737,73 +772,127 @@
             (hash-set! *running-games* name members)
             (close-room! room)
             (broadcast-room-list!)
-            (let ((state (match-state members 1 0 0 'bidding #f #f #f #f
-                                      '() 0 (fresh-seat-alist)
-                                      (fresh-seat-alist) #f #f)))
-              (hash-set! *match-states* name state)
-              ;; a lost seat anywhere in the match (a leaver, or a dropped
-              ;; player whose grace ran out) abandons it: free the table
-              ;; and the bots, tell the surviving humans
-              (with-handlers ((exn:fail?
-                               (λ (e)
-                                 (displayln (format "game ~a aborted: ~a"
-                                                    name (exn-message e)))
-                                 (end-match! name members)
-                                 (for-each (λ (member)
-                                             (unless (bot-user? member)
-                                               (send-datum member
-                                                           `(game-aborted ,name))))
-                                           members)
-                                 'game-aborted)))
-                ;; members already includes the host. Hand N's opener and
-                ;; first leader sit at seat (N-1) mod 4, so the deal rotates.
-                (let match-loop ((hand-number 1) (evens 0) (odds 0))
-                  (check-liveness! members)
-                  ;; the shared user structs carry live hands: empty them
-                  ;; and reset the state view for the new hand
-                  (for-each (λ (member) (set-user-hand! member '())) members)
-                  (let ((first-seat (remainder (sub1 hand-number) +max-players+))
-                        (target (match-target)))
-                    (reset-state-for-hand! state hand-number first-seat)
-                    (let-values (((points-won bid-value bid-winner)
-                                  (play-one-hand members first-seat state)))
-                      (match (score-game points-won bid-value bid-winner)
-                        [(list made? _ _)
-                         (let* ((delta (hand-game-points bid-value made?))
-                                (evens (if (even? bid-winner) (+ evens delta) evens))
-                                (odds (if (odd? bid-winner) (+ odds delta) odds))
-                                (result-body `((hand . ,hand-number)
-                                               (bidder . ,bid-winner)
-                                               (bid . ,bid-value)
-                                               (made . ,made?)
-                                               (delta . ,delta)
-                                               (evens . ,evens)
-                                               (odds . ,odds)
-                                               (target . ,target))))
-                           (set-match-state-evens! state evens)
-                           (set-match-state-odds! state odds)
-                           (set-match-state-stage! state 'between-hands)
-                           (set-match-state-last-result! state result-body)
-                           ;; drain the deciding seat *before* the broadcast:
-                           ;; a genuine next-hand can only be sent after
-                           ;; hand-result lands, so anything in there is stale
-                           (drain-comm! (acting-host members host))
-                           (send-datum-to-all members `(hand-result ,result-body))
-                           (cond
-                             [(match-winner evens odds #:target target)
-                              => (λ (winner)
-                                   (send-datum-to-all members
-                                                      `(match-over ((winner . ,winner)
-                                                                    (evens . ,evens)
-                                                                    (odds . ,odds)
-                                                                    (hands . ,hand-number))))
-                                   (end-match! name members)
-                                   'game-started)]
-                             [else
-                              (wait-for-next-hand host members)
-                              (match-loop (add1 hand-number) evens odds)]))]))))))]
+            (run-match name host members)]
 
            [else 'room-not-ready])])))
+
+  ;; plays a whole match on the current thread: deal/bid/play hand after
+  ;; hand until a team reaches the target. A resume row is persisted before
+  ;; every hand, so a match interrupted by a crash or deploy restarts at
+  ;; the top of the hand it was in (the partial hand is re-dealt). A lost
+  ;; seat goes through the abandonment flow; an unresolved loss raises
+  ;; into the abort handler here.
+  (define (run-match name host members
+                     #:first-hand (first-hand 1)
+                     #:evens (evens0 0)
+                     #:odds (odds0 0)
+                     #:started-at (started-at (current-seconds)))
+    (let ((state (match-state members first-hand evens0 odds0 'bidding
+                              #f #f #f #f '() 0 (fresh-seat-alist)
+                              (fresh-seat-alist) #f #f)))
+      (hash-set! *match-states* name state)
+      (with-handlers ((exn:fail?
+                       (λ (e)
+                         (displayln (format "game ~a aborted: ~a"
+                                            name (exn-message e)))
+                         (end-match! name members)
+                         (for-each (λ (member)
+                                     (unless (bot-user? member)
+                                       (send-datum member
+                                                   `(game-aborted ,name))))
+                                   members)
+                         'game-aborted)))
+        ;; members already includes the host. Hand N's opener and
+        ;; first leader sit at seat (N-1) mod 4, so the deal rotates.
+        (let match-loop ((hand-number first-hand) (evens evens0) (odds odds0))
+          (save-live-match! name (live-snapshot name started-at hand-number
+                                                evens odds members))
+          (check-liveness! members)
+          ;; the shared user structs carry live hands: empty them
+          ;; and reset the state view for the new hand
+          (for-each (λ (member) (set-user-hand! member '())) members)
+          (let ((first-seat (remainder (sub1 hand-number) +max-players+))
+                (target (match-target)))
+            (reset-state-for-hand! state hand-number first-seat)
+            (let-values (((points-won bid-value bid-winner)
+                          (play-one-hand members first-seat state)))
+              (match (score-game points-won bid-value bid-winner)
+                [(list made? _ _)
+                 (let* ((delta (hand-game-points bid-value made?))
+                        (evens (if (even? bid-winner) (+ evens delta) evens))
+                        (odds (if (odd? bid-winner) (+ odds delta) odds))
+                        (result-body `((hand . ,hand-number)
+                                       (bidder . ,bid-winner)
+                                       (bid . ,bid-value)
+                                       (made . ,made?)
+                                       (delta . ,delta)
+                                       (evens . ,evens)
+                                       (odds . ,odds)
+                                       (target . ,target))))
+                   (set-match-state-evens! state evens)
+                   (set-match-state-odds! state odds)
+                   (set-match-state-stage! state 'between-hands)
+                   (set-match-state-last-result! state result-body)
+                   ;; persist the hand's outcome before anyone sees it: a
+                   ;; crash at the gate must resume AFTER this hand, not
+                   ;; replay a result the table already watched
+                   (save-live-match! name (live-snapshot name started-at
+                                                         (add1 hand-number)
+                                                         evens odds members))
+                   ;; drain the deciding seat *before* the broadcast:
+                   ;; a genuine next-hand can only be sent after
+                   ;; hand-result lands, so anything in there is stale
+                   (drain-comm! (acting-host members host))
+                   (send-datum-to-all members `(hand-result ,result-body))
+                   (cond
+                     [(match-winner evens odds #:target target)
+                      => (λ (winner)
+                           (send-datum-to-all members
+                                              `(match-over ((winner . ,winner)
+                                                            (evens . ,evens)
+                                                            (odds . ,odds)
+                                                            (hands . ,hand-number))))
+                           ;; the books: who finished the match, who won
+                           (record-match! name started-at hand-number winner
+                                          evens odds (map user-email members))
+                           (end-match! name members)
+                           'game-started)]
+                     [else
+                      (wait-for-next-hand host members)
+                      (match-loop (add1 hand-number) evens odds)]))])))))))
+
+  ;; boot-time recovery: every resume row becomes a running match again.
+  ;; Human seats come back as ghosts — registered, inside their reconnect
+  ;; grace, claimable by the auto-rejoining browser that owns the email —
+  ;; and bot seats get fresh bots. A match nobody reclaims aborts itself
+  ;; when the ghosts' grace runs out.
+  (define (restore-live-matches!)
+    (for-each
+     (λ (snapshot)
+       (with-handlers ((exn:fail?
+                        (λ (e)
+                          (displayln (format "restore failed: ~a"
+                                             (exn-message e))))))
+         (let* ((room (cdr (assq 'room snapshot)))
+                (started (cdr (assq 'started snapshot)))
+                (hand-number (cdr (assq 'hand snapshot)))
+                (evens (cdr (assq 'evens snapshot)))
+                (odds (cdr (assq 'odds snapshot)))
+                (members (map (λ (seat)
+                                (if (cdr seat)
+                                    (create-bot-user)
+                                    (make-ghost-user (car seat))))
+                              (cdr (assq 'members snapshot)))))
+           (displayln (format "restoring match ~a at hand ~a (~a — ~a)"
+                              room hand-number evens odds))
+           (hash-set! *running-games* room members)
+           (thread (λ ()
+                     (run-match room (last members) members
+                                #:first-hand hand-number
+                                #:evens evens
+                                #:odds odds
+                                #:started-at started))))))
+     (load-live-matches)))
 
   ;; everything a reconnecting client needs to redraw mid-match; #f fields
   ;; mean "not known/decided yet". Trump stays hidden from everyone but the
@@ -857,6 +946,7 @@
 (require 'user)
 (require 'room)
 (require 'game)
+(require "./storage.rkt")
 
 ;; home for threads that outlive the connection whose message spawned them
 (define *game-custodian* (make-custodian))
@@ -1024,6 +1114,9 @@
 ;;   to the sender's table; ids outside the fixed vocabulary are dropped and
 ;;   senders are rate-limited
 ;;
+;; (get-leaderboard) => (leaderboard ((name played won) ...)) from the
+;;   match history (humans only; an abandoned seat's bot earns nothing)
+;;
 (define (dispatch connection message)
   (with-handlers ((exn:fail? (λ (e)
                                (displayln (format "dispatch error: ~a" (exn-message e)))
@@ -1101,6 +1194,9 @@
 
       ((emote) (broadcast-emote (cadr message) (caddr message)))
 
+      ;; ((name played won) ...) from completed matches, best first
+      ((get-leaderboard) `(leaderboard ,(leaderboard 10)))
+
       ;; catch all
       (else 'invalid-request)))))
 
@@ -1116,7 +1212,12 @@
 
 
 (module+ main
+  ;; matches survive restarts: open the book, start serving, then put
+  ;; every interrupted match back on the table (its players' browsers
+  ;; auto-rejoin within the grace window)
+  (storage-start! (or (getenv "GAME-DB") "game.db"))
   (define stop-service (start-service))
+  (restore-live-matches!)
   (printf "Server running. Hit enter to stop service.\n")
   (let ((line (read-line)))
     ;; under a container/supervisor there is no stdin: serve forever

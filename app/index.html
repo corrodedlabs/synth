@@ -461,6 +461,64 @@
         top: 11%;
         max-width: 420px;
       }
+      #standings-button {
+        margin-top: 22px;
+        font-size: 17px !important;
+        padding: 2px 2px !important;
+        border: none !important;
+        border-bottom: 1px solid rgba(59, 47, 42, 0.35) !important;
+        border-radius: 0 !important;
+        letter-spacing: 0.8px !important;
+        opacity: 0.6;
+      }
+      #standings-button:hover {
+        opacity: 1;
+        background: transparent !important;
+      }
+      #leaderboard-panel {
+        top: 50%;
+        transform: translate(-50%, -50%);
+        min-width: 340px;
+        z-index: 31; /* above the start overlay */
+      }
+      #leaderboard-panel .panel-title {
+        font-size: 28px;
+        margin-bottom: 12px;
+      }
+      #leaderboard-list {
+        list-style: none;
+        margin: 0 0 16px;
+        padding: 0;
+        text-align: left;
+      }
+      #leaderboard-list li {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        font-size: 20px;
+        padding: 5px 2px;
+        border-bottom: 1px solid rgba(59, 47, 42, 0.12);
+      }
+      #leaderboard-list li:last-child {
+        border-bottom: none;
+      }
+      #leaderboard-list .leaderboard-rank {
+        opacity: 0.5;
+        min-width: 24px;
+      }
+      #leaderboard-list .leaderboard-name {
+        flex: 1;
+        letter-spacing: 0.4px;
+      }
+      #leaderboard-list .leaderboard-score {
+        opacity: 0.65;
+        font-size: 17px;
+      }
+      #leaderboard-list .leaderboard-empty {
+        opacity: 0.55;
+        font-style: italic;
+        border-bottom: none;
+      }
       #abandon-panel #abandon-text {
         font-size: 21px;
         margin-bottom: 10px;
@@ -824,6 +882,12 @@
         <button id="replace-bot" type="button">Replace with a bot</button>
         <button id="end-match" type="button">End the match</button>
       </div>
+
+      <div id="leaderboard-panel" class="panel hidden">
+        <div class="panel-title">Standings</div>
+        <ol id="leaderboard-list"></ol>
+        <button id="leaderboard-close" type="button">Close</button>
+      </div>
       <div id="help-panel" class="panel hidden">
         <div class="panel-title">Twenty-Eight</div>
         <ul id="help-rules">
@@ -883,6 +947,7 @@
           <button id="create-button" type="button">Create a table</button>
           <button id="browse-button" type="button">Join a table</button>
         </div>
+        <button id="standings-button" type="button">standings</button>
         <div id="room-browser" class="hidden">
           <div class="browser-title">Open tables</div>
           <div id="room-list"></div>

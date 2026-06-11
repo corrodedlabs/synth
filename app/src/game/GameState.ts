@@ -18,7 +18,7 @@ import {
   initialGameModel,
   isLegalPlay,
 } from "./GameModel";
-import { GameSession } from "./GameSession";
+import { GameSession, storedActiveMatch } from "./GameSession";
 import { Hand } from "./Hand";
 import { mockGameProgram } from "./MockGameProgram";
 import { PlayArea } from "./PlayArea";
@@ -71,6 +71,7 @@ export class GameState {
       onJoin: (roomName) => this.session?.join(roomName),
       onJoinLink: (name, roomName) => this.joinTable(name, roomName),
       onEmote: (emote) => this.session?.sendEmote(emote),
+      onStandings: (name) => this.showStandings(name),
       onRefreshRooms: () => this.session?.refreshRooms(),
       onAddBot: () => this.session?.addBot(),
       onStartGame: () => this.session?.startGame(),
@@ -214,9 +215,15 @@ export class GameState {
     this.startSession(playerName, "join", roomName);
   }
 
+  // The standings panel: ask over the live session, or connect for it.
+  public showStandings(playerName: string) {
+    if (this.session) this.session.requestLeaderboard();
+    else this.startSession(playerName, "standings");
+  }
+
   private startSession(
     playerName: string,
-    intent: "create-room" | "browse-rooms" | "rejoin" | "join",
+    intent: "create-room" | "browse-rooms" | "rejoin" | "join" | "standings",
     joinRoom?: string,
     rejoinEmail?: string
   ) {
@@ -235,6 +242,7 @@ export class GameState {
         status: (text) => this.ui.status(text),
         rooms: (rooms) => this.ui.showRooms(rooms),
         emote: (seat, emote) => this.showEmote(seat, emote),
+        leaderboard: (rows) => this.ui.showLeaderboard(rows),
         seatAbandoned: (name) => this.ui.showAbandonPanel(name),
         seatResolved: () => {
           this.ui.hideAbandonPanel();
@@ -283,6 +291,21 @@ export class GameState {
 
   public getSession(): GameSession | null {
     return this.session;
+  }
+
+  // The connection died while a match of ours is still stored (a deploy,
+  // a server blip, flaky wifi): keep trying to rejoin every few seconds.
+  // The loop ends by itself — a successful snapshot restores the table,
+  // and a dead match answers no-running-game, which clears the stored key.
+  private scheduleRejoinRetry() {
+    const interrupted = storedActiveMatch();
+    if (!interrupted) return;
+    this.ui.status("Connection lost — trying to rejoin…");
+    window.setTimeout(() => {
+      if (this.session === null && storedActiveMatch() !== null) {
+        this.rejoinMatch(interrupted.name, interrupted.email);
+      }
+    }, 3000);
   }
 
   // Walk away from a running match: tell the server (an explicit leave
@@ -395,6 +418,7 @@ export class GameState {
           this.ui.setLeaveMatchVisible(false);
           this.ui.resetRoomBrowser();
           this.ui.showStartScreen();
+          this.scheduleRejoinRetry();
         }
         break;
 

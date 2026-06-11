@@ -25,10 +25,14 @@ export interface SessionCallbacks {
   readonly seatAbandoned: (name: string) => void;
   // the abandoned seat got a bot (or the decision resolved elsewhere)
   readonly seatResolved: () => void;
+  // the standings arrived
+  readonly leaderboard: (
+    rows: ReadonlyArray<{ name: string; played: number; won: number }>
+  ) => void;
 }
 
 // What the session should do once the socket is up.
-export type SessionIntent = "create-room" | "browse-rooms" | "rejoin" | "join";
+export type SessionIntent = "create-room" | "browse-rooms" | "rejoin" | "join" | "standings";
 
 // Identity persists across refreshes so a reconnecting page presents the
 // same email and gets its seat back; the active-match key tells the next
@@ -258,6 +262,10 @@ export class GameSession {
     this.socket.send({ _tag: "NextHand", email: this.email });
   }
 
+  requestLeaderboard() {
+    this.socket?.send({ _tag: "GetLeaderboard" });
+  }
+
   // Answer the abandon gate: keep playing with a bot, or end the match.
   resolveAbandon(choice: "replace" | "close") {
     if (!this.socket) return;
@@ -347,6 +355,9 @@ export class GameSession {
       } else if (intent === "join" && joinRoom) {
         // an invite link: go straight to that table
         this.join(joinRoom);
+      } else if (intent === "standings") {
+        this.callbacks.status("");
+        this.requestLeaderboard();
       } else {
         this.refreshRooms();
       }
@@ -613,6 +624,10 @@ export class GameSession {
           this.callbacks.seatResolved();
           return false;
         }
+
+        case "Leaderboard":
+          this.callbacks.leaderboard(event.rows);
+          return false;
 
         case "NoRunningGame":
           // the match we tried to rejoin is gone — back to a fresh start

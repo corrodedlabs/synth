@@ -6,3 +6,6 @@ app/dist
 # Local Netlify folder
 .netlify
 .playwright-mcp/
+game.db
+game.db-shm
+game.db-wal

@@ -162,6 +162,14 @@ export type ServerEvent =
     }
   | { readonly _tag: "GameSnapshot"; readonly snapshot: MatchSnapshot }
   | { readonly _tag: "NoRunningGame" }
+  | {
+      readonly _tag: "Leaderboard";
+      readonly rows: ReadonlyArray<{
+        readonly name: string;
+        readonly played: number;
+        readonly won: number;
+      }>;
+    }
   | { readonly _tag: "ServerError"; readonly message: string }
   | { readonly _tag: "Disconnected" }
   | { readonly _tag: "Ignored"; readonly raw: string };
@@ -348,6 +356,19 @@ export function decodeServerExpr(expr: SExpr, trimmed = writeSExpr(expr)): Serve
 
     case "no-running-game":
       return { _tag: "NoRunningGame" };
+
+    case "leaderboard": {
+      const body = rest[0];
+      if (!Array.isArray(body)) return { _tag: "Ignored", raw: trimmed };
+      const rows = body.flatMap((entry) => {
+        if (!Array.isArray(entry) || entry.length < 3) return [];
+        const [name, played, won] = entry;
+        if (!(typeof name === "string" || name instanceof Sym)) return [];
+        if (typeof played !== "number" || typeof won !== "number") return [];
+        return [{ name: memberName(name), played, won }];
+      });
+      return { _tag: "Leaderboard", rows };
+    }
 
     case "emote-played": {
       const seat = rest[0];
@@ -542,7 +563,8 @@ export type ClientCommand =
   | { readonly _tag: "Rejoin"; readonly email: string }
   | { readonly _tag: "SendEmote"; readonly email: string; readonly emote: string }
   | { readonly _tag: "ReplaceWithBot"; readonly email: string }
-  | { readonly _tag: "CloseGame"; readonly email: string };
+  | { readonly _tag: "CloseGame"; readonly email: string }
+  | { readonly _tag: "GetLeaderboard" };
 
 export function encodeCommand(command: ClientCommand): string {
   switch (command._tag) {
@@ -593,5 +615,7 @@ export function encodeCommand(command: ClientCommand): string {
       return writeSExpr([sym("replace-with-bot"), command.email]);
     case "CloseGame":
       return writeSExpr([sym("close-game"), command.email]);
+    case "GetLeaderboard":
+      return writeSExpr([sym("get-leaderboard")]);
   }
 }

@@ -180,6 +180,18 @@ describe("decodeServerEvent", () => {
     });
   });
 
+  it("decodes the leaderboard", () => {
+    expect(decodeServerEvent('(leaderboard (("asha" 3 2) ("badri" 3 1)))')).toEqual({
+      _tag: "Leaderboard",
+      rows: [
+        { name: "asha", played: 3, won: 2 },
+        { name: "badri", played: 3, won: 1 },
+      ],
+    });
+    expect(decodeServerEvent("(leaderboard ())")).toEqual({ _tag: "Leaderboard", rows: [] });
+    expect(encodeCommand({ _tag: "GetLeaderboard" })).toBe("(get-leaderboard)");
+  });
+
   it("decodes the abandonment flow", () => {
     expect(decodeServerEvent('(seat-abandoned 2 "a@x")')).toEqual({
       _tag: "SeatAbandoned",

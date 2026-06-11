@@ -23,8 +23,10 @@ External repositories may be vendored under `repos/` for agent reference.
 - `racket server.rkt --port 9000` — custom port
 - `raco test game.rkt` — run game-logic unit tests (rackunit submodule)
 - `raco test client.rkt` — run bot-heuristic unit tests
+- `raco test storage.rkt` — run persistence/leaderboard unit tests
 - `raco test -t tests.rkt` — run integration tests
 - `racket client.rkt` — run bot simulation helpers
+- `GAME-DB` env sets the SQLite path (default `game.db`; gitignored)
 
 ### Frontend (from `app/`)
 - `npm run dev` — Vite dev server with HMR
@@ -78,6 +80,9 @@ suites, headless — on each push.
    - `test-multi-tables.mjs` — several concurrent tables, room browser, join.
    - `test-mobile.mjs` — phone viewport (390×844, touch emulation): panels and
      hand must fit the screen, full hand played with real taps.
+   - `test-restart.mjs` — LOCAL ONLY (not in CI: it kills and respawns the
+     dev game server): proves a match survives a restart — the page
+     auto-rejoins the restored match with its score carried.
    - All scripts honour `HEADED=1`. Screenshots land in `/tmp/game-shots*`;
      scripts exit non-zero on console errors. Any new test script must follow
      the same pattern (`headless: !process.env.HEADED`).
@@ -117,6 +122,16 @@ Three main files with clear responsibilities:
   - **User module**: `user` struct (connection, email, hand, comm-channel, pic-url), global `*connected-users*` hash
   - **Room module**: `game-room` serializable struct (host, name, members), global `*game-rooms*` hash keyed by host email
   - **Game module**: orchestrates a whole match per table — hand N's opener/leader is seat (N−1) mod 4, `hand-result` broadcasts game points after every hand, the game thread then blocks until the acting host sends `(next-hand <email>)`, and `match-over` ends it (target 6; the `MATCH-TARGET` env var shortens matches in tests). A dropped player keeps their seat for `RECONNECT-GRACE` seconds (default 45): `connect-user` with the same email rebinds the seat's socket, `(rejoin <email>)` returns a `game-snapshot` built from the live `match-state` shadow the game thread maintains, and `player-disconnected`/`player-reconnected` keep the table informed. A seat lost for good (grace expiry or `(leave-game <email>)`) goes to the abandonment gate while other humans remain: `seat-abandoned` is broadcast and the survivors answer `(replace-with-bot …)` — `convert-to-bot!` re-identifies the seat's shared user struct in place, re-deals it its hand, and re-asks any pending request — or `(close-game …)` → `game-aborted`. The last human leaving (or a dead bot) closes the match. Room changes push `(active-rooms …)` to every connected, unseated user so table lists stay live. Spawns threads for long-running game operations, uses Racket channels for async player communication
+
+- **`storage.rkt`** — SQLite persistence (Racket `db` lib, one worker thread
+  fed by an async-channel; every call no-ops gracefully when storage is
+  off). Three tables: `live_matches` (one resume row per running match,
+  written before every hand and at each hand's end — a crash resumes at the
+  top of the interrupted hand), `matches` (history), `players` (leaderboard;
+  keyed on the stable id suffix of the email so renames keep history; bots
+  never recorded). `restore-live-matches!` at boot turns rows back into
+  running matches: human seats become rejoinable "ghosts" inside their
+  reconnect grace, bot seats get fresh bots.
 
 - **`client.rkt`** — Bot client. `client-lambda` is the AI loop; per-hand memory lives in the `state` struct (hand, known trump, exposure, cards seen, must-trump obligation). The heuristics are pure, unit-tested helpers: `bid-appetite`/`choose-bid` (expected team points ≈ 14 + P/2 from the first four cards, long-suit bonus, never past 21; the opener always bids), `choose-trump-suit` (longest suit, points break ties), and `choose-play` (cheapest sufficient winner, feed a winning partner, dump low value saving tens, ruff rich tricks, call the exposure when void on a worthwhile trick, lead boss cards tracked against `seen`). `simulate-game` runs a full 4-player game for testing.
 

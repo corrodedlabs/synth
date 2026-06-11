@@ -28,9 +28,19 @@ fly deploy
 
 Notes:
 
-- **Exactly one machine.** All state (users, rooms, running games) is in
+- **Exactly one machine.** Hot state (users, rooms, running games) is in
   process memory. `fly.toml` pins `min_machines_running = 1` and
   `auto_stop_machines = "off"`; do not `fly scale count 2`.
+- **SQLite on a volume.** Running matches and match history persist to
+  `GAME-DB` (`/data/game.db` in prod — `[env]` + `[mounts]` in `fly.toml`).
+  One-time setup: `fly volumes create data --size 1 --region bom`. On boot
+  the server restores every interrupted match: human seats wait inside the
+  reconnect grace (their browsers auto-rejoin; the interrupted hand is
+  re-dealt with the match score carried) and bot seats get fresh bots, so
+  deploys and crashes no longer kill games. A restored match nobody
+  reclaims aborts itself when the grace runs out. The same database feeds
+  the start screen's standings panel (humans only, keyed on the stable
+  browser id so renames keep history).
 - The app name in `fly.toml` (`twenty-eight-game`) must be globally unique on
   fly — change it if taken, and update `VITE_SERVER_URL` to match.
 - Verify after deploy: `fly logs` should show `port is 8080`, and
