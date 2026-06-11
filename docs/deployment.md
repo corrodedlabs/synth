@@ -94,7 +94,14 @@ cd app && VITE_SERVER_URL=ws://localhost:8080/test npm run build && npm run prev
   all four seats); only when the grace expires does it abort the game
   (`game-aborted`), release the bots, and return the remaining humans to
   the start screen.
-- Leaving deliberately skips the grace: the in-game "leave match" corner
-  button (two-step confirm) sends `(leave-game <email>)`, which aborts the
-  match for the whole table at once, then resets the leaver's page to a
-  working start screen.
+- Abandonment (a deliberate "leave match", or a reconnect grace running
+  out) no longer kills the match outright when other humans remain: the
+  table is told who abandoned (`seat-abandoned`) and the survivors choose —
+  replace the seat with a bot (`replace-with-bot`; the seat keeps its hand,
+  the match plays on, and host duties pass to the next human if it was the
+  host) or end the match (`close-game` → `game-aborted`). When the last
+  human leaves, the match closes by itself. The leaver's page resets to a
+  working start screen either way.
+- The "open tables" list is live: every room change is pushed
+  (`active-rooms`) to all connected players who are not seated anywhere, so
+  browsers never show stale tables.

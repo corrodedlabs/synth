@@ -180,6 +180,20 @@ describe("decodeServerEvent", () => {
     });
   });
 
+  it("decodes the abandonment flow", () => {
+    expect(decodeServerEvent('(seat-abandoned 2 "a@x")')).toEqual({
+      _tag: "SeatAbandoned",
+      seat: 2,
+      email: "a@x",
+    });
+    expect(decodeServerEvent('(seat-replaced 2 bot-7 (bot-3 bot-2 bot-7 "host@x"))')).toEqual({
+      _tag: "SeatReplaced",
+      seat: 2,
+      email: "bot-7",
+      members: ["bot-3", "bot-2", "bot-7", "host@x"],
+    });
+  });
+
   it("decodes the reconnection flow", () => {
     expect(decodeServerEvent('(player-disconnected "a@x" 45)')).toEqual({
       _tag: "PlayerDisconnected",
@@ -311,6 +325,8 @@ describe("encodeCommand", () => {
     expect(encodeCommand({ _tag: "SendEmote", email: "a@b", emote: "fire" })).toBe(
       '(emote "a@b" fire)'
     );
+    expect(encodeCommand({ _tag: "ReplaceWithBot", email: "a@b" })).toBe('(replace-with-bot "a@b")');
+    expect(encodeCommand({ _tag: "CloseGame", email: "a@b" })).toBe('(close-game "a@b")');
   });
 
   it("uses sym helper consistently", () => {

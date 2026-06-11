@@ -380,8 +380,7 @@
         pointer-events: none;
       }
       #sound-button,
-      #leave-match,
-      #emote-button {
+      #leave-match {
         pointer-events: auto;
         font-family: inherit;
         font-size: 17px;
@@ -395,9 +394,34 @@
         opacity: 0.6;
       }
       #sound-button:hover,
-      #leave-match:hover,
+      #leave-match:hover {
+        opacity: 1;
+      }
+      /* the emote trigger floats at the right edge, beside the hand, where
+         a thumb naturally rests — always visible during a match */
+      #emote-button {
+        position: absolute;
+        right: 22px;
+        bottom: 150px;
+        z-index: 30;
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        pointer-events: auto;
+        font-family: inherit;
+        font-size: 26px;
+        line-height: 1;
+        color: #3b2f2a;
+        background: rgba(253, 250, 243, 0.92);
+        border: 1px solid rgba(59, 47, 42, 0.35);
+        cursor: pointer;
+        box-shadow: 0 6px 18px rgba(59, 47, 42, 0.16);
+        opacity: 0.85;
+        transition: transform 120ms ease, opacity 120ms ease;
+      }
       #emote-button:hover {
         opacity: 1;
+        transform: scale(1.08);
       }
       /* armed = one more click abandons the match for everyone */
       #leave-match.armed {
@@ -407,30 +431,44 @@
       }
       #emote-strip {
         position: absolute;
-        bottom: 52px;
-        left: 16px;
+        right: 16px;
+        bottom: 208px;
         z-index: 32;
         display: flex;
-        gap: 4px;
+        flex-direction: column;
+        gap: 2px;
         pointer-events: auto;
-        background: rgba(253, 250, 243, 0.95);
-        border: 1px solid rgba(59, 47, 42, 0.2);
-        border-radius: 26px;
-        padding: 6px 10px;
-        box-shadow: 0 8px 22px rgba(59, 47, 42, 0.14);
+        background: rgba(253, 250, 243, 0.96);
+        border: 1px solid rgba(59, 47, 42, 0.22);
+        border-radius: 30px;
+        padding: 9px 6px;
+        box-shadow: 0 10px 26px rgba(59, 47, 42, 0.18);
       }
       #emote-strip button {
-        font-size: 26px;
+        font-size: 27px;
         line-height: 1;
         background: transparent;
         border: none;
-        padding: 4px 6px;
+        padding: 5px 6px;
         cursor: pointer;
         border-radius: 50%;
         transition: transform 120ms ease;
       }
       #emote-strip button:hover {
-        transform: scale(1.2);
+        transform: scale(1.22);
+      }
+      #abandon-panel {
+        top: 11%;
+        max-width: 420px;
+      }
+      #abandon-panel #abandon-text {
+        font-size: 21px;
+        margin-bottom: 10px;
+        opacity: 0.85;
+      }
+      #abandon-panel #end-match {
+        color: #a33c2e;
+        border-color: rgba(163, 60, 46, 0.45);
       }
       .emote-bubble {
         position: absolute;
@@ -680,21 +718,33 @@
           gap: 12px;
         }
         #sound-button,
-        #leave-match,
-        #emote-button {
+        #leave-match {
           font-size: 15px;
           padding: 6px 2px;
         }
+        /* free space between the fan's edge and the corner row */
+        #emote-button {
+          right: calc(12px + env(safe-area-inset-right));
+          bottom: calc(72px + env(safe-area-inset-bottom));
+          width: 46px;
+          height: 46px;
+          font-size: 24px;
+        }
         #emote-strip {
-          bottom: calc(52px + env(safe-area-inset-bottom));
-          left: 10px;
+          right: calc(10px + env(safe-area-inset-right));
+          bottom: calc(126px + env(safe-area-inset-bottom));
         }
         #emote-strip button {
-          font-size: 24px;
+          font-size: 25px;
           padding: 6px 5px;
         }
         .emote-bubble {
           font-size: 34px;
+        }
+        #abandon-panel {
+          top: 16%;
+          width: 86vw;
+          box-sizing: border-box;
         }
         .seat-name-label {
           font-size: 15px;
@@ -764,10 +814,16 @@
       <button id="help-button" type="button">how to play</button>
       <div id="corner-actions">
         <button id="sound-button" type="button">sound on</button>
-        <button id="emote-button" type="button" class="hidden">emote</button>
         <button id="leave-match" type="button" class="hidden">leave match</button>
       </div>
+      <button id="emote-button" type="button" class="hidden" title="send an emote">☺</button>
       <div id="emote-strip" class="hidden"></div>
+
+      <div id="abandon-panel" class="panel hidden">
+        <div id="abandon-text"></div>
+        <button id="replace-bot" type="button">Replace with a bot</button>
+        <button id="end-match" type="button">End the match</button>
+      </div>
       <div id="help-panel" class="panel hidden">
         <div class="panel-title">Twenty-Eight</div>
         <ul id="help-rules">

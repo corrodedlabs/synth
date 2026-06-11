@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CardModel,
   GameModel,
+  actingHostEmail,
   canExposeTrump,
   gameReducer,
   initialGameModel,
@@ -101,6 +102,20 @@ describe("canExposeTrump", () => {
         })
       )
     ).toBe(false); // leaders cannot call
+  });
+});
+
+describe("actingHostEmail", () => {
+  it("keeps the duty with the original (last) host while human", () => {
+    expect(actingHostEmail(["bot-2", "bot-1", "guest@x", "host@x"])).toBe("host@x");
+  });
+
+  it("passes the duty to the first human when the host seat is botted", () => {
+    expect(actingHostEmail(["bot-2", "guest@x", "other@x", "bot-7"])).toBe("guest@x");
+  });
+
+  it("is nobody at an all-bot table", () => {
+    expect(actingHostEmail(["bot-1", "bot-2", "bot-3", "bot-4"])).toBeNull();
   });
 });
 

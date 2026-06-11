@@ -330,6 +330,17 @@ export function isLegalPlay(model: GameModel, card: CardModel): boolean {
   return !model.hand.some((handCard) => handCard.suit === request.firstSuit);
 }
 
+// Host duties mid-match (the between-hands deal button) belong to the
+// original host — the last member in seat order — while their seat is
+// still human; a botted host seat passes the duty to the first human.
+// Mirrors the server's acting-host.
+export function actingHostEmail(members: readonly string[]): string | null {
+  const isHuman = (member: string) => !/^bot-\d+$/.test(member);
+  const last = members[members.length - 1];
+  if (last !== undefined && isHuman(last)) return last;
+  return members.find(isHuman) ?? null;
+}
+
 // Expose-trump is offered when we cannot follow suit and trump is still hidden.
 export function canExposeTrump(model: GameModel): boolean {
   const request = model.pendingRequest;

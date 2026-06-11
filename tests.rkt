@@ -201,21 +201,33 @@
 
    ;; test cases
    (test-begin
-     (let ((connection (connect-to-ws)))
+     (let ((connection (connect-to-ws))
+           (watcher (connect-to-ws)))
        ;; replies are tagged: (active-rooms <rooms>)
        (check-pred null? (cadr (get-active-rooms connection)))
 
        (connect-user connection user1-id)
+       ;; a connected user on the start screen gets the table list pushed
+       ;; whenever it changes — no Refresh clicks needed
+       (connect-user watcher 'watcher-email)
 
        (check-equal? (create-room connection user1-id room-name)
                      'room-created)
+       (let ((push (recv-until watcher (tagged 'active-rooms))))
+         (check-equal? (length (cadr push)) 1 "creation reaches the watcher"))
 
        (let ((rooms (cadr (get-active-rooms connection))))
          (check-equal? (length rooms) 1))
 
        ;; hosting user leaves: the table must not outlive them and pollute
-       ;; the room list the later tests assert on
+       ;; the room list the later tests assert on — and the watcher learns
+       ;; about that live, too
        (ws-close! connection)
+       (let ((push (recv-until watcher (λ (m)
+                                         (and ((tagged 'active-rooms) m)
+                                              (null? (cadr m)))))))
+         (check-pred null? (cadr push) "the closed table vanishes live"))
+       (ws-close! watcher)
        (sleep 0.5)))
 
    ;; match flow: per-hand game points accumulate and the deal rotates
@@ -298,7 +310,8 @@
        (for-each close-scripted! players)
        (sleep 1.5)))
 
-   ;; a guest disconnecting at the between-hands gate aborts the match
+   ;; a guest dead past their grace at the between-hands gate: the table is
+   ;; told who abandoned, and choosing to end the match aborts it
    (test-begin
      (let* ((players (seat-scripted-table 'abort-room
                                           '(abort-host abort-j1 abort-j2 abort-j3)))
@@ -307,6 +320,11 @@
        (send-msg (scripted-connection host) '(start-game abort-room))
        (await guest (λ (events) (nth-hand-result events 1)) #:label 'abort-hand-1)
        (close-scripted! guest)
+       (check-equal? (await host (λ (events)
+                                   (findf (tagged 'seat-abandoned) events))
+                            #:label 'guest-abandons)
+                     '(seat-abandoned 0 abort-j3))
+       (send-msg (scripted-connection host) '(close-game abort-host))
        (check-pred pair?
                    (await host (λ (events)
                                  (findf (tagged 'game-aborted) events))
@@ -318,10 +336,9 @@
        (for-each close-scripted! (remove guest players))
        (sleep 1.5)))
 
-   ;; the HOST disconnecting at the gate must abort too — regression test:
-   ;; the match thread is spawned while dispatching the host's start-game,
-   ;; so without a detached custodian the host's connection teardown would
-   ;; silently kill it and strand the guests at the gate forever
+   ;; the HOST dead past grace at the gate — regression for the custodian
+   ;; teardown (the match thread is spawned from the host's dispatch) and
+   ;; now also for the abandonment flow reaching the guests
    (test-begin
      (let* ((players (seat-scripted-table 'host-abort-room
                                           '(habort-host habort-j1 habort-j2 habort-j3)))
@@ -330,6 +347,11 @@
        (send-msg (scripted-connection host) '(start-game host-abort-room))
        (await host (λ (events) (nth-hand-result events 1)) #:label 'habort-hand-1)
        (close-scripted! host)
+       (check-equal? (await guest (λ (events)
+                                    (findf (tagged 'seat-abandoned) events))
+                            #:label 'host-abandons)
+                     '(seat-abandoned 3 habort-host))
+       (send-msg (scripted-connection guest) '(close-game habort-j3))
        (check-pred pair?
                    (await guest (λ (events)
                                   (findf (tagged 'game-aborted) events))
@@ -337,9 +359,10 @@
        (for-each close-scripted! (remove host players))
        (sleep 1.5)))
 
-   ;; leaving (= closing the socket) while someone ELSE is being waited on
-   ;; must still abort promptly: every wait watches all four seats, not
-   ;; just the player whose turn it is
+   ;; the full abandonment arc, while someone ELSE is being waited on: the
+   ;; drop is noticed promptly, a bot replaces the seat on request, the
+   ;; hand plays out, and a second abandonment answered with close-game
+   ;; ends the match for everyone
    (test-begin
      (let* ((players (seat-scripted-table
                       'leave-room
@@ -353,12 +376,57 @@
        (send-msg (scripted-connection host) '(start-game leave-room))
        (await afk (λ (events) (findf (tagged 'request-bid) events))
               #:label 'afk-asked)
-       (close-scripted! leaver)
+
+       ;; an explicit leave skips the grace window entirely
+       (send-msg (scripted-connection leaver) '(leave-game leave-j1))
+       (check-equal? (await host (λ (events)
+                                   (findf (tagged 'seat-abandoned) events))
+                            #:timeout 10
+                            #:label 'leaver-noticed)
+                     '(seat-abandoned 2 leave-j1))
+
+       ;; replace them: the seat becomes a bot, everyone learns the new name
+       (send-msg (scripted-connection host) '(replace-with-bot leave-host))
+       (let ((replaced (await host (λ (events)
+                                     (findf (tagged 'seat-replaced) events))
+                              #:label 'seat-replaced)))
+         (check-equal? (cadr replaced) 2)
+         (check-pred (λ (n) (regexp-match? #rx"^bot-" (format "~a" n)))
+                     (caddr replaced))
+         (check-equal? (length (cadddr replaced)) 4))
+
+       ;; wake the parked opener — and keep answering on their behalf: the
+       ;; replacement bot bids for real, so the auction can come back round
+       ;; to the muted seat before it settles
+       (send-msg (scripted-connection afk) '(put-bid leave-j3 16))
+       (let answer-loop ((answered 1))
+         (let* ((events (unbox (scripted-events afk)))
+                (asks (length ((events-tagged 'request-bid) events)))
+                (settled (findf (tagged 'bid-result) events)))
+           (cond
+             (settled (void))
+             ((> asks answered)
+              (send-msg (scripted-connection afk) '(put-bid leave-j3 pass))
+              (answer-loop asks))
+             (else (sleep 0.2) (answer-loop answered)))))
+       (check-pred pair?
+                   (await host (λ (events) (nth-hand-result events 1))
+                          #:label 'hand-completes-with-bot))
+
+       ;; a second abandonment, answered with close-game, ends the match
+       (send-msg (scripted-connection (cadr players)) '(leave-game leave-j2))
+       (await host (λ (events)
+                     (findf (λ (m) (and ((tagged 'seat-abandoned) m)
+                                        (equal? (cadr m) 1)))
+                            events))
+              #:timeout 10
+              #:label 'second-abandonment)
+       (send-msg (scripted-connection host) '(close-game leave-host))
        (check-pred pair?
                    (await host (λ (events) (findf (tagged 'game-aborted) events))
                           #:timeout 10
-                          #:label 'leaver-aborts-promptly))
-       (for-each close-scripted! (remove leaver players))
+                          #:label 'table-chose-to-end))
+       (for-each close-scripted! players)
        (sleep 1.5)))
 
    ;; a dropped player reconnects mid-hand: the seat survives, the snapshot
@@ -417,12 +485,18 @@
                    (await rejoined (λ (events) (nth-hand-result events 1))
                           #:label 'rejoiner-sees-result))
 
-       ;; leaving on purpose aborts at once, long grace notwithstanding
+       ;; leaving on purpose skips the grace: the table is asked at once,
+       ;; and closing ends the match despite the long reconnect window
        (send-msg (scripted-connection host) '(leave-game resume-host))
+       (check-pred pair?
+                   (await afk (λ (events) (findf (tagged 'seat-abandoned) events))
+                          #:timeout 10
+                          #:label 'leave-asks-immediately))
+       (send-msg (scripted-connection afk) '(close-game resume-j3))
        (check-pred pair?
                    (await afk (λ (events) (findf (tagged 'game-aborted) events))
                           #:timeout 10
-                          #:label 'leave-aborts-immediately))
+                          #:label 'closing-ends-the-match))
        (close-scripted! rejoined)
        (for-each close-scripted! players)
        (sleep 1.5))

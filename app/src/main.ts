@@ -66,6 +66,7 @@ if (params.has('mock')) {
   sounds: () => gameState.soundState(),
   cardStates: () => gameState.handCardStates(),
   emote: (id: string) => gameState.getSession()?.sendEmote(id),
+  resolveAbandon: (choice: 'replace' | 'close') => gameState.getSession()?.resolveAbandon(choice),
   joinByLink: (name: string, roomName: string) => gameState.joinTable(name, roomName),
   inviteLink: () => {
     const room = gameState.getModel().roomName;

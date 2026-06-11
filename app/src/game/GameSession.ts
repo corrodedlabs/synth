@@ -8,6 +8,7 @@ import {
   GameModel,
   PlayerIndex,
   Suit,
+  actingHostEmail,
   canExposeTrump,
   initialGameModel,
   isLegalPlay,
@@ -20,6 +21,10 @@ export interface SessionCallbacks {
   readonly rooms: (rooms: readonly RoomInfo[]) => void;
   // a table-mate's emote, already translated to a view seat
   readonly emote: (seat: PlayerIndex, emote: string) => void;
+  // someone abandoned (display name) — show the replace-or-end choice
+  readonly seatAbandoned: (name: string) => void;
+  // the abandoned seat got a bot (or the decision resolved elsewhere)
+  readonly seatResolved: () => void;
 }
 
 // What the session should do once the socket is up.
@@ -238,11 +243,29 @@ export class GameSession {
     this.callbacks.dispatch({ _tag: "RequestCleared" });
   }
 
-  // Host only, between hands: ask the server to deal the next one.
+  // Acting host only, between hands: ask the server to deal the next one.
+  // (The duty moves to the next human if the original host's seat was
+  // replaced by a bot.)
   nextHand() {
     const model = this.callbacks.getModel();
-    if (!this.socket || !model.isHost || model.phase !== "hand-finished") return;
+    if (
+      !this.socket ||
+      actingHostEmail(model.members) !== this.email ||
+      model.phase !== "hand-finished"
+    ) {
+      return;
+    }
     this.socket.send({ _tag: "NextHand", email: this.email });
+  }
+
+  // Answer the abandon gate: keep playing with a bot, or end the match.
+  resolveAbandon(choice: "replace" | "close") {
+    if (!this.socket) return;
+    this.socket.send(
+      choice === "replace"
+        ? { _tag: "ReplaceWithBot", email: this.email }
+        : { _tag: "CloseGame", email: this.email }
+    );
   }
 
   // Walking out on purpose: the server aborts the match for everyone at
@@ -567,6 +590,29 @@ export class GameSession {
             this.callbacks.emote(this.toView(event.seat), event.emote);
           }
           return false;
+
+        case "SeatAbandoned": {
+          const name = memberDisplayName(event.email);
+          this.callbacks.status(`${name} abandoned the match.`);
+          this.callbacks.seatAbandoned(name);
+          return false;
+        }
+
+        case "SeatReplaced": {
+          // the seat's new identity reaches everyone: refresh members and
+          // the pinned seat names, then carry on playing
+          const model = this.callbacks.getModel();
+          dispatch({ _tag: "MembersChanged", members: event.members });
+          if (model.seatNames !== null) {
+            const names = [0, 1, 2, 3].map((view) =>
+              memberDisplayName(event.members[this.toServer(view)] ?? "")
+            );
+            dispatch({ _tag: "SeatNamesSet", names });
+          }
+          this.callbacks.status(`${memberDisplayName(event.email)} takes over the seat.`);
+          this.callbacks.seatResolved();
+          return false;
+        }
 
         case "NoRunningGame":
           // the match we tried to rejoin is gone — back to a fresh start

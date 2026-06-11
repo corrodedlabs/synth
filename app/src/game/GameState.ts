@@ -12,6 +12,7 @@ import {
   GameModel,
   CardModel,
   PlayerIndex,
+  actingHostEmail,
   canExposeTrump,
   gameReducer,
   initialGameModel,
@@ -81,6 +82,8 @@ export class GameState {
       onExpose: () => this.session?.exposeTrump(),
       onNextHand: () => this.session?.nextHand(),
       onLeaveMatch: () => this.leaveMatch(),
+      onReplaceBot: () => this.session?.resolveAbandon("replace"),
+      onEndMatch: () => this.session?.resolveAbandon("close"),
       onPlayAgain: () => window.location.reload(),
     });
 
@@ -232,6 +235,16 @@ export class GameState {
         status: (text) => this.ui.status(text),
         rooms: (rooms) => this.ui.showRooms(rooms),
         emote: (seat, emote) => this.showEmote(seat, emote),
+        seatAbandoned: (name) => this.ui.showAbandonPanel(name),
+        seatResolved: () => {
+          this.ui.hideAbandonPanel();
+          // the deal-button duty may just have moved to (or away from) us
+          if (this.model.phase === "hand-finished") {
+            this.ui.setNextHandRole(
+              actingHostEmail(this.model.members) === (this.session?.email ?? "")
+            );
+          }
+        },
       },
       playerName,
       rejoinEmail
@@ -373,19 +386,27 @@ export class GameState {
         if (action.phase === "connecting") this.ui.status("Connecting…");
         if (action.phase === "idle") {
           // only dead sessions dispatch idle (connect failure, server gone):
-          // drop ours so the start screen's buttons build a fresh one
+          // drop ours so the start screen's buttons build a fresh one, and
+          // clear the now-unrefreshable table list
           if (this.session) {
             this.session.destroy();
             this.session = null;
           }
           this.ui.setLeaveMatchVisible(false);
+          this.ui.resetRoomBrowser();
           this.ui.showStartScreen();
         }
         break;
 
       case "RoomEntered":
-      case "MembersChanged":
         this.ui.updateLobby(this.model, this.session?.email ?? "");
+        break;
+
+      case "MembersChanged":
+        // mid-match this is a seat replacement, not a lobby change
+        if (this.model.phase === "lobby") {
+          this.ui.updateLobby(this.model, this.session?.email ?? "");
+        }
         break;
 
       case "RoomLeft":
@@ -403,6 +424,7 @@ export class GameState {
         this.ui.hideTrumpPanel();
         this.ui.setExposeVisible(false);
         this.ui.hideResult();
+        this.ui.hideAbandonPanel();
         this.ui.setLeaveMatchVisible(false);
         this.renderScore();
         this.ui.hideLobby();
@@ -534,7 +556,12 @@ export class GameState {
           `Match: ${this.model.matchUs} — ${this.model.matchThem} (first to ${this.model.matchTarget})`;
         this.sound.result(bidderOurs ? action.made : !action.made);
         this.ui.status("");
-        this.ui.showHandResult(this.model.score, this.model.theirScore, detail, this.model.isHost);
+        this.ui.showHandResult(
+          this.model.score,
+          this.model.theirScore,
+          detail,
+          actingHostEmail(this.model.members) === (this.session?.email ?? "")
+        );
         break;
       }
 
@@ -581,6 +608,7 @@ export class GameState {
         this.ui.hideTrumpPanel();
         this.ui.setExposeVisible(false);
         this.ui.hideResult();
+        this.ui.hideAbandonPanel();
         this.model.hand.forEach((card) => this.hand.addCard(this.createCard(card)));
         for (const played of this.model.playedCards) {
           this.playCard(played.card, played.playerIndex);

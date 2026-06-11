@@ -4,8 +4,9 @@
 // inert; the host's click deals hand 2 (table resets, match HUD and seat
 // names persist, hand number bumps); after hand 2 the match score has
 // accumulated; the guest then leaves with the corner button (two-step
-// confirm) — the leaver gets a working start screen and can host a fresh
-// table without a reload, everyone else is aborted.
+// confirm) — the leaver gets a working start screen, the host is asked
+// about the abandoned seat, replaces it with a bot, and plays hand 3 on;
+// the last human leaving closes the match.
 // Usage: node scripts/test-match.mjs [url]
 // Screenshots land in /tmp/game-shots-match.
 import { chromium } from "playwright";
@@ -204,11 +205,44 @@ const guestAfter = await state(guest);
 check("the leaver's match state was wiped", guestAfter.matchUs === 0 && guestAfter.matchThem === 0);
 await guest.screenshot({ path: `${SHOTS}/05-guest-left.png` });
 
-// --- everyone else is aborted by the leave ---
-await host.waitForFunction(() => window.__game.state().phase === "idle", undefined, { timeout: 20000 });
-check("host is aborted back to the start screen", await visible(host, "start-screen"));
-check("the abort hides the host's panel too", !(await visible(host, "result-panel")));
-await host.screenshot({ path: `${SHOTS}/06-host-aborted.png` });
+// --- the survivors choose: a bot takes the abandoned seat ---
+await host.waitForSelector("#abandon-panel:not(.hidden)", { timeout: 15000 });
+const abandonText = await host.evaluate(() => document.getElementById("abandon-text").textContent);
+check(
+  `the host is told who abandoned ("${abandonText}")`,
+  abandonText.toLowerCase().includes("guest")
+);
+await host.screenshot({ path: `${SHOTS}/06-abandon-panel.png` });
+await host.click("#replace-bot");
+await host.waitForFunction(
+  () => window.__game.state().members.filter((m) => /^bot-/.test(m)).length === 3,
+  undefined,
+  { timeout: 15000 }
+);
+check("a bot took the guest's seat", true);
+check("the abandon panel is gone", !(await visible(host, "abandon-panel")));
+const seatNames = await host.evaluate(() => window.__game.state().seatNames);
+check(
+  `the seat label now names the bot (${JSON.stringify(seatNames)})`,
+  seatNames.some((name) => /^Bot \d+$/.test(name))
+);
+
+// --- the match carries on: the host deals and plays hand 3 vs three bots ---
+await host.waitForSelector("#next-hand:not(.hidden)", { timeout: 10000 });
+await host.click("#next-hand");
+await host.waitForFunction(() => window.__game.state().handNumber === 3, undefined, {
+  timeout: 20000,
+});
+const host3 = await playUntil("host", host, "hand-finished");
+check("hand 3 played out with the replacement bot", host3.handNumber === 3);
+await host.screenshot({ path: `${SHOTS}/07-hand3-with-bot.png` });
+
+// --- the last human leaving closes the match outright ---
+await host.evaluate(() => window.__game.leaveMatch());
+await host.waitForFunction(() => window.__game.state().phase === "idle", undefined, {
+  timeout: 10000,
+});
+check("the last human lands back on the start screen", await visible(host, "start-screen"));
 
 // --- the leaver's page is still alive: a fresh table without a reload ---
 await guest.click("#create-button");

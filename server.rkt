@@ -61,7 +61,8 @@
            users-with-connection
            bot-user?
            release-user
-           create-bot-user)
+           create-bot-user
+           convert-to-bot!)
 
   (require net/rfc6455)
   (require racket/async-channel)
@@ -71,10 +72,11 @@
   ;; room and any running match, so rebinding the connection in place is
   ;; visible everywhere at once
   ;; connection => websocket; rebound when the same email reconnects
-  ;; email => stable identity (the client persists it across refreshes)
+  ;; email => stable identity (the client persists it across refreshes);
+  ;;   mutable only so an abandoned seat can be converted into a bot
   ;; hand => cards the player currently holds (reset every hand)
   ;; comm => async channel for game messages (puts never block the listener)
-  (struct user ([connection #:mutable] email [hand #:mutable] comm pic-url))
+  (struct user ([connection #:mutable] [email #:mutable] [hand #:mutable] comm pic-url))
 
   (define *connected-users* (make-hash))
 
@@ -140,7 +142,23 @@
                (connection (connect-to-ws)))
           (connect-user connection bot-name)
           (spawn-bot bot-name connection)
-          (get-user-by-email bot-name))))))
+          (get-user-by-email bot-name)))))
+
+  ;; an abandoned seat keeps its struct (the running match holds it
+  ;; everywhere) but becomes a bot: new identity, new socket, new brain.
+  ;; The bot's own connect-user rebinds the struct to the server-side
+  ;; connection, exactly like a human reconnect. Returns the bot name.
+  (define (convert-to-bot! seat-user)
+    (parameterize ((current-custodian *bot-custodian*))
+      (let* ((bot-name (string->symbol (format "bot-~a" (next-bot-number!))))
+             (connection (connect-to-ws)))
+        (remove-user (user-email seat-user))
+        (set-user-email! seat-user bot-name)
+        (set-user-connection! seat-user connection)
+        (hash-set! *connected-users* bot-name seat-user)
+        (connect-user connection bot-name)
+        (spawn-bot bot-name connection)
+        bot-name))))
 
 
 ;; Game rooms
@@ -262,7 +280,8 @@
            request-leave!
            user-in-running-game?
            rejoin-snapshot
-           broadcast-emote)
+           broadcast-emote
+           broadcast-room-list!)
 
   (require net/rfc6455)
   (require racket/async-channel)
@@ -341,17 +360,30 @@
                 (hash-remove! *leavers* (user-email player)))
               players))
 
-  ;; called from every 1s wait poll. Raises when a seat is lost for good —
-  ;; its owner left, or stayed dead past the grace window — and otherwise
-  ;; tracks drops and returns, telling the table about both. Bots get no
-  ;; grace: their sockets only close when the server releases them.
+  (define (human? u) (not (bot-user? u)))
+
+  ;; the deal button (and other host duties) belong to the original host
+  ;; while their seat is still human; a botted host seat passes the duty
+  ;; to the first human in seat order
+  (define (acting-host players fallback)
+    (if (and fallback (human? fallback) (memq fallback players))
+        fallback
+        (or (findf human? players) fallback)))
+
+  ;; called from every 1s wait poll. Tracks drops and returns, telling the
+  ;; table about both; a seat lost for good (its owner left, or stayed dead
+  ;; past the grace window) goes to the abandonment flow, which either
+  ;; converts it to a bot or raises to end the match. Bots get no grace:
+  ;; their sockets only close when the server releases them.
   (define (check-liveness! players)
     (for-each
      (λ (player)
        (let ((email (user-email player)))
          (cond
            ((hash-ref *leavers* email #f)
-            (error 'check-liveness (format "player ~a left the match" email)))
+            (if (human? player)
+                (lose-seat! players player)
+                (hash-remove! *leavers* email))) ; junk flag on a bot seat
            ((ws-conn-closed? (user-connection player))
             (cond
               ((bot-user? player)
@@ -360,8 +392,7 @@
                => (λ (since)
                     (when (> (- (current-inexact-milliseconds) since)
                              (* 1000 (grace-seconds)))
-                      (error 'check-liveness
-                             (format "player ~a disconnected" email)))))
+                      (lose-seat! players player))))
               (else
                (hash-set! *gone-since* email (current-inexact-milliseconds))
                (send-datum-to-all players
@@ -371,6 +402,76 @@
             (hash-remove! *gone-since* email)
             (send-datum-to-all players `(player-reconnected ,email))))))
      players))
+
+  ;; a human seat is gone for good. With no live human left at the table
+  ;; the match simply closes; otherwise the survivors are told who
+  ;; abandoned and choose between a bot replacement and ending the match
+  ;; (first answer wins).
+  (define (lose-seat! players lost)
+    (let* ((lost-email (user-email lost))
+           (seat (index-where players (λ (p) (eq? p lost))))
+           (live-others (filter (λ (p) (and (human? p)
+                                            (not (eq? p lost))
+                                            (not (ws-conn-closed?
+                                                  (user-connection p)))))
+                                players)))
+      ;; either way this seat's liveness flags are spent
+      (hash-remove! *leavers* lost-email)
+      (hash-remove! *gone-since* lost-email)
+      (when (null? live-others)
+        (error 'check-liveness
+               (format "player ~a abandoned the match" lost-email)))
+      (send-datum-to-all players `(seat-abandoned ,seat ,lost-email))
+      (let decision-loop ()
+        (let ((message (apply sync/timeout 1 (map user-comm live-others))))
+          (cond
+            ((and (pair? message) (eq? (car message) 'replace-with-bot))
+             (replace-seat! players seat lost))
+            ((and (pair? message) (eq? (car message) 'close-game))
+             (error 'check-liveness
+                    (format "the table ended the match after ~a left"
+                            lost-email)))
+            (else
+             (when message
+               (displayln (format "ignoring unexpected ~a at the abandon gate"
+                                  message)))
+             ;; deciders can vanish too; with nobody left to answer, close
+             (if (andmap (λ (p) (ws-conn-closed? (user-connection p)))
+                         live-others)
+                 (error 'check-liveness
+                        "everyone left during the abandon decision")
+                 (decision-loop))))))))
+
+  ;; the seat lives on under a bot: same struct, channel, and hand — new
+  ;; identity and brain. The bot is privately re-dealt its current cards
+  ;; and, when the game is waiting on this very seat, re-asked the pending
+  ;; request so play resumes by itself.
+  (define (replace-seat! players seat lost)
+    (let* ((bot-name (convert-to-bot! lost))
+           (name (user-in-running-game? bot-name))
+           (state (and name (hash-ref *match-states* name #f))))
+      (displayln (format "seat ~a taken over by ~a" seat bot-name))
+      (send-datum lost `(hand ,bot-name ,(user-hand lost)))
+      (send-datum-to-all players
+                         `(seat-replaced ,seat ,bot-name
+                                         ,(map user-email players)))
+      (when (and state
+                 (match-state-awaiting state)
+                 (equal? seat (car (match-state-awaiting state))))
+        (send-datum lost (cdr (match-state-awaiting state))))))
+
+  ;; the live "open tables" push: everyone connected who is neither seated
+  ;; at a table nor playing a match sees room changes as they happen
+  (define (broadcast-room-list!)
+    (let ((rooms `(active-rooms ,(get-active-rooms))))
+      (for-each (λ (email)
+                  (let ((u (get-user-by-email email)))
+                    (when (and u
+                               (human? u)
+                               (not (user-in-running-game? email))
+                               (null? (rooms-with-member email)))
+                      (send-datum u rooms))))
+                (get-connected-users-email))))
 
   ;; --- live match view, for reconnecting clients ---
   ;;
@@ -581,21 +682,24 @@
     (when (async-channel-try-get (user-comm player))
       (drain-comm! player)))
 
-  ;; between-hands gate: block until the host asks for the next deal. The
-  ;; host channel was drained *before* hand-result went out (a genuine
-  ;; next-hand can only follow that broadcast), so whatever arrives now is a
-  ;; real click. The liveness check gives dropped players their grace.
+  ;; between-hands gate: block until the acting host asks for the next
+  ;; deal (recomputed every tick — the original host's seat may have been
+  ;; botted, passing the deal button to the next human). The decider's
+  ;; channel was drained *before* hand-result went out, so whatever
+  ;; arrives now is a real click. Liveness gives dropped players their
+  ;; grace and routes abandonments through the replacement flow.
   (define wait-for-next-hand
     (λ (host members)
       (let loop ()
-        (let ([message (sync/timeout 1 (user-comm host))])
+        (let* ([decider (acting-host members host)]
+               [message (sync/timeout 1 (user-comm decider))])
           (cond
             [(and (pair? message) (equal? (car message) 'next-hand))
              (void)]
             [else
              (when message
                (displayln (format "ignoring unexpected ~a from ~a at the gate"
-                                  message (user-email host))))
+                                  message (user-email decider))))
              (check-liveness! members)
              (loop)])))))
 
@@ -632,6 +736,7 @@
             ;; joinable, and remember who is seated for rejoins
             (hash-set! *running-games* name members)
             (close-room! room)
+            (broadcast-room-list!)
             (let ((state (match-state members 1 0 0 'bidding #f #f #f #f
                                       '() 0 (fresh-seat-alist)
                                       (fresh-seat-alist) #f #f)))
@@ -679,10 +784,10 @@
                            (set-match-state-odds! state odds)
                            (set-match-state-stage! state 'between-hands)
                            (set-match-state-last-result! state result-body)
-                           ;; drain the host channel *before* the broadcast: a
-                           ;; genuine next-hand can only be sent after
+                           ;; drain the deciding seat *before* the broadcast:
+                           ;; a genuine next-hand can only be sent after
                            ;; hand-result lands, so anything in there is stale
-                           (drain-comm! host)
+                           (drain-comm! (acting-host members host))
                            (send-datum-to-all members `(hand-result ,result-body))
                            (cond
                              [(match-winner evens odds #:target target)
@@ -843,7 +948,8 @@
           (for-each (λ (room) (depart-room! room email))
                     (rooms-with-member email))
           (remove-user email)))))
-   (users-with-connection connection)))
+   (users-with-connection connection))
+  (broadcast-room-list!))
 
 (define (join-room message)
   (match message
@@ -900,8 +1006,12 @@
 ;; [selected-trump <user-email> <trump-suit>] => select a trump suit
 ;; (card-played <user-email> <card>) => play a card (or call expose-trump)
 ;; (next-hand <host-email>) => host deals the next hand of the match; only
-;;   the host's channel is read at the between-hands gate, so anyone else
-;;   sending this is ignored
+;;   the acting host's channel is read at the between-hands gate, so anyone
+;;   else sending this is ignored
+;;
+;; (replace-with-bot <email>) / (close-game <email>) => answers to the
+;;   abandon gate after (seat-abandoned <seat> <email>) is broadcast: keep
+;;   playing with a bot in the empty seat, or end the match for everyone
 ;;
 ;; (leave-game <email>) => walk out of a running match: it aborts for the
 ;;   whole table at once (no reconnect grace)
@@ -927,15 +1037,31 @@
       ;; user messages
       ((connect-user) (connect-new-user connection (cadr message) (caddr message)))
 
-      ;; room messages
-      ((make-room) (add-game-room (cadr message) (caddr message)))
-      ((join-room) (join-room message))
-      ((leave-room) (leave-room message))
-      ((kick-from-room) (kick-from-room message))
+      ;; room messages — each change pushes the fresh table list to every
+      ;; connected browser-screen user, so "open tables" stays live
+      ((make-room)
+       (let ((result (add-game-room (cadr message) (caddr message))))
+         (broadcast-room-list!)
+         result))
+      ((join-room)
+       (let ((result (join-room message)))
+         (broadcast-room-list!)
+         result))
+      ((leave-room)
+       (let ((result (leave-room message)))
+         (broadcast-room-list!)
+         result))
+      ((kick-from-room)
+       (let ((result (kick-from-room message)))
+         (broadcast-room-list!)
+         result))
       ;; tagged so clients can tell the reply apart from other lists
       ((get-active-rooms) `(active-rooms ,(get-active-rooms)))
       ((get-room-details) (get-room-details (cadr message)))
-      ((add-bot-to-room) (add-bot-to-room (cadr message)))
+      ((add-bot-to-room)
+       (let ((result (add-bot-to-room (cadr message))))
+         (broadcast-room-list!)
+         result))
 
       ;; game messages
       ((start-game)
@@ -954,7 +1080,7 @@
                                             (λ () (write `(start-game-failed ,result)))))))))))
               '(game-started)))
 
-      ((put-bid selected-trump card-played next-hand)
+      ((put-bid selected-trump card-played next-hand replace-with-bot close-game)
        (begin (displayln (format "got game message ~a" message))
               ;; async put: a stray message must never block this thread; the
               ;; game loop drops anything it is not waiting for

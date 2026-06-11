@@ -264,6 +264,14 @@
                                 (seen '())
                                 (must-trump? #f))
                    (receive-data connection)))
+            ((error)
+             ;; a rejected play re-asks; the one rule we cannot always infer
+             ;; is the exposure obligation (e.g. a bot that took over a seat
+             ;; right after the human called for the trump and left)
+             (loop (if (eq? (cadr server-msg) 'must-play-trump)
+                       (struct-copy state client-state (must-trump? #t))
+                       client-state)
+                   (receive-data connection)))
             ((played)
              ;; broadcasts feed the card memory; the exposure marker tells
              ;; everyone trumping is on (the suit arrives with our next ask)

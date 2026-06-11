@@ -153,6 +153,13 @@ export type ServerEvent =
   | { readonly _tag: "PlayerDisconnected"; readonly email: string; readonly graceSeconds: number }
   | { readonly _tag: "PlayerReconnected"; readonly email: string }
   | { readonly _tag: "EmotePlayed"; readonly seat: number; readonly emote: string }
+  | { readonly _tag: "SeatAbandoned"; readonly seat: number; readonly email: string }
+  | {
+      readonly _tag: "SeatReplaced";
+      readonly seat: number;
+      readonly email: string; // the bot now in the seat
+      readonly members: readonly string[]; // full seat list, post-replacement
+    }
   | { readonly _tag: "GameSnapshot"; readonly snapshot: MatchSnapshot }
   | { readonly _tag: "NoRunningGame" }
   | { readonly _tag: "ServerError"; readonly message: string }
@@ -351,6 +358,34 @@ export function decodeServerExpr(expr: SExpr, trimmed = writeSExpr(expr)): Serve
       return { _tag: "EmotePlayed", seat, emote: emote.name };
     }
 
+    case "seat-abandoned": {
+      const seat = rest[0];
+      const email = rest[1];
+      if (typeof seat !== "number" || !(typeof email === "string" || email instanceof Sym)) {
+        return { _tag: "Ignored", raw: trimmed };
+      }
+      return { _tag: "SeatAbandoned", seat, email: memberName(email) };
+    }
+
+    case "seat-replaced": {
+      const seat = rest[0];
+      const email = rest[1];
+      const members = rest[2];
+      if (
+        typeof seat !== "number" ||
+        !(typeof email === "string" || email instanceof Sym) ||
+        !Array.isArray(members)
+      ) {
+        return { _tag: "Ignored", raw: trimmed };
+      }
+      return {
+        _tag: "SeatReplaced",
+        seat,
+        email: memberName(email),
+        members: members.map(memberName),
+      };
+    }
+
     case "game-snapshot": {
       const snapshot = decodeSnapshot(rest[0]);
       return snapshot ? { _tag: "GameSnapshot", snapshot } : { _tag: "Ignored", raw: trimmed };
@@ -505,7 +540,9 @@ export type ClientCommand =
   | { readonly _tag: "NextHand"; readonly email: string }
   | { readonly _tag: "LeaveGame"; readonly email: string }
   | { readonly _tag: "Rejoin"; readonly email: string }
-  | { readonly _tag: "SendEmote"; readonly email: string; readonly emote: string };
+  | { readonly _tag: "SendEmote"; readonly email: string; readonly emote: string }
+  | { readonly _tag: "ReplaceWithBot"; readonly email: string }
+  | { readonly _tag: "CloseGame"; readonly email: string };
 
 export function encodeCommand(command: ClientCommand): string {
   switch (command._tag) {
@@ -552,5 +589,9 @@ export function encodeCommand(command: ClientCommand): string {
       return writeSExpr([sym("rejoin"), command.email]);
     case "SendEmote":
       return writeSExpr([sym("emote"), command.email, sym(command.emote)]);
+    case "ReplaceWithBot":
+      return writeSExpr([sym("replace-with-bot"), command.email]);
+    case "CloseGame":
+      return writeSExpr([sym("close-game"), command.email]);
   }
 }

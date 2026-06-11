@@ -18,6 +18,8 @@ export interface UiCallbacks {
   readonly onExpose: () => void;
   readonly onNextHand: () => void;
   readonly onLeaveMatch: () => void;
+  readonly onReplaceBot: () => void;
+  readonly onEndMatch: () => void;
   readonly onPlayAgain: () => void;
 }
 
@@ -78,6 +80,8 @@ export class UiOverlay {
   private copyInviteButton = element("copy-invite") as HTMLButtonElement;
   private emoteButton = element("emote-button") as HTMLButtonElement;
   private emoteStrip = element("emote-strip");
+  private abandonPanel = element("abandon-panel");
+  private abandonText = element("abandon-text");
   private uiLayer = element("ui-layer");
   private trumpIndicator = element("trump-indicator");
   private statusTimer: number | null = null;
@@ -168,6 +172,15 @@ export class UiOverlay {
 
     this.emoteButton.addEventListener("click", () => {
       this.emoteStrip.classList.toggle("hidden");
+    });
+    element("replace-bot").addEventListener("click", () => {
+      this.hideAbandonPanel();
+      this.status("Calling in a bot…");
+      callbacks.onReplaceBot();
+    });
+    element("end-match").addEventListener("click", () => {
+      this.hideAbandonPanel();
+      callbacks.onEndMatch();
     });
     for (const [id, glyph] of Object.entries(EMOTES)) {
       const button = document.createElement("button");
@@ -401,6 +414,39 @@ export class UiOverlay {
 
   hideResult() {
     this.hide(this.resultPanel);
+  }
+
+  // Someone walked out (or timed out of their reconnect grace): the
+  // survivors choose between a bot replacement and ending the match.
+  showAbandonPanel(name: string) {
+    this.abandonText.textContent = `${name} abandoned the match.`;
+    this.show(this.abandonPanel);
+  }
+
+  hideAbandonPanel() {
+    this.hide(this.abandonPanel);
+  }
+
+  // Between hands, the deal duty can move when a seat is replaced: flip
+  // the open result panel between the deal button and the waiting note.
+  setNextHandRole(isActingHost: boolean) {
+    if (this.resultPanel.classList.contains("hidden")) return;
+    if (this.playAgainButton.classList.contains("hidden") === false) return; // match-over panel
+    if (isActingHost) {
+      this.show(this.nextHandButton);
+      this.hide(this.resultWait);
+    } else {
+      this.hide(this.nextHandButton);
+      this.resultWait.textContent = "waiting for the host to deal…";
+      this.show(this.resultWait);
+    }
+  }
+
+  // A dead session can't refresh the list: clear it so the next browse
+  // starts fresh instead of showing stale tables.
+  resetRoomBrowser() {
+    this.hide(this.roomBrowser);
+    this.roomList.innerHTML = "";
   }
 
   // The in-game escape hatches (leave + emotes): visible only while a
