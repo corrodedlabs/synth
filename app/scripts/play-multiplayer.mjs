@@ -49,6 +49,7 @@ const guest = await newPlayer("guest");
 // --- host creates a table ---
 await host.fill("#player-name", "Host");
 await host.click("#create-button");
+await host.click('#create-panel .table-choice[data-target="6"]');
 await host.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });
 const roomName = await host.evaluate(() => window.__game.roomName());
 console.log(`host created "${roomName}"`);

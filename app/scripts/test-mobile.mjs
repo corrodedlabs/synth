@@ -96,6 +96,7 @@ await page.tap("#help-close");
 // lobby
 await page.fill("#player-name", "Phone");
 await page.tap("#create-button");
+await page.tap('#create-panel .table-choice[data-target="6"]');
 await page.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });
 await checkFits("#lobby-panel", "lobby panel");
 for (let bots = 1; bots <= 3; bots++) {

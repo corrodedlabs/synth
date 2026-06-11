@@ -56,6 +56,7 @@ await shot("01-start");
 // --- lobby flow: create a table, seat 3 bots, then explicitly start ---
 await page.fill("#player-name", "Tester");
 await page.click("#create-button");
+await page.click('#create-panel .table-choice[data-target="6"]');
 await page.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });
 await shot("01b-lobby-empty");
 

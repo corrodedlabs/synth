@@ -83,6 +83,7 @@ export class UiOverlay {
   private emoteStrip = element("emote-strip");
   private abandonPanel = element("abandon-panel");
   private abandonText = element("abandon-text");
+  private createPanel = element("create-panel");
   private leaderboardPanel = element("leaderboard-panel");
   private leaderboardList = element("leaderboard-list");
   private uiLayer = element("ui-layer");
@@ -94,19 +95,27 @@ export class UiOverlay {
   private currentRoomName: string | null = null;
 
   constructor(private callbacks: UiCallbacks) {
-    // the table-type picker: classic (first to 6) unless quick is chosen
-    for (const button of document.querySelectorAll<HTMLButtonElement>("#table-type [data-target]")) {
+    // "Create a table" first asks what the table will play to; picking a
+    // type is what actually creates it
+    element("create-button").addEventListener("click", () => {
+      this.show(this.createPanel);
+    });
+    element("create-cancel").addEventListener("click", () => {
+      this.hide(this.createPanel);
+    });
+    for (const button of document.querySelectorAll<HTMLButtonElement>(
+      "#create-panel .table-choice"
+    )) {
       button.addEventListener("click", () => {
-        document
-          .querySelectorAll("#table-type [data-target]")
-          .forEach((other) => other.classList.toggle("selected", other === button));
+        const target = Number(button.dataset.target);
+        this.hide(this.createPanel);
+        this.hide(this.startScreen);
+        callbacks.onCreate(
+          this.playerNameInput.value,
+          Number.isInteger(target) && target >= 1 ? target : 6
+        );
       });
     }
-
-    element("create-button").addEventListener("click", () => {
-      this.hide(this.startScreen);
-      callbacks.onCreate(this.playerNameInput.value, this.selectedTarget());
-    });
     element("browse-button").addEventListener("click", () => {
       this.show(this.roomBrowser);
       this.roomList.innerHTML = `<div id="room-empty">looking for tables…</div>`;
@@ -226,12 +235,6 @@ export class UiOverlay {
     }, 2000);
   }
 
-  private selectedTarget(): number {
-    const selected = document.querySelector<HTMLElement>("#table-type .selected");
-    const target = Number(selected?.dataset.target);
-    return Number.isInteger(target) && target >= 1 ? target : 6;
-  }
-
   // The start screen collapses to a single "join this table" action when the
   // page was opened from an invite link; the usual actions stay underneath.
   setJoinTarget(roomName: string | null) {
@@ -260,6 +263,7 @@ export class UiOverlay {
 
   showStartScreen() {
     this.hide(this.lobbyPanel);
+    this.hide(this.createPanel); // never a stale question over a fresh start
     this.show(this.startScreen);
   }
 

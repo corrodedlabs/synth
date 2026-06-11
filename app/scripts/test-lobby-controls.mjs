@@ -45,16 +45,24 @@ const waitMembers = (page, expected) =>
 const atStartScreen = (page) =>
   page.evaluate(() => !document.getElementById("start-screen").classList.contains("hidden"));
 
-// --- setup: host picks a QUICK table (first to 2), bot + guest join ---
+// --- setup: "Create a table" first asks the table type; pick QUICK ---
 const host = await newPlayer("host", "Host");
+await host.click("#create-button");
+await host.waitForSelector("#create-panel:not(.hidden)", { timeout: 10000 });
 check(
-  "classic is the default table type",
+  "creating asks the table type (classic and quick offered)",
   await host.evaluate(
-    () => document.querySelector("#table-type .selected")?.dataset.target === "6"
+    () => document.querySelectorAll("#create-panel .table-choice").length === 2
   )
 );
-await host.click('#table-type [data-target="2"]');
+// backing out returns to the start screen without creating anything
+await host.click("#create-cancel");
+check(
+  "the question can be dismissed",
+  await host.evaluate(() => document.getElementById("create-panel").classList.contains("hidden"))
+);
 await host.click("#create-button");
+await host.click('#create-panel .table-choice[data-target="2"]');
 await host.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });
 const roomName = await host.evaluate(() => window.__game.roomName());
 const subtitle = await host.evaluate(() => document.getElementById("lobby-subtitle").textContent);
@@ -172,6 +180,7 @@ await host.click("#leaderboard-close");
 
 // --- invite links: a shared URL drops a friend straight into the table ---
 await host.click("#create-button");
+await host.click('#create-panel .table-choice[data-target="6"]');
 await host.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });
 const inviteUrl = await host.evaluate(() => window.__game.inviteLink());
 console.log(`invite link: ${inviteUrl}`);
@@ -221,6 +230,7 @@ await late.close();
 
 // --- disconnect cleanup: host makes a new table, then the tab dies ---
 await host.click("#create-button");
+await host.click('#create-panel .table-choice[data-target="6"]');
 await host.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });
 const room2 = await host.evaluate(() => window.__game.roomName());
 await guest.click("#refresh-rooms");

@@ -37,6 +37,7 @@ const newPlayer = async (label, name) => {
 
 const createTable = async (page) => {
   await page.click("#create-button");
+  await page.click('#create-panel .table-choice[data-target="6"]');
   await page.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });
   return page.evaluate(() => window.__game.roomName());
 };
