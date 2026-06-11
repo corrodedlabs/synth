@@ -140,20 +140,30 @@ export class UiOverlay {
     element("help-button").addEventListener("click", () => this.show(helpPanel));
     element("help-close").addEventListener("click", () => this.hide(helpPanel));
 
-    // an invite link's one-tap entry into the named table
+    // an invite link's one-tap entry into the named table; the offer is
+    // one-shot so a failed join (or a later return to the start screen)
+    // falls back to the ordinary create/browse actions
     this.joinLinkButton.addEventListener("click", () => {
-      if (this.joinTarget === null) return;
+      const target = this.joinTarget;
+      if (target === null) return;
+      this.setJoinTarget(null);
       this.hide(this.startScreen);
-      callbacks.onJoinLink(this.playerNameInput.value, this.joinTarget);
+      callbacks.onJoinLink(this.playerNameInput.value, target);
     });
 
     this.copyInviteButton.addEventListener("click", () => {
       if (this.currentRoomName === null) return;
       const link = inviteLink(this.currentRoomName);
-      void navigator.clipboard
-        ?.writeText(link)
-        .then(() => this.flashCopied())
-        .catch(() => window.prompt("Copy this invite link:", link));
+      // optional chaining alone would silently skip BOTH branches when the
+      // clipboard API is missing (http on a LAN, some webviews)
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(link).then(
+          () => this.flashCopied(),
+          () => window.prompt("Copy this invite link:", link)
+        );
+      } else {
+        window.prompt("Copy this invite link:", link);
+      }
     });
 
     this.emoteButton.addEventListener("click", () => {

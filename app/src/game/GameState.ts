@@ -103,6 +103,9 @@ export class GameState {
     this.cardScale = portrait ? 1.18 : 1;
     this.hand.setWidthScale(portrait ? 0.78 : 1);
     this.hand.setCardScale(this.cardScale);
+    this.playArea.setCardScale(this.cardScale);
+    // re-laying out the fan flattens a raised card — it must not stay armed
+    this.dragControls.clearSelection();
   }
 
   private cardIsPlayable(card: Card): boolean {
@@ -168,7 +171,13 @@ export class GameState {
     this.ui.showStartScreen();
   }
 
-  // An invite link was opened: the start screen leads with that table.
+  // An invite link was opened: any start screen shown from here on leads
+  // with that table (set even when a rejoin runs first, so its fallback
+  // start screen still carries the invite).
+  public setJoinTarget(roomName: string) {
+    this.ui.setJoinTarget(roomName);
+  }
+
   public prepareJoinLink(roomName: string) {
     this.ui.setJoinTarget(roomName);
     this.ui.showStartScreen();

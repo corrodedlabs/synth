@@ -200,7 +200,12 @@
   ;; serialized and always reads the room's current members
   (define *join-lock* (make-semaphore 1))
 
-  ;; adds user to room's member list; returns the updated members
+  (define +table-seats+ 4)
+
+  ;; adds user to room's member list; returns the updated members, or #f
+  ;; when the table is already full (or vanished) — invite links bypass the
+  ;; room browser's client-side capacity filter, so the seat count is
+  ;; enforced here, inside the lock
   (define add-user-to-game-room
     (λ (room user)
       (match room
@@ -208,16 +213,25 @@
          (call-with-semaphore
           *join-lock*
           (λ ()
-            (hash-update! *game-rooms* (user-email host)
-                          (λ (current)
-                            (match current
-                              ((game-room host name members)
-                               (game-room host name (cons user members))))))
-            (game-room-members (hash-ref *game-rooms* (user-email host)))))])))
+            (let ((current (hash-ref *game-rooms* (user-email host) #f)))
+              (cond
+                ((or (not current)
+                     (>= (length (game-room-members current)) +table-seats+))
+                 #f)
+                (else
+                 (let ((members (cons user (game-room-members current))))
+                   (hash-set! *game-rooms* (user-email host)
+                              (game-room host (game-room-name current) members))
+                   members))))))])))
 
+  ;; #f when the table is full: the bot is released, not left dangling
   (define add-bot-to-game-room
     (lambda (room-name)
-      (add-user-to-game-room (find-room-by-name room-name) (create-bot-user))))
+      (let ((room (find-room-by-name room-name)))
+        (and room
+             (let ((bot (create-bot-user)))
+               (or (add-user-to-game-room room bot)
+                   (begin (release-user bot) #f)))))))
 
   (define (room-update-members! room new-members)
     (match room
@@ -302,7 +316,9 @@
       (else
        (let ((name (user-in-running-game? email)))
          (cond
-           ((not name) '(no-running-game))
+           ;; a bare symbol: clients must Ignore this, never confuse it
+           ;; with the rejoin flow's (no-running-game) reply
+           ((not name) 'not-in-a-game)
            (else
             (let ((now (current-inexact-milliseconds))
                   (last (hash-ref *last-emote* email 0)))
@@ -838,19 +854,25 @@
          ((not (member email (get-connected-users-email))) '(error user-not-connected))
          (else
           (let ((members (add-user-to-game-room room (get-user-by-email email))))
-            ;; same shape as the add-bot-to-room broadcast so clients have
-            ;; one code path for member updates
-            (send-datum-to-all members
-                               `(room-members ,room-name ,(map user-email members)))
-            'room-joined)))))
+            (cond
+              ((not members) '(error room-full))
+              (else
+               ;; same shape as the add-bot-to-room broadcast so clients have
+               ;; one code path for member updates
+               (send-datum-to-all members
+                                  `(room-members ,room-name ,(map user-email members)))
+               'room-joined)))))))
     (_ '(error invalid-message))))
 
 (define add-bot-to-room
   (lambda (room-name)
     (let ((members (add-bot-to-game-room room-name)))
-      (displayln (format "goe members ~a " members))
-      (send-datum-to-all members
-                         `(room-members ,room-name ,(map user-email members))))))
+      (cond
+        ((not members) '(error room-full))
+        (else
+         (send-datum-to-all members
+                            `(room-members ,room-name ,(map user-email members)))
+         'bot-added)))))
 
 ;; accepted messages:
 ;;
@@ -946,7 +968,8 @@
            ((user-in-running-game? email)
             (request-leave! email)
             '(leaving))
-           (else '(no-running-game)))))
+           ;; bare symbol: an Ignored no-op, not the rejoin teardown reply
+           (else 'not-in-a-game))))
 
       ((rejoin) (rejoin-snapshot (cadr message)))
 

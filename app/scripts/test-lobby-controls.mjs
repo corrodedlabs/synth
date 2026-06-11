@@ -165,6 +165,26 @@ await invited.close();
 await host.click("#leave-table"); // close this table before the next section
 await host.waitForSelector("#start-screen:not(.hidden)", { timeout: 10000 });
 
+// --- a stale invite (table gone) must hand back a working start screen ---
+const late = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+late.on("pageerror", (error) => errors.push(`[late] ${error}`));
+await late.goto(inviteUrl);
+await late.waitForSelector("#join-link:not(.hidden)", { timeout: 15000 });
+await late.fill("#player-name", "Late");
+await late.click("#join-link");
+await late.waitForSelector("#start-screen:not(.hidden)", { timeout: 15000 });
+check(
+  "stale invite falls back to the normal start screen",
+  await late.evaluate(() => !document.getElementById("start-screen").classList.contains("hidden"))
+);
+check(
+  "the dead table's join button is gone",
+  await late.evaluate(() => document.getElementById("join-link").classList.contains("hidden"))
+);
+const lateStatus = await late.evaluate(() => document.getElementById("status-line").textContent);
+check(`the failure is explained ("${lateStatus}")`, lateStatus.includes("no longer open"));
+await late.close();
+
 // --- disconnect cleanup: host makes a new table, then the tab dies ---
 await host.click("#create-button");
 await host.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });

@@ -26,6 +26,9 @@ if (playerNameInput && rememberedName) playerNameInput.value = rememberedName;
 
 const interrupted = storedActiveMatch();
 const joinTarget = params.get('join');
+// an invite link arms every start screen this load may show — including
+// the fallback one after a failed rejoin of an interrupted match
+if (joinTarget) gameState.setJoinTarget(joinTarget);
 if (params.has('mock')) {
   gameState.startMock();
 } else if (interrupted) {

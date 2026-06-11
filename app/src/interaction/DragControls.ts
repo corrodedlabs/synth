@@ -286,7 +286,9 @@ export class DragControls {
         }
         return;
       }
-      // mouse click plays directly (legality is checked by the gate)
+      // mouse click plays directly (legality is checked by the gate); a
+      // failed click must not leave a touch-armed card primed and flat
+      this.disarm();
       if (!this.gate.tryPlay(card)) {
         this.hand.arrangeCards();
       }

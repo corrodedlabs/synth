@@ -183,6 +183,12 @@ export class PlayArea {
     this.activeMarkerIndex = -1;
   }
 
+  // Phones render larger cards: keep anything already on the table in step
+  // when the viewport flips orientation.
+  public setCardScale(scale: number) {
+    this.playedCards.forEach((card) => card.mesh.scale.setScalar(scale));
+  }
+
   public playCard(card: Card, playerIndex: number) {
     this.playedCards.push(card);
     

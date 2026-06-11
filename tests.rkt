@@ -223,6 +223,16 @@
      (let* ((players (seat-scripted-table 'match-room
                                           '(match-host match-j1 match-j2 match-j3)))
             (host (last players)))
+       ;; a fifth chair does not exist: late joins (stale invite links)
+       ;; bounce off the full table instead of wedging the lobby
+       (let ((extra (connect-to-ws)))
+         (connect-user extra 'match-extra)
+         (send-msg extra '(join-room match-room match-extra))
+         (check-equal? (recv-until extra (λ (m) (and (pair? m) (eq? (car m) 'error))))
+                       '(error room-full))
+         (ws-close! extra)
+         (sleep 0.3))
+
        (send-msg (scripted-connection host) '(start-game match-room))
 
        ;; hand 1: seat 0 opens at 16, everyone passes

@@ -561,7 +561,11 @@ export class GameSession {
           return false;
 
         case "EmotePlayed":
-          this.callbacks.emote(this.toView(event.seat), event.emote);
+          // until we are seated (rejoin still restoring), myServerIndex is
+          // a default and the bubble would land at the wrong seat
+          if (this.inRoom) {
+            this.callbacks.emote(this.toView(event.seat), event.emote);
+          }
           return false;
 
         case "NoRunningGame":
@@ -646,6 +650,7 @@ export class GameSession {
         case "ServerError": {
           const friendly: Record<string, string> = {
             "no-such-room": "That table is no longer open.",
+            "room-full": "That table is already full.",
             "must-open-bid": "You open the bidding — pick a bid of 16 or more.",
             "invalid-bid": "That bid is no longer high enough.",
             "invalid-card": "You must follow suit while you can.",
@@ -654,6 +659,12 @@ export class GameSession {
           };
           const match = Object.keys(friendly).find((key) => event.message.includes(key));
           this.callbacks.status(match ? friendly[match] : `Server rejected that: ${event.message}`);
+          // a failed entry (vanished or full table — e.g. a stale invite
+          // link) must hand back a working start screen, not a bare felt
+          if (!this.inRoom && (match === "no-such-room" || match === "room-full")) {
+            dispatch({ _tag: "PhaseChanged", phase: "idle" });
+            return true;
+          }
           return false;
         }
 
