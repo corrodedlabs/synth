@@ -72,6 +72,7 @@ export class UiOverlay {
   private tableMomentSymbol = element("table-moment-symbol");
   private tableMomentTitle = element("table-moment-title");
   private tableMomentDetail = element("table-moment-detail");
+  private tableMomentHint = element("table-moment-hint");
   private bidPanel = element("bid-panel");
   private bidLabel = element("bid-label");
   private bidRaise = element("bid-raise") as HTMLButtonElement;
@@ -108,6 +109,13 @@ export class UiOverlay {
   private currentRoomName: string | null = null;
 
   constructor(private callbacks: UiCallbacks) {
+    // The opening-hand cue should be easy to read, without making the player
+    // wait for it before bidding. Let their next tap/click dismiss it and
+    // continue to the control they intended to use.
+    document.addEventListener("pointerdown", () => {
+      if (this.tableMoment.classList.contains("dismissible")) this.hideTableMoment();
+    });
+
     // "Create a table" first asks what the table will play to; picking a
     // type is what actually creates it
     element("create-button").addEventListener("click", () => {
@@ -419,11 +427,19 @@ export class UiOverlay {
 
   // A table-wide punctuation mark for the deal and trump reveal. It never
   // accepts pointer input, so gameplay controls remain immediately usable.
-  showTableMoment(symbol: string, title: string, detail: string, duration = 1_700) {
+  showTableMoment(
+    symbol: string,
+    title: string,
+    detail: string,
+    duration = 1_700,
+    dismissible = false
+  ) {
     if (this.tableMomentTimer !== null) window.clearTimeout(this.tableMomentTimer);
     this.tableMomentSymbol.textContent = symbol;
     this.tableMomentTitle.textContent = title;
     this.tableMomentDetail.textContent = detail;
+    this.tableMomentHint.textContent = dismissible ? "tap anywhere to continue" : "";
+    this.tableMoment.classList.toggle("dismissible", dismissible);
     this.tableMoment.classList.remove("visible");
     void this.tableMoment.offsetWidth; // restart the entrance animation
     this.tableMoment.classList.add("visible");
@@ -432,7 +448,7 @@ export class UiOverlay {
 
   showTrumpReveal(suit: Suit, duration: number) {
     const glyph = SUIT_GLYPHS[suit];
-    this.showTableMoment(glyph, "Trump revealed", `${glyph} is now live`, duration);
+    this.showTableMoment(glyph, "Trump revealed", `${glyph} is now live`, duration, true);
   }
 
   hideTableMoment() {
@@ -440,7 +456,7 @@ export class UiOverlay {
       window.clearTimeout(this.tableMomentTimer);
       this.tableMomentTimer = null;
     }
-    this.tableMoment.classList.remove("visible");
+    this.tableMoment.classList.remove("visible", "dismissible");
   }
 
   setPacing(pacing: GamePacingProfile) {

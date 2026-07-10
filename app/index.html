@@ -752,6 +752,18 @@
         font-size: 18px;
         opacity: 0.72;
       }
+      #table-moment-hint {
+        min-height: 15px;
+        margin-top: 10px;
+        color: #725a28;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 1.1px;
+        opacity: 0;
+        text-transform: uppercase;
+        transition: opacity 160ms ease-out;
+      }
+      #table-moment.dismissible #table-moment-hint { opacity: 0.66; }
       @keyframes table-moment-in {
         0% { opacity: 0; transform: translate(-50%, -34%) scale(0.76); }
         58% { opacity: 1; transform: translate(-50%, -52%) scale(1.04); }
@@ -878,6 +890,7 @@
         #table-moment-symbol { font-size: 42px; }
         #table-moment-title { margin-top: 6px; font-size: 19px; }
         #table-moment-detail { font-size: 15px; }
+        #table-moment-hint { margin-top: 8px; font-size: 10px; }
         #trump-indicator {
           top: calc(36px + env(safe-area-inset-top));
           right: calc(14px + env(safe-area-inset-right));
@@ -1184,6 +1197,7 @@
         <div id="table-moment-symbol"></div>
         <div id="table-moment-title"></div>
         <div id="table-moment-detail"></div>
+        <div id="table-moment-hint"></div>
       </div>
       <div id="trump-indicator"></div>
 

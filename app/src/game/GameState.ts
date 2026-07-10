@@ -509,8 +509,9 @@ export class GameState {
         this.ui.showTableMoment(
           "✦",
           firstPacket ? "First four cards" : "Final four cards",
-          firstPacket ? "The auction begins after the deal" : "Your full hand is ready",
-          this.pacing.profile().reducedMotion ? 900 : 1_200
+          firstPacket ? "Take a moment to read your opening hand" : "Your full hand is ready",
+          this.pacing.profile().reducedMotion ? 1_200 : 3_000,
+          true
         );
         this.renderLegality();
         break;
@@ -558,7 +559,7 @@ export class GameState {
           this.trumpRevealAnnounced = true;
           this.ui.showTrumpReveal(
             this.model.trumpSuit,
-            this.pacing.profile().reducedMotion ? 1_000 : 1_900
+            this.pacing.profile().reducedMotion ? 1_200 : 3_000
           );
         }
         break;
