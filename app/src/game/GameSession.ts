@@ -13,10 +13,12 @@ import {
   initialGameModel,
   isLegalPlay,
 } from "./GameModel";
+import { GamePacingProfile } from "./GamePacing";
 
 export interface SessionCallbacks {
   readonly dispatch: (action: GameAction) => void;
   readonly getModel: () => GameModel;
+  readonly getPacing: () => GamePacingProfile;
   readonly status: (text: string) => void;
   readonly rooms: (rooms: readonly RoomInfo[]) => void;
   // a table-mate's emote, already translated to a view seat
@@ -94,11 +96,6 @@ function serverUrl(): string {
   if (configured) return configured;
   return "ws://localhost:8081/test";
 }
-
-// Bots answer instantly; these pauses pace the rendered game so turns stay readable.
-const BID_PAUSE = "400 millis";
-const CARD_PAUSE = "700 millis";
-const TRICK_PAUSE = "1400 millis";
 
 // App-level liveness ping so hosting proxies (fly.io, Netlify previews) don't
 // cull a quiet lobby socket.
@@ -381,11 +378,16 @@ export class GameSession {
   private finishTrickIfComplete(winner: PlayerIndex | null): Effect.Effect<void> {
     return Effect.gen(this, function* () {
       if (this.cardsInTrick < 4) return;
-      yield* Effect.sleep(TRICK_PAUSE);
+      const pacing = this.callbacks.getPacing();
+      // Let people read the completed four-card tableau before announcing a
+      // winner. The following wait keeps the queued next lead from drawing
+      // over the winner highlight and collection sweep.
+      yield* Effect.sleep(`${pacing.trickReadMs} millis`);
       this.callbacks.dispatch({ _tag: "TrickEnded", winner, points: this.trickPoints });
       if (winner !== null) this.pointsTaken[winner] += this.trickPoints;
       this.cardsInTrick = 0;
       this.trickPoints = 0;
+      yield* Effect.sleep(`${pacing.trickResolveMs} millis`);
     });
   }
 
@@ -481,6 +483,7 @@ export class GameSession {
             dispatch({ _tag: "SeatNamesSet", names });
           }
           dispatch({ _tag: "HandDealt", cards: event.cards });
+          yield* Effect.sleep(`${this.callbacks.getPacing().dealCompleteMs} millis`);
           return false;
         }
 
@@ -500,7 +503,7 @@ export class GameSession {
 
         case "BidPlaced":
           dispatch({ _tag: "BidPlaced", playerIndex: this.toView(event.playerIndex), bid: event.bid });
-          yield* Effect.sleep(BID_PAUSE);
+          yield* Effect.sleep(`${this.callbacks.getPacing().bidPauseMs} millis`);
           return false;
 
         case "BidResult":
@@ -524,7 +527,7 @@ export class GameSession {
           this.trickPoints += cardPoints(event.card);
           if (this.locallyPlayed.delete(event.card.id)) return false; // already rendered
           dispatch({ _tag: "CardPlayed", card: event.card, playerIndex: this.toView(event.playerIndex) });
-          yield* Effect.sleep(CARD_PAUSE);
+          yield* Effect.sleep(`${this.callbacks.getPacing().cardPauseMs} millis`);
           return false;
         }
 

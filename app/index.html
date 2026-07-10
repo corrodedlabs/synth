@@ -421,6 +421,7 @@
         pointer-events: none;
       }
       #sound-button,
+      #speed-button,
       #leave-match {
         pointer-events: auto;
         font-family: inherit;
@@ -435,6 +436,7 @@
         opacity: 0.6;
       }
       #sound-button:hover,
+      #speed-button:hover,
       #leave-match:hover {
         opacity: 1;
       }
@@ -637,6 +639,129 @@
       #status-line.visible {
         opacity: 0.85;
       }
+      #bid-history {
+        position: absolute;
+        top: 76px;
+        left: 42px;
+        z-index: 16;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        max-width: min(44vw, 520px);
+        pointer-events: none;
+      }
+      #bid-history .bid-chip {
+        padding: 4px 10px;
+        border: 1px solid rgba(59, 47, 42, 0.25);
+        border-radius: 999px;
+        background: rgba(253, 250, 243, 0.84);
+        box-shadow: 0 3px 10px rgba(59, 47, 42, 0.1);
+        font-size: 16px;
+        letter-spacing: 0.35px;
+        animation: bid-chip-in 260ms cubic-bezier(0.18, 0.78, 0.26, 1.16) both;
+      }
+      #bid-history .bid-chip.raise {
+        color: #2f6035;
+        border-color: rgba(47, 96, 53, 0.42);
+      }
+      #bid-history .bid-chip.pass {
+        color: rgba(59, 47, 42, 0.68);
+      }
+      @keyframes bid-chip-in {
+        from { opacity: 0; transform: translateY(-8px) scale(0.86); }
+        to { opacity: 1; transform: translateY(0) scale(1); }
+      }
+      #trick-outcome {
+        position: absolute;
+        /* Keep the outcome above the trick cross: the winner card remains
+           visible underneath instead of competing with its explanation. */
+        top: 14.5%;
+        left: 50%;
+        z-index: 30;
+        max-width: min(86vw, 440px);
+        padding: 10px 17px;
+        border: 1px solid rgba(59, 47, 42, 0.46);
+        border-radius: 999px;
+        color: #3b2f2a;
+        background: rgba(253, 250, 243, 0.98);
+        box-shadow: 0 8px 24px rgba(59, 47, 42, 0.19);
+        font-size: 21px;
+        font-weight: 600;
+        letter-spacing: 0.35px;
+        opacity: 0;
+        pointer-events: none;
+        transform: translate(-50%, -44%) scale(0.88);
+        transition: opacity 180ms ease-out, transform 260ms cubic-bezier(0.18, 0.78, 0.26, 1.16);
+      }
+      #trick-outcome.visible {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+      }
+      #trick-outcome.ours {
+        color: #2f6035;
+        border-color: rgba(47, 96, 53, 0.55);
+      }
+      #table-moment {
+        position: absolute;
+        top: 33%;
+        left: 50%;
+        z-index: 24;
+        min-width: 220px;
+        padding: 18px 28px 16px;
+        overflow: hidden;
+        border: 1px solid rgba(133, 104, 50, 0.5);
+        border-radius: 18px;
+        color: #3b2f2a;
+        background:
+          radial-gradient(circle at 50% -35%, rgba(255, 240, 181, 0.98), rgba(253, 250, 243, 0.97) 58%),
+          rgba(253, 250, 243, 0.97);
+        box-shadow: 0 16px 44px rgba(59, 47, 42, 0.22), inset 0 0 0 1px rgba(255, 255, 255, 0.65);
+        text-align: center;
+        opacity: 0;
+        pointer-events: none;
+        transform: translate(-50%, -44%) scale(0.82);
+      }
+      #table-moment::before {
+        content: "";
+        position: absolute;
+        inset: -60% -45%;
+        z-index: -1;
+        background: conic-gradient(from 0deg, transparent, rgba(200, 157, 63, 0.32), transparent 34%);
+        opacity: 0;
+      }
+      #table-moment.visible {
+        animation: table-moment-in 440ms cubic-bezier(0.18, 0.78, 0.26, 1.16) both;
+      }
+      #table-moment.visible::before {
+        animation: table-moment-shimmer 1.7s ease-out both;
+      }
+      #table-moment-symbol {
+        font-size: 54px;
+        line-height: 0.85;
+        text-shadow: 0 4px 14px rgba(133, 104, 50, 0.22);
+      }
+      #table-moment-title {
+        margin-top: 8px;
+        font-size: 24px;
+        font-weight: 600;
+        letter-spacing: 1.4px;
+        text-transform: uppercase;
+      }
+      #table-moment-detail {
+        margin-top: 2px;
+        font-size: 18px;
+        opacity: 0.72;
+      }
+      @keyframes table-moment-in {
+        0% { opacity: 0; transform: translate(-50%, -34%) scale(0.76); }
+        58% { opacity: 1; transform: translate(-50%, -52%) scale(1.04); }
+        100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+      }
+      @keyframes table-moment-shimmer {
+        0% { opacity: 0; transform: rotate(0deg); }
+        22% { opacity: 0.8; }
+        100% { opacity: 0; transform: rotate(150deg); }
+      }
       #trump-indicator {
         position: absolute;
         top: 64px;
@@ -726,6 +851,33 @@
           font-size: 14px;
           max-width: 58vw;
         }
+        #bid-history {
+          top: calc(62px + env(safe-area-inset-top));
+          left: calc(14px + env(safe-area-inset-left));
+          max-width: 62vw;
+          gap: 4px;
+        }
+        #bid-history .bid-chip {
+          padding: 3px 7px;
+          font-size: 13px;
+        }
+        #trick-outcome {
+          top: 18%;
+          max-width: 76vw;
+          padding: 8px 13px;
+          font-size: 16px;
+          white-space: nowrap;
+        }
+        #table-moment {
+          top: 24%;
+          min-width: 0;
+          width: min(74vw, 320px);
+          box-sizing: border-box;
+          padding: 14px 18px 13px;
+        }
+        #table-moment-symbol { font-size: 42px; }
+        #table-moment-title { margin-top: 6px; font-size: 19px; }
+        #table-moment-detail { font-size: 15px; }
         #trump-indicator {
           top: calc(36px + env(safe-area-inset-top));
           right: calc(14px + env(safe-area-inset-right));
@@ -809,6 +961,10 @@
         #result-panel #result-icon {
           font-size: 48px;
         }
+        #result-panel #result-delta {
+          margin-bottom: 10px;
+          font-size: 15px;
+        }
         #result-hands .hand-chip {
           font-size: 14px;
           padding: 2px 8px;
@@ -837,6 +993,7 @@
           gap: 12px;
         }
         #sound-button,
+        #speed-button,
         #leave-match {
           font-size: 15px;
           padding: 6px 2px;
@@ -921,11 +1078,34 @@
         transform: translate(-50%, -50%);
         min-width: 320px;
         padding: 30px 44px;
+        /* Results need absolute visual priority; translucent felt and seat
+           markers made the verdict harder to read on a phone. */
+        background: #fdfaf3;
+      }
+      #result-panel:not(.hidden) {
+        animation: result-panel-in 420ms cubic-bezier(0.18, 0.78, 0.26, 1.12) both;
+      }
+      @keyframes result-panel-in {
+        from { opacity: 0; transform: translate(-50%, -45%) scale(0.92); }
+        to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
       }
       #result-panel #result-icon {
         font-size: 60px;
         line-height: 1.1;
         margin-bottom: 4px;
+      }
+      #result-panel #result-icon.gain,
+      #result-panel #result-delta.gain { color: #2f6035; }
+      #result-panel #result-icon.loss,
+      #result-panel #result-delta.loss { color: #a33c2e; }
+      #result-panel #result-delta {
+        display: inline-block;
+        margin: 0 0 12px;
+        padding: 3px 11px;
+        border: 1px solid currentColor;
+        border-radius: 999px;
+        font-size: 17px;
+        font-weight: 600;
       }
       #result-panel #result-hands {
         display: flex;
@@ -965,6 +1145,26 @@
         font-style: italic;
         min-height: 24px;
       }
+      @media (prefers-reduced-motion: reduce) {
+        #bid-history .bid-chip,
+        #table-moment.visible,
+        #result-panel:not(.hidden) {
+          animation: reduced-fade 120ms ease-out both;
+        }
+        #table-moment.visible::before {
+          animation: none;
+        }
+        #trick-outcome {
+          transition: opacity 120ms ease-out;
+        }
+        #trick-outcome.visible {
+          transform: translate(-50%, -50%) scale(1);
+        }
+      }
+      @keyframes reduced-fade {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
     </style>
   </head>
   <body>
@@ -978,6 +1178,13 @@
         <span class="label">Match:</span><span id="match-value" class="value">0 — 0</span>
       </div>
       <div id="status-line"></div>
+      <div id="bid-history" class="hidden" aria-live="polite"></div>
+      <div id="trick-outcome" aria-live="polite" aria-atomic="true"></div>
+      <div id="table-moment" aria-live="polite" aria-atomic="true">
+        <div id="table-moment-symbol"></div>
+        <div id="table-moment-title"></div>
+        <div id="table-moment-detail"></div>
+      </div>
       <div id="trump-indicator"></div>
 
       <div id="seat-label-1" class="seat-name-label"></div>
@@ -987,6 +1194,7 @@
       <button id="help-button" type="button">how to play</button>
       <div id="corner-actions">
         <button id="sound-button" type="button">sound on</button>
+        <button id="speed-button" type="button">speed: standard</button>
         <button id="leave-match" type="button" class="hidden">leave match</button>
       </div>
       <button id="emote-button" type="button" class="hidden" title="send an emote">☺</button>
@@ -1049,6 +1257,7 @@
         <div id="result-icon" class="hidden"></div>
         <div id="result-title"></div>
         <div id="result-detail"></div>
+        <div id="result-delta" class="hidden"></div>
         <div id="result-hands" class="hidden"></div>
         <button id="next-hand" type="button" class="hidden">Deal the next hand</button>
         <div id="result-wait" class="hidden">waiting for the host to deal…</div>

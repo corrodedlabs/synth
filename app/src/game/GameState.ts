@@ -1,4 +1,5 @@
 import { Effect, Fiber } from "effect";
+import * as TWEEN from "@tweenjs/tween.js";
 import { DragControls } from "../interaction/DragControls";
 import { SceneManager } from "../scene/SceneManager";
 import { Lighting } from "../scene/Lighting";
@@ -21,6 +22,7 @@ import {
 import { GameSession, storedActiveMatch } from "./GameSession";
 import { Hand } from "./Hand";
 import { mockGameProgram } from "./MockGameProgram";
+import { GamePacing } from "./GamePacing";
 import { PlayArea } from "./PlayArea";
 
 export class GameState {
@@ -29,6 +31,7 @@ export class GameState {
   private table: Table;
   private hand: Hand;
   private playArea: PlayArea;
+  private pacing = new GamePacing();
   private zenTextures: ZenCardTextures;
   private dragControls: DragControls;
   // Phones render cards larger; applied to the hand fan and played cards.
@@ -39,10 +42,13 @@ export class GameState {
   private model: GameModel = initialGameModel;
   private mockFiber: Fiber.RuntimeFiber<void, never> | null = null;
   private mockMode = false;
+  private trumpRevealAnnounced = false;
 
   private scoreElement: HTMLElement | null = null;
   private tricksElement: HTMLElement | null = null;
   private matchElement: HTMLElement | null = null;
+  private hudValues = { score: 0, theirScore: 0, tricks: 0, theirTricks: 0, matchUs: 0, matchThem: 0 };
+  private scoreTween: TWEEN.Tween<typeof this.hudValues> | null = null;
 
   constructor(sceneManager: SceneManager) {
     this.sceneManager = sceneManager;
@@ -51,6 +57,7 @@ export class GameState {
     this.table = new Table(this.sceneManager.scene);
     this.hand = new Hand(this.sceneManager.scene, this.sceneManager.camera);
     this.playArea = new PlayArea(this.sceneManager.scene, this.sceneManager.camera);
+    this.playArea.setPacing(this.pacing.profile());
     this.zenTextures = new ZenCardTextures();
 
     this.dragControls = new DragControls(
@@ -88,11 +95,17 @@ export class GameState {
       // a reload is the cleanest road home: the match is over, the stored
       // identity survives, and every scrap of scene state resets
       onGoHome: () => window.location.reload(),
+      onCyclePacing: () => {
+        const pacing = this.pacing.cycleSpeed();
+        this.playArea.setPacing(pacing);
+        return pacing;
+      },
     });
 
     this.scoreElement = document.getElementById("score-value");
     this.tricksElement = document.getElementById("tricks-value");
     this.matchElement = document.getElementById("match-value");
+    this.ui.setPacing(this.pacing.profile());
     this.sound.bindToggle(document.getElementById("sound-button"));
     // every button answers the finger with a tick (pointerdown beats click
     // so the sound lands on the press, not the release)
@@ -250,6 +263,7 @@ export class GameState {
       {
         dispatch: (action) => this.dispatch(action),
         getModel: () => this.model,
+        getPacing: () => this.pacing.profile(),
         status: (text) => this.ui.status(text),
         rooms: (rooms) => this.ui.showRooms(rooms),
         emote: (seat, emote) => this.showEmote(seat, emote),
@@ -416,6 +430,10 @@ export class GameState {
   }
 
   private renderAction(action: GameAction) {
+    // Keep Three.js motion in lockstep with the pacing values that guard
+    // server-event presentation. This also responds to a live OS reduced
+    // motion preference change without touching game state.
+    this.playArea.setPacing(this.pacing.profile());
     switch (action._tag) {
       case "PhaseChanged":
         if (action.phase === "connecting") this.ui.status("Connecting…");
@@ -476,8 +494,24 @@ export class GameState {
         this.ui.hideLobby();
         // a live table always offers a way out (not in ?mock=1 — no server)
         this.ui.setLeaveMatchVisible(this.session !== null);
+        // The server deals exactly two packets of four. The model already
+        // owns all received cards; this only stages their arrival in the fan.
+        const firstPacket = this.model.hand.length === action.cards.length;
+        if (firstPacket) {
+          this.trumpRevealAnnounced = false;
+          this.ui.clearBidHistory();
+        }
         this.sound.deal(action.cards.length);
-        action.cards.forEach((card) => this.hand.addCard(this.createCard(card)));
+        this.hand.dealCards(
+          action.cards.map((card) => this.createCard(card)),
+          this.pacing.profile().dealCardStaggerMs
+        );
+        this.ui.showTableMoment(
+          "✦",
+          firstPacket ? "First four cards" : "Final four cards",
+          firstPacket ? "The auction begins after the deal" : "Your full hand is ready",
+          this.pacing.profile().reducedMotion ? 900 : 1_200
+        );
         this.renderLegality();
         break;
 
@@ -495,17 +529,19 @@ export class GameState {
         break;
 
       case "TrickScored":
-        this.renderScore();
+        this.renderScore(this.pacing.profile().scoreLandingMs);
         break;
 
       case "BidPlaced": {
         const seat = this.seatName(action.playerIndex);
         this.sound.bidTick();
+        this.ui.showBidEvent(seat, action.bid);
         this.ui.status(action.bid === "pass" ? `${seat} pass${action.playerIndex === 0 ? "" : "es"}` : `${seat} bid${action.playerIndex === 0 ? "" : "s"} ${action.bid}`, true);
         break;
       }
 
       case "BidWon":
+        this.ui.clearBidHistory();
         this.ui.status(`${this.seatName(action.playerIndex)} won the bid at ${action.bid}`, true);
         break;
 
@@ -514,7 +550,17 @@ export class GameState {
         // TrumpSet dispatches from play requests repeat the suit
         if (action.exposed && action.suit === null) this.sound.trumpReveal();
         this.ui.setTrump(this.model.trumpSuit, this.model.trumpExposed);
-        if (this.model.trumpExposed) this.ui.status("Trump is revealed", true);
+        if (
+          this.model.trumpExposed &&
+          this.model.trumpSuit !== null &&
+          !this.trumpRevealAnnounced
+        ) {
+          this.trumpRevealAnnounced = true;
+          this.ui.showTrumpReveal(
+            this.model.trumpSuit,
+            this.pacing.profile().reducedMotion ? 1_000 : 1_900
+          );
+        }
         break;
 
       case "RequestReceived":
@@ -545,20 +591,28 @@ export class GameState {
 
       case "TrickCleared":
         this.playArea.clearTable();
+        this.ui.hideTrickOutcome();
         break;
 
       case "TrickEnded": {
-        this.playArea.clearTable(action.winner);
-        this.renderScore();
+        // The prior turn prompt can otherwise say "Your turn" while another
+        // player is visibly taking the trick, which undermines the outcome.
+        this.ui.status("");
         if (action.winner !== null) {
-          this.sound.trickSweep();
           const seat = this.seatName(action.winner);
           const taker = action.winner === 0 ? "You take" : `${seat} takes`;
-          this.ui.status(
-            action.points > 0 ? `${taker} the trick (+${action.points})` : `${taker} the trick`,
-            true
-          );
+          const ours = action.winner === 0 || action.winner === 2;
+          this.ui.showTrickOutcome(taker, action.points, ours);
         }
+        this.playArea.resolveTrick(action.winner, {
+          onCollect: () => {
+            if (action.winner !== null) this.sound.trickSweep();
+          },
+          onComplete: () => {
+            this.renderScore(this.pacing.profile().scoreLandingMs);
+            this.ui.hideTrickOutcome();
+          },
+        });
         break;
       }
 
@@ -575,7 +629,7 @@ export class GameState {
         break;
 
       case "HandResult": {
-        this.renderScore(); // match HUD segment just changed
+        this.renderScore(this.pacing.profile().scoreLandingMs); // match HUD segment just changed
         // when a team has reached the target, match-over is already in
         // flight — its panel and fanfare replace the between-hands ones
         if (
@@ -587,16 +641,25 @@ export class GameState {
         const bidderOurs = action.bidder === 0 || action.bidder === 2;
         const bidderPoints = bidderOurs ? this.model.score : this.model.theirScore;
         const bidderName = action.bidder === 0 ? "Your" : `${this.seatName(action.bidder)}'s`;
+        const results = this.model.handResults;
+        const matchSwing = results.length === 0 ? 0 : results[results.length - 1];
+        const swingDetail =
+          matchSwing > 0
+            ? `Your team gains ${matchSwing} match point${matchSwing === 1 ? "" : "s"}.`
+            : matchSwing < 0
+              ? `Their team gains ${-matchSwing} match point${matchSwing === -1 ? "" : "s"}.`
+              : "The match score is unchanged.";
         const detail =
           `${bidderName} team bid ${action.bid} and took ${bidderPoints} — ${action.made ? "made it" : "set"}\n` +
-          `Match: ${this.model.matchUs} — ${this.model.matchThem} (first to ${this.model.matchTarget})`;
+          `${swingDetail}\nMatch: ${this.model.matchUs} — ${this.model.matchThem} (first to ${this.model.matchTarget})`;
         this.sound.result(bidderOurs ? action.made : !action.made);
         this.ui.status("");
         this.ui.showHandResult(
           this.model.score,
           this.model.theirScore,
           detail,
-          actingHostEmail(this.model.members) === (this.session?.email ?? "")
+          actingHostEmail(this.model.members) === (this.session?.email ?? ""),
+          matchSwing
         );
         break;
       }
@@ -604,6 +667,8 @@ export class GameState {
       case "HandReset":
         // the next deal is landing: clear the table but keep the seats,
         // their name labels, and the match HUD
+        this.hand.cancelPendingDeals();
+        this.trumpRevealAnnounced = false;
         this.dragControls.clearSelection();
         for (const card of [...this.hand.getCards()]) {
           this.hand.removeCard(card);
@@ -611,6 +676,8 @@ export class GameState {
         }
         this.playArea.clearTable();
         this.playArea.clearActivePlayer();
+        this.ui.hideTrickOutcome();
+        this.ui.clearBidHistory();
         this.ui.setTrump(null, false);
         this.ui.hideBidPanel();
         this.ui.hideTrumpPanel();
@@ -639,6 +706,8 @@ export class GameState {
         // a reconnect: rebuild the whole scene from the restored model;
         // any pending request/result is re-dispatched right after and
         // brings its own panel back up
+        this.hand.cancelPendingDeals();
+        this.trumpRevealAnnounced = this.model.trumpExposed;
         this.dragControls.clearSelection();
         for (const card of [...this.hand.getCards()]) {
           this.hand.removeCard(card);
@@ -646,12 +715,14 @@ export class GameState {
         }
         this.playArea.clearTable();
         this.playArea.clearActivePlayer();
+        this.ui.hideTrickOutcome();
         this.ui.hideLobby();
         this.ui.hideBidPanel();
         this.ui.hideTrumpPanel();
         this.ui.setExposeVisible(false);
         this.ui.hideResult();
         this.ui.hideAbandonPanel();
+        this.ui.clearBidHistory();
         this.model.hand.forEach((card) => this.hand.addCard(this.createCard(card)));
         for (const played of this.model.playedCards) {
           this.playCard(played.card, played.playerIndex);
@@ -710,15 +781,45 @@ export class GameState {
     }
   }
 
-  private renderScore() {
+  private renderScore(duration = 0) {
+    const target = {
+      score: this.model.score,
+      theirScore: this.model.theirScore,
+      tricks: this.model.tricks,
+      theirTricks: this.model.theirTricks,
+      matchUs: this.model.matchUs,
+      matchThem: this.model.matchThem,
+    };
+    this.scoreTween?.stop();
+    this.scoreTween = null;
+
+    if (duration === 0) {
+      Object.assign(this.hudValues, target);
+      this.writeScore();
+      return;
+    }
+
+    this.scoreTween = new TWEEN.Tween(this.hudValues)
+      .to(target, duration)
+      .easing(TWEEN.Easing.Quadratic.Out)
+      .onUpdate(() => this.writeScore())
+      .onComplete(() => {
+        Object.assign(this.hudValues, target);
+        this.scoreTween = null;
+        this.writeScore();
+      })
+      .start();
+  }
+
+  private writeScore() {
     if (this.scoreElement) {
-      this.scoreElement.textContent = `${this.model.score} — ${this.model.theirScore}`;
+      this.scoreElement.textContent = `${Math.round(this.hudValues.score)} — ${Math.round(this.hudValues.theirScore)}`;
     }
     if (this.tricksElement) {
-      this.tricksElement.textContent = `${this.model.tricks} — ${this.model.theirTricks}`;
+      this.tricksElement.textContent = `${Math.round(this.hudValues.tricks)} — ${Math.round(this.hudValues.theirTricks)}`;
     }
     if (this.matchElement) {
-      this.matchElement.textContent = `${this.model.matchUs} — ${this.model.matchThem}`;
+      this.matchElement.textContent = `${Math.round(this.hudValues.matchUs)} — ${Math.round(this.hudValues.matchThem)}`;
     }
   }
 }

@@ -1,4 +1,5 @@
 import { GameModel, Suit } from "../game/GameModel";
+import type { GamePacingProfile } from "../game/GamePacing";
 import { RoomInfo } from "../net/protocol";
 
 export interface UiCallbacks {
@@ -22,6 +23,7 @@ export interface UiCallbacks {
   readonly onReplaceBot: () => void;
   readonly onEndMatch: () => void;
   readonly onGoHome: () => void;
+  readonly onCyclePacing: () => GamePacingProfile;
 }
 
 export const SEAT_NAMES = ["You", "Right", "Partner", "Left"] as const;
@@ -64,6 +66,12 @@ export class UiOverlay {
   private leaveTableButton = element("leave-table") as HTMLButtonElement;
   private lobbyHint = element("lobby-hint");
   private statusLine = element("status-line");
+  private bidHistory = element("bid-history");
+  private trickOutcome = element("trick-outcome");
+  private tableMoment = element("table-moment");
+  private tableMomentSymbol = element("table-moment-symbol");
+  private tableMomentTitle = element("table-moment-title");
+  private tableMomentDetail = element("table-moment-detail");
   private bidPanel = element("bid-panel");
   private bidLabel = element("bid-label");
   private bidRaise = element("bid-raise") as HTMLButtonElement;
@@ -74,11 +82,13 @@ export class UiOverlay {
   private resultIcon = element("result-icon");
   private resultTitle = element("result-title");
   private resultDetail = element("result-detail");
+  private resultDelta = element("result-delta");
   private resultHands = element("result-hands");
   private nextHandButton = element("next-hand") as HTMLButtonElement;
   private resultWait = element("result-wait");
   private goHomeButton = element("go-home") as HTMLButtonElement;
   private leaveMatchButton = element("leave-match") as HTMLButtonElement;
+  private speedButton = element("speed-button") as HTMLButtonElement;
   private joinLinkButton = element("join-link") as HTMLButtonElement;
   private copyInviteButton = element("copy-invite") as HTMLButtonElement;
   private emoteButton = element("emote-button") as HTMLButtonElement;
@@ -91,6 +101,7 @@ export class UiOverlay {
   private uiLayer = element("ui-layer");
   private trumpIndicator = element("trump-indicator");
   private statusTimer: number | null = null;
+  private tableMomentTimer: number | null = null;
   private leaveArmTimer: number | null = null;
   private copyResetTimer: number | null = null;
   private joinTarget: string | null = null;
@@ -215,6 +226,7 @@ export class UiOverlay {
       this.hideAbandonPanel();
       callbacks.onEndMatch();
     });
+    this.speedButton.addEventListener("click", () => this.setPacing(callbacks.onCyclePacing()));
     for (const [id, glyph] of Object.entries(EMOTES)) {
       const button = document.createElement("button");
       button.type = "button";
@@ -378,6 +390,69 @@ export class UiOverlay {
     }
   }
 
+  // This sits over the table rather than in the busy HUD, so the player can
+  // connect the winning card, seat, and point total in one glance.
+  showTrickOutcome(taker: string, points: number, ours: boolean) {
+    this.trickOutcome.textContent =
+      points > 0 ? `${taker} the trick · +${points}` : `${taker} the trick`;
+    this.trickOutcome.classList.toggle("ours", ours);
+    this.trickOutcome.classList.add("visible");
+  }
+
+  hideTrickOutcome() {
+    this.trickOutcome.classList.remove("visible", "ours");
+  }
+
+  showBidEvent(seat: string, bid: number | "pass") {
+    const chip = document.createElement("span");
+    chip.className = `bid-chip ${bid === "pass" ? "pass" : "raise"}`;
+    chip.textContent = bid === "pass" ? `${seat} passes` : `${seat} ${bid}`;
+    this.bidHistory.append(chip);
+    while (this.bidHistory.childElementCount > 4) this.bidHistory.firstElementChild?.remove();
+    this.show(this.bidHistory);
+  }
+
+  clearBidHistory() {
+    this.bidHistory.innerHTML = "";
+    this.hide(this.bidHistory);
+  }
+
+  // A table-wide punctuation mark for the deal and trump reveal. It never
+  // accepts pointer input, so gameplay controls remain immediately usable.
+  showTableMoment(symbol: string, title: string, detail: string, duration = 1_700) {
+    if (this.tableMomentTimer !== null) window.clearTimeout(this.tableMomentTimer);
+    this.tableMomentSymbol.textContent = symbol;
+    this.tableMomentTitle.textContent = title;
+    this.tableMomentDetail.textContent = detail;
+    this.tableMoment.classList.remove("visible");
+    void this.tableMoment.offsetWidth; // restart the entrance animation
+    this.tableMoment.classList.add("visible");
+    this.tableMomentTimer = window.setTimeout(() => this.hideTableMoment(), duration);
+  }
+
+  showTrumpReveal(suit: Suit, duration: number) {
+    const glyph = SUIT_GLYPHS[suit];
+    this.showTableMoment(glyph, "Trump revealed", `${glyph} is now live`, duration);
+  }
+
+  hideTableMoment() {
+    if (this.tableMomentTimer !== null) {
+      window.clearTimeout(this.tableMomentTimer);
+      this.tableMomentTimer = null;
+    }
+    this.tableMoment.classList.remove("visible");
+  }
+
+  setPacing(pacing: GamePacingProfile) {
+    this.speedButton.textContent = pacing.reducedMotion
+      ? "motion reduced"
+      : `speed: ${pacing.speed}`;
+    this.speedButton.disabled = pacing.reducedMotion;
+    this.speedButton.title = pacing.reducedMotion
+      ? "Your device requests reduced motion"
+      : "Change animation speed";
+  }
+
   // minBid is the lowest bid the server will accept; the opener must bid.
   showBidPanel(minBid: number, isOpening: boolean) {
     this.bidLabel.textContent = isOpening
@@ -421,10 +496,31 @@ export class UiOverlay {
 
   // Between hands: the hand's card points, the verdict + match score, and
   // either the host's deal button or a waiting note for everyone else.
-  showHandResult(ourPoints: number, theirPoints: number, detail: string, isHost: boolean) {
+  showHandResult(
+    ourPoints: number,
+    theirPoints: number,
+    detail: string,
+    isHost: boolean,
+    matchSwing: number
+  ) {
     this.resultTitle.textContent = `${ourPoints} — ${theirPoints}`;
     this.resultDetail.textContent = detail;
-    this.hide(this.resultIcon);
+    const ours = matchSwing > 0;
+    this.resultPanel.classList.toggle("hand-won", ours);
+    this.resultPanel.classList.toggle("hand-lost", matchSwing < 0);
+    this.resultIcon.textContent = ours ? "✦" : "◆";
+    this.resultIcon.classList.toggle("gain", ours);
+    this.resultIcon.classList.toggle("loss", matchSwing < 0);
+    this.show(this.resultIcon);
+    this.resultDelta.textContent =
+      matchSwing > 0
+        ? `+${matchSwing} match point${matchSwing === 1 ? "" : "s"}`
+        : matchSwing < 0
+          ? `−${-matchSwing} match point${matchSwing === -1 ? "" : "s"}`
+          : "match score unchanged";
+    this.resultDelta.classList.toggle("gain", ours);
+    this.resultDelta.classList.toggle("loss", matchSwing < 0);
+    this.show(this.resultDelta);
     this.hide(this.resultHands);
     this.hide(this.goHomeButton);
     if (isHost) {
@@ -446,6 +542,8 @@ export class UiOverlay {
     target: number,
     handResults: readonly number[]
   ) {
+    this.resultPanel.classList.remove("hand-won", "hand-lost");
+    this.resultIcon.classList.remove("gain", "loss");
     this.resultIcon.textContent = weWon ? "🏆" : "🍂";
     this.show(this.resultIcon);
     this.resultTitle.textContent = weWon ? "You win the match!" : "Match lost";
@@ -468,11 +566,15 @@ export class UiOverlay {
     }
     this.hide(this.nextHandButton);
     this.hide(this.resultWait);
+    this.hide(this.resultDelta);
     this.show(this.goHomeButton);
     this.show(this.resultPanel);
   }
 
   hideResult() {
+    this.resultPanel.classList.remove("hand-won", "hand-lost");
+    this.resultIcon.classList.remove("gain", "loss");
+    this.hideTableMoment();
     this.hide(this.resultPanel);
   }
 

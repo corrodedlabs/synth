@@ -45,6 +45,10 @@ const getState = () =>
       trumpExposed: state.trumpExposed,
       points: state.points,
       legal: window.__game.legalCards(),
+      trickOutcome: {
+        visible: document.getElementById("trick-outcome")?.classList.contains("visible") ?? false,
+        text: document.getElementById("trick-outcome")?.textContent ?? "",
+      },
     };
   });
 
@@ -133,9 +137,9 @@ while (Date.now() < deadline) {
     await shot("05-trick");
     shotTrick = true;
   }
-  if (state.statusText.includes("trick") && !shotTrickEnd) {
+  if (state.trickOutcome.visible && !shotTrickEnd) {
     await shot("05b-trick-end");
-    console.log(`trick-end status: "${state.statusText}"`);
+    console.log(`trick outcome: "${state.trickOutcome.text}"`);
     shotTrickEnd = true;
   }
 

@@ -10,6 +10,7 @@ export class Hand {
   private widthScale = 1;
   // Phones blow the cards up a little so ranks stay thumb-readable.
   private cardScale = 1;
+  private dealTimers = new Set<number>();
 
   public setWidthScale(scale: number) {
     if (scale === this.widthScale) return;
@@ -49,6 +50,30 @@ export class Hand {
     card.setRotation(this.faceCameraRotX(spawn), 0, 0, true);
     this.scene.add(card.mesh);
     this.arrangeCards();
+  }
+
+  // The server already sends four cards before the auction and four after
+  // trump selection. Staggering each packet gives the hand a clear deal
+  // rhythm without delaying the authoritative hand model.
+  public dealCards(cards: readonly Card[], staggerMs: number) {
+    this.cancelPendingDeals();
+    cards.forEach((card, index) => {
+      const delay = staggerMs * index;
+      if (delay === 0) {
+        this.addCard(card);
+        return;
+      }
+      const timer = window.setTimeout(() => {
+        this.dealTimers.delete(timer);
+        this.addCard(card);
+      }, delay);
+      this.dealTimers.add(timer);
+    });
+  }
+
+  public cancelPendingDeals() {
+    this.dealTimers.forEach((timer) => window.clearTimeout(timer));
+    this.dealTimers.clear();
   }
 
   public removeCard(card: Card) {

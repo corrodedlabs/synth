@@ -116,10 +116,34 @@ let shotHand = false;
 let shotTrick = false;
 let checkedDimming = false;
 let checkedArming = false;
+let checkedDealMoment = false;
+let checkedBidHistory = false;
+let checkedTrickOutcome = false;
 const deadline = Date.now() + 180_000;
 while (Date.now() < deadline) {
   const snapshot = await state();
   if (snapshot.phase === "hand-finished") break;
+
+  const presentation = await page.evaluate(() => {
+    const visible = (id) => !document.getElementById(id)?.classList.contains("hidden");
+    return {
+      dealMoment: document.getElementById("table-moment")?.classList.contains("visible") ?? false,
+      bidHistory: visible("bid-history"),
+      trickOutcome: document.getElementById("trick-outcome")?.classList.contains("visible") ?? false,
+    };
+  });
+  if (presentation.dealMoment && !checkedDealMoment) {
+    await checkFits("#table-moment", "deal moment");
+    checkedDealMoment = true;
+  }
+  if (presentation.bidHistory && !checkedBidHistory) {
+    await checkFits("#bid-history", "bid history");
+    checkedBidHistory = true;
+  }
+  if (presentation.trickOutcome && !checkedTrickOutcome) {
+    await checkFits("#trick-outcome", "trick outcome");
+    checkedTrickOutcome = true;
+  }
 
   if (snapshot.hand.length === 8 && !shotHand) {
     await page.waitForTimeout(700);
@@ -192,7 +216,12 @@ while (Date.now() < deadline) {
 const final = await state();
 check("hand finished on mobile", final.phase === "hand-finished");
 check(`cards played by real taps (${tappedPlays}/8)`, tappedPlays >= 6);
+await page.waitForSelector("#result-panel:not(.hidden)", { timeout: 10000 });
 await checkFits("#result-panel", "result panel");
+await checkFits("#result-delta", "match-point result chip");
+check("deal moment appeared", checkedDealMoment);
+check("bid history appeared", checkedBidHistory);
+check("trick outcome appeared", checkedTrickOutcome);
 await shot("06-result");
 
 if (errors.length) {
