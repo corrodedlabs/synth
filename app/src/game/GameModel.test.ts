@@ -120,6 +120,25 @@ describe("actingHostEmail", () => {
 });
 
 describe("gameReducer", () => {
+  it("reveals the trump suit to every table view before another play request", () => {
+    const views = [
+      playing({ trumpSuit: "clubs", trumpExposed: false }), // bidder already knows
+      playing({ trumpSuit: null, trumpExposed: false }),
+      playing({ trumpSuit: null, trumpExposed: false }),
+      playing({ trumpSuit: null, trumpExposed: false }),
+    ];
+    const revealed = views.map((view, playerIndex) =>
+      gameReducer(view, {
+        _tag: "TrumpRevealed",
+        suit: "clubs",
+        playerIndex: playerIndex as 0 | 1 | 2 | 3,
+      })
+    );
+    expect(revealed.every((model) => model.trumpSuit === "clubs")).toBe(true);
+    expect(revealed.every((model) => model.trumpExposed)).toBe(true);
+    expect(revealed.every((model) => model.pendingRequest === null)).toBe(true);
+  });
+
   it("counts bids and passes through the auction", () => {
     let model = initialGameModel;
     model = gameReducer(model, { _tag: "BidPlaced", playerIndex: 1, bid: 17 });

@@ -127,7 +127,8 @@ export type ServerEvent =
   | { readonly _tag: "BidResult"; readonly bid: number; readonly playerIndex: number }
   | { readonly _tag: "ChooseTrumpRequested" }
   | { readonly _tag: "TrumpSelected" }
-  | { readonly _tag: "CardPlayed"; readonly playerIndex: number; readonly card: CardModel | "expose-trump" }
+  | { readonly _tag: "CardPlayed"; readonly playerIndex: number; readonly card: CardModel }
+  | { readonly _tag: "TrumpExposed"; readonly playerIndex: number; readonly suit: Suit }
   | {
       readonly _tag: "PlayRequested";
       readonly cardsPlayed: readonly CardModel[];
@@ -293,10 +294,19 @@ export function decodeServerExpr(expr: SExpr, trimmed = writeSExpr(expr)): Serve
 
     case "played": {
       const card = rest[1];
+      if (isSym(card, "expose-trump")) {
+        const suit = decodeSuit(rest[2] ?? false);
+        if (suit === null) return { _tag: "Ignored", raw: trimmed };
+        return {
+          _tag: "TrumpExposed",
+          playerIndex: rest[0] as number,
+          suit,
+        };
+      }
       return {
         _tag: "CardPlayed",
         playerIndex: rest[0] as number,
-        card: isSym(card, "expose-trump") ? "expose-trump" : decodeCard(card),
+        card: decodeCard(card),
       };
     }
 

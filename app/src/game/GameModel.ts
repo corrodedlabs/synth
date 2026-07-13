@@ -97,6 +97,7 @@ export type GameAction =
   | { readonly _tag: "BidPlaced"; readonly playerIndex: PlayerIndex; readonly bid: number | "pass" }
   | { readonly _tag: "BidWon"; readonly playerIndex: PlayerIndex; readonly bid: number }
   | { readonly _tag: "TrumpSet"; readonly suit: Suit | null; readonly exposed: boolean }
+  | { readonly _tag: "TrumpRevealed"; readonly suit: Suit; readonly playerIndex: PlayerIndex }
   | { readonly _tag: "RequestReceived"; readonly request: PendingRequest }
   | { readonly _tag: "RequestCleared" }
   | { readonly _tag: "TrickCleared" }
@@ -242,6 +243,14 @@ export function gameReducer(state: GameModel, action: GameAction): GameModel {
         ...state,
         trumpSuit: action.suit ?? state.trumpSuit,
         trumpExposed: action.exposed || state.trumpExposed,
+        phase: state.phase === "choosing-trump" ? "playing" : state.phase,
+      };
+
+    case "TrumpRevealed":
+      return {
+        ...state,
+        trumpSuit: action.suit,
+        trumpExposed: true,
         phase: state.phase === "choosing-trump" ? "playing" : state.phase,
       };
 

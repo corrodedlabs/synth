@@ -102,10 +102,10 @@ describe("decodeServerEvent", () => {
       playerIndex: 3,
       card: { id: "hearts-8", suit: "hearts", rank: "8" },
     });
-    expect(decodeServerEvent("(played 3 expose-trump)")).toEqual({
-      _tag: "CardPlayed",
+    expect(decodeServerEvent("(played 3 expose-trump club)")).toEqual({
+      _tag: "TrumpExposed",
       playerIndex: 3,
-      card: "expose-trump",
+      suit: "clubs",
     });
   });
 

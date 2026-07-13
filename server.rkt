@@ -705,8 +705,17 @@
                                 (let ((player (list-ref players player-index)))
                                   (set-user-hand! player
                                                   (remove card (user-hand player)))))
-                              (send-datum-to-all players
-                                                 `(played ,player-index ,card)))
+                              ;; Exposure is public information from this
+                              ;; instant onward. Carry the suit on the same
+                              ;; table-wide event so spectators do not have
+                              ;; to wait for their own private play request
+                              ;; to learn it. Keeping the `played` envelope
+                              ;; preserves compatibility with bot clients.
+                              (send-datum-to-all
+                               players
+                               (if (eq? card 'expose-trump)
+                                   `(played ,player-index expose-trump ,trump-suit)
+                                   `(played ,player-index ,card))))
                             #:error-func
                             (λ (player-index error-msg)
                               (send-datum (list-ref players player-index)

@@ -446,9 +446,10 @@ export class UiOverlay {
     this.tableMomentTimer = window.setTimeout(() => this.hideTableMoment(), duration);
   }
 
-  showTrumpReveal(suit: Suit, duration: number) {
+  showTrumpReveal(suit: Suit, revealer: string | null, duration: number) {
     const glyph = SUIT_GLYPHS[suit];
-    this.showTableMoment(glyph, "Trump revealed", `${glyph} is now live`, duration, true);
+    const title = revealer === null ? "Trump revealed" : `${revealer} revealed trump`;
+    this.showTableMoment(glyph, title, `${glyph} is now live`, duration, true);
   }
 
   hideTableMoment() {

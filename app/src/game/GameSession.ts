@@ -518,11 +518,15 @@ export class GameSession {
           dispatch({ _tag: "TrumpSet", suit: this.chosenTrump, exposed: false });
           return false;
 
+        case "TrumpExposed":
+          dispatch({
+            _tag: "TrumpRevealed",
+            suit: event.suit,
+            playerIndex: this.toView(event.playerIndex),
+          });
+          return false;
+
         case "CardPlayed": {
-          if (event.card === "expose-trump") {
-            dispatch({ _tag: "TrumpSet", suit: null, exposed: true });
-            return false;
-          }
           this.cardsInTrick++;
           this.trickPoints += cardPoints(event.card);
           if (this.locallyPlayed.delete(event.card.id)) return false; // already rendered

@@ -547,10 +547,9 @@ export class GameState {
         break;
 
       case "TrumpSet":
-        // suit:null + exposed is the one-time exposure broadcast; the later
-        // TrumpSet dispatches from play requests repeat the suit
-        if (action.exposed && action.suit === null) this.sound.trumpReveal();
         this.ui.setTrump(this.model.trumpSuit, this.model.trumpExposed);
+        // Rejoin snapshots and older servers may establish an already
+        // exposed trump without a live TrumpRevealed event.
         if (
           this.model.trumpExposed &&
           this.model.trumpSuit !== null &&
@@ -559,6 +558,20 @@ export class GameState {
           this.trumpRevealAnnounced = true;
           this.ui.showTrumpReveal(
             this.model.trumpSuit,
+            null,
+            this.pacing.profile().reducedMotion ? 1_200 : 3_000
+          );
+        }
+        break;
+
+      case "TrumpRevealed":
+        this.sound.trumpReveal();
+        this.ui.setTrump(this.model.trumpSuit, this.model.trumpExposed);
+        if (!this.trumpRevealAnnounced) {
+          this.trumpRevealAnnounced = true;
+          this.ui.showTrumpReveal(
+            action.suit,
+            this.seatName(action.playerIndex),
             this.pacing.profile().reducedMotion ? 1_200 : 3_000
           );
         }
