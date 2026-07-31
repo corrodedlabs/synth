@@ -4,7 +4,7 @@ import { gamePacing } from "./GamePacing";
 describe("gamePacing", () => {
   it("keeps each normal-speed presentation stage in order", () => {
     const pacing = gamePacing();
-    expect(pacing.bidPauseMs).toBe(4_000);
+    expect(pacing.bidPauseMs).toBe(3_000);
     expect(pacing.cardPauseMs).toBeGreaterThan(pacing.cardTravelMs);
     expect(pacing.dealCompleteMs).toBeGreaterThan(pacing.dealCardStaggerMs * 3);
     expect(pacing.trickResolveMs).toBeGreaterThanOrEqual(
@@ -17,7 +17,7 @@ describe("gamePacing", () => {
     const standard = gamePacing("standard");
     const quick = gamePacing("quick");
     const relaxed = gamePacing("relaxed");
-    expect(quick.bidPauseMs).toBe(2_880);
+    expect(quick.bidPauseMs).toBe(2_160);
     expect(quick.bidPauseMs).toBeLessThan(standard.bidPauseMs);
     expect(standard.bidPauseMs).toBeLessThan(relaxed.bidPauseMs);
     expect(quick.cardTravelMs).toBeLessThan(standard.cardTravelMs);
@@ -31,7 +31,7 @@ describe("gamePacing", () => {
     expect(pacing.cardTravelMs).toBe(0);
     expect(pacing.cardCollectMs).toBe(0);
     expect(pacing.dealCompleteMs).toBe(0);
-    expect(pacing.bidPauseMs).toBe(4_000);
+    expect(pacing.bidPauseMs).toBe(3_000);
     expect(pacing.winnerRevealMs).toBeGreaterThanOrEqual(900);
   });
 });

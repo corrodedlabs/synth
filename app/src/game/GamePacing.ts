@@ -38,7 +38,7 @@ export function gamePacing(speed: GameSpeed = "standard", reducedMotion = false)
       speed,
       reducedMotion: true,
       // Removing motion must not remove the time needed to read an auction.
-      bidPauseMs: 4_000,
+      bidPauseMs: 3_000,
       cardPauseMs: 160,
       dealCardStaggerMs: 0,
       dealCompleteMs: 0,
@@ -61,7 +61,7 @@ export function gamePacing(speed: GameSpeed = "standard", reducedMotion = false)
   return {
     speed,
     reducedMotion: false,
-    bidPauseMs: round(4_000 * scale),
+    bidPauseMs: round(3_000 * scale),
     // A card must finish its flight before a bot can visually answer.
     cardPauseMs: Math.max(cardTravelMs + 80, round(700 * scale)),
     // The server sends two four-card deals. Let each fan settle before the
