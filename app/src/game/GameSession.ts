@@ -83,6 +83,12 @@ function rememberActiveMatch(email: string | null) {
   }
 }
 
+// the player gives up on an interrupted match (the reconnect screen's
+// abandon button): the seat is left to expire in its server-side grace
+export function forgetActiveMatch() {
+  rememberActiveMatch(null);
+}
+
 // Server endpoint resolution, most specific wins:
 // ?server=ws://… → ?port=9000 (localhost) → VITE_SERVER_URL (production build)
 // → ws://localhost:8081/test (dev default).
@@ -287,6 +293,20 @@ export class GameSession {
     this.socket?.send({ _tag: "LeaveGame", email: this.email });
   }
 
+  // Test bridge: sever the websocket the way a backgrounded phone's OS
+  // does — the close event still fires (unlike destroy()), so the session
+  // walks the real disconnected → reconnect-screen → retry path.
+  dropConnection() {
+    this.socket?.drop();
+  }
+
+  // A tab returning to the foreground pings at once: if the OS killed the
+  // connection while we slept, the send surfaces the close event now
+  // instead of leaving a half-open socket lingering until the heartbeat.
+  nudge() {
+    if (this.socket?.isOpen()) this.socket.send({ _tag: "Ping" });
+  }
+
   // A quick table emote; the server validates and rate-limits, we just
   // need to be in a running match for it to mean anything.
   sendEmote(emote: string) {
@@ -388,6 +408,16 @@ export class GameSession {
       this.cardsInTrick = 0;
       this.trickPoints = 0;
       yield* Effect.sleep(`${pacing.trickResolveMs} millis`);
+    });
+  }
+
+  // Server events can arrive back-to-back, especially when bots answer
+  // immediately. Present one event and hold the queue long enough for the
+  // player to perceive it before the next event is rendered.
+  private presentThenPause(action: GameAction, durationMs: number): Effect.Effect<void> {
+    return Effect.gen(this, function* () {
+      this.callbacks.dispatch(action);
+      yield* Effect.sleep(`${durationMs} millis`);
     });
   }
 
@@ -502,8 +532,10 @@ export class GameSession {
           return false;
 
         case "BidPlaced":
-          dispatch({ _tag: "BidPlaced", playerIndex: this.toView(event.playerIndex), bid: event.bid });
-          yield* Effect.sleep(`${this.callbacks.getPacing().bidPauseMs} millis`);
+          yield* this.presentThenPause(
+            { _tag: "BidPlaced", playerIndex: this.toView(event.playerIndex), bid: event.bid },
+            this.callbacks.getPacing().bidPauseMs
+          );
           return false;
 
         case "BidResult":
@@ -530,8 +562,10 @@ export class GameSession {
           this.cardsInTrick++;
           this.trickPoints += cardPoints(event.card);
           if (this.locallyPlayed.delete(event.card.id)) return false; // already rendered
-          dispatch({ _tag: "CardPlayed", card: event.card, playerIndex: this.toView(event.playerIndex) });
-          yield* Effect.sleep(`${this.callbacks.getPacing().cardPauseMs} millis`);
+          yield* this.presentThenPause(
+            { _tag: "CardPlayed", card: event.card, playerIndex: this.toView(event.playerIndex) },
+            this.callbacks.getPacing().cardPauseMs
+          );
           return false;
         }
 
@@ -726,6 +760,7 @@ export class GameSession {
 
         case "ServerError": {
           const friendly: Record<string, string> = {
+            "already-in-match": "You're still in a match — taking you back to it…",
             "no-such-room": "That table is no longer open.",
             "room-full": "That table is already full.",
             "must-open-bid": "You open the bidding — pick a bid of 16 or more.",
@@ -736,6 +771,12 @@ export class GameSession {
           };
           const match = Object.keys(friendly).find((key) => event.message.includes(key));
           this.callbacks.status(match ? friendly[match] : `Server rejected that: ${event.message}`);
+          // the server refused to seat us elsewhere while our match still
+          // runs — go claim that seat instead of arguing
+          if (match === "already-in-match") {
+            this.socket?.send({ _tag: "Rejoin", email: this.email });
+            return false;
+          }
           // a failed entry (vanished or full table — e.g. a stale invite
           // link) must hand back a working start screen, not a bare felt
           if (!this.inRoom && (match === "no-such-room" || match === "room-full")) {

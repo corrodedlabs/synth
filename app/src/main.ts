@@ -42,6 +42,13 @@ if (params.has('mock')) {
   gameState.showStartScreen();
 }
 
+// A phone returning from the background pings right away, so a socket the
+// OS killed while we slept surfaces now (→ the reconnecting screen and its
+// rejoin loop) instead of lingering half-open until the next heartbeat.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') gameState.getSession()?.nudge();
+});
+
 // Debug/automation bridge — lets tests drive the game without 3D drag gestures.
 (window as unknown as { __game: unknown }).__game = {
   state: () => gameState.getModel(),
@@ -69,6 +76,9 @@ if (params.has('mock')) {
   resolveAbandon: (choice: 'replace' | 'close') => gameState.getSession()?.resolveAbandon(choice),
   standings: (name: string) => gameState.showStandings(name ?? 'viewer'),
   joinByLink: (name: string, roomName: string) => gameState.joinTable(name, roomName),
+  // sever the websocket as a backgrounded phone's OS would (tests the
+  // disconnected → reconnecting-screen → auto-rejoin path)
+  dropSocket: () => gameState.getSession()?.dropConnection(),
   inviteLink: () => {
     const room = gameState.getModel().roomName;
     return room ? inviteLink(room) : null;

@@ -186,6 +186,35 @@ describe("gameReducer", () => {
     expect(gameReducer(midGame, { _tag: "RoomLeft" })).toEqual(initialGameModel);
   });
 
+  it("wipes everything when the session dies (phase → idle)", () => {
+    // a dropped socket mid-match: nothing of the hand may survive into a
+    // game started later on a fresh session (the 20-card bug)
+    const midGame = playing({
+      hand: [h8, hK, c7],
+      playedCards: [{ card: cJ, playerIndex: 1 }],
+      score: 12,
+      trumpSuit: "clubs",
+      matchUs: 3,
+      handNumber: 4,
+    });
+    expect(gameReducer(midGame, { _tag: "PhaseChanged", phase: "idle" })).toEqual(
+      initialGameModel
+    );
+  });
+
+  it("never carries cards into a freshly entered room", () => {
+    const stale = playing({ hand: [h8, hK], playedCards: [{ card: c7, playerIndex: 3 }] });
+    const lobby = gameReducer(stale, {
+      _tag: "RoomEntered",
+      roomName: "table",
+      members: ["me@game.local"],
+      isHost: true,
+      target: 6,
+    });
+    expect(lobby.hand).toEqual([]);
+    expect(lobby.playedCards).toEqual([]);
+  });
+
   it("totals team points when a hand finishes", () => {
     const model = gameReducer(playing({}), {
       _tag: "HandFinished",

@@ -90,8 +90,10 @@ suites, headless — on each push.
      bot, plays hand 3 against it, and the last human's leave closes the
      match.
    - `test-reconnect.mjs` — mid-hand page reload: localStorage identity
-     auto-rejoins the seat, the snapshot restores hand/trick/scores/labels,
-     and the hand plays out; leaving clears the stored match.
+     auto-rejoins the seat, the snapshot restores hand/trick/scores/labels;
+     then a mid-hand socket drop (backgrounded phone) shows the reconnecting
+     holding screen — never the start screen's create/join — and auto-rejoins
+     before the hand plays out; leaving clears the stored match.
    - `test-lobby-controls.mjs` — standings panel, invite links (incl. a
      stale invite recovering to the start screen), kick bot/human, leave,
      close table, disconnect cleanup.
@@ -125,7 +127,8 @@ gestures: `state()` (the reducer model — poll it with `waitForFunction`),
 `nextHand()`, `addBot()`, `startGame()`, `leaveTable()`, `leaveMatch()`,
 `resolveAbandon('replace'|'close')`, `kick(member)`, `roomName()`,
 `cardStates()` (dimming), `emote(id)`, `inviteLink()`,
-`joinByLink(name, room)`, `standings(name)`.
+`joinByLink(name, room)`, `standings(name)`, `dropSocket()` (sever the
+websocket as a backgrounded phone would; tests the reconnect screen).
 Launch with `channel: "chrome"` locally (`/usr/bin/chromium` in CI sandboxes)
 and `--enable-unsafe-swiftshader --use-angle=swiftshader` for headless WebGL.
 
@@ -140,7 +143,7 @@ Four main files with clear responsibilities:
 - **`server.rkt`** — WebSocket service with three internal modules:
   - **User module**: `user` struct (connection, email, hand, comm-channel, pic-url), global `*connected-users*` hash
   - **Room module**: `game-room` serializable struct (host, name, members), global `*game-rooms*` hash keyed by host email
-  - **Game module**: orchestrates a whole match per table — hand N's opener/leader is seat (N−1) mod 4, `hand-result` broadcasts game points after every hand, the game thread then blocks until the acting host sends `(next-hand <email>)`, and `match-over` ends it (target 6; the `MATCH-TARGET` env var shortens matches in tests). A dropped player keeps their seat for `RECONNECT-GRACE` seconds (default 45): `connect-user` with the same email rebinds the seat's socket, `(rejoin <email>)` returns a `game-snapshot` built from the live `match-state` shadow the game thread maintains, and `player-disconnected`/`player-reconnected` keep the table informed. A seat lost for good (grace expiry or `(leave-game <email>)`) goes to the abandonment gate while other humans remain: `seat-abandoned` is broadcast and the survivors answer `(replace-with-bot …)` — `convert-to-bot!` re-identifies the seat's shared user struct in place, re-deals it its hand, and re-asks any pending request — or `(close-game …)` → `game-aborted`. The last human leaving (or a dead bot) closes the match. Room changes push `(active-rooms …)` to every connected, unseated user so table lists stay live. Spawns threads for long-running game operations, uses Racket channels for async player communication
+  - **Game module**: orchestrates a whole match per table — hand N's opener/leader is seat (N−1) mod 4, `hand-result` broadcasts game points after every hand, the game thread then blocks until the acting host sends `(next-hand <email>)`, and `match-over` ends it (target 6; the `MATCH-TARGET` env var shortens matches in tests). A dropped player keeps their seat for `RECONNECT-GRACE` seconds (default 45): `connect-user` with the same email rebinds the seat's socket, `(rejoin <email>)` returns a `game-snapshot` built from the live `match-state` shadow the game thread maintains, and `player-disconnected`/`player-reconnected` keep the table informed. A seat lost for good (grace expiry or `(leave-game <email>)`) goes to the abandonment gate while other humans remain: `seat-abandoned` is broadcast and the survivors answer `(replace-with-bot …)` — `convert-to-bot!` re-identifies the seat's shared user struct in place, re-deals it its hand, and re-asks any pending request — or `(close-game …)` → `game-aborted`. The last human leaving (or a dead bot) closes the match. While an email is seated in a running match, `make-room`/`join-room` answer `(error already-in-match)` — a second game on the shared user struct would corrupt both — and the client responds by rejoining the match. Room changes push `(active-rooms …)` to every connected, unseated user so table lists stay live. Spawns threads for long-running game operations, uses Racket channels for async player communication
 
 - **`storage.rkt`** — SQLite persistence (Racket `db` lib, one worker thread
   fed by an async-channel; every call no-ops gracefully when storage is
@@ -190,16 +193,19 @@ Server events drive a pure reducer; rendering reacts to dispatched actions
 - `app/src/net/` — `sexpr.ts` (s-expression codec), `protocol.ts` (typed
   `ServerEvent`/`ClientCommand` ↔ s-expr), `SocketService.ts` (Effect-based
   WebSocket client exposing an event `Queue`)
-- `app/src/game/` — `GameModel.ts` (reducer + model), `GameSession.ts`
+- `app/src/game/` — `GameModel.ts` (reducer + model; phase `idle` wipes the
+  model so a dead session leaves no stale hand behind), `GameSession.ts`
   (Effect program: lobby ops, event loop, seat translation, heartbeat;
   identity persists in localStorage and a dropped mid-match socket retries
-  its rejoin every ~3s until the snapshot restores or the match is gone),
+  its rejoin every ~3s — behind the reconnecting holding screen, not the
+  start screen — until the snapshot restores or the match is gone),
   `GameState.ts` (dispatch → Three.js/DOM rendering), `Card.ts`/`Hand.ts`/
   `PlayArea.ts` (scene objects), `MockGameProgram.ts` (`?mock=1` offline mode)
 - `app/src/ui/UiOverlay.ts` — DOM overlay: start screen (incl. the `?join=`
   invite-link entry and the standings panel), room browser (list is pushed
   live by the server), lobby (copy-invite button), bid/trump panels, the
-  abandon (replace-with-bot) panel, emote strip + bubbles, help overlay
+  abandon (replace-with-bot) panel, the reconnecting holding screen (with
+  an abandon-the-match escape), emote strip + bubbles, help overlay
 - `app/src/utils/Sound.ts` — synthesized Web Audio effects (card swishes,
   turn chimes, results) reacting to dispatched actions in `GameState`; mute
   toggle persisted in localStorage; `__game.sounds()` exposes attempt counters

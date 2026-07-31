@@ -1081,6 +1081,8 @@
     ((list _ room-name email)
      (let ([room (find-room-by-name room-name)])
        (cond
+         ;; still seated in a running match: the only door back is (rejoin …)
+         ((user-in-running-game? email) '(error already-in-match))
          ((not room) '(error no-such-room))
          ((not (member email (get-connected-users-email))) '(error user-not-connected))
          (else
@@ -1120,6 +1122,9 @@
 ;; (make-room <host-email> <room-name>) => create a new game room
 ;;
 ;; (join-room <room-name> <email>) => adds email to the game room
+;;
+;; both make-room and join-room answer (error already-in-match) while the
+;; email is still seated in a running match — the client must (rejoin …)
 ;;
 ;; (get-room-details <host-email>) => get game room data associated with host email
 ;;
@@ -1175,13 +1180,20 @@
       ;; connected browser-screen user, so "open tables" stays live
       ((make-room)
        ;; (make-room <host> <name> [<target>]) — older clients omit the
-       ;; match target and get the classic first-to-6 table
-       (let ((result (add-game-room (cadr message) (caddr message)
-                                    (if (> (length message) 3)
-                                        (cadddr message)
-                                        6))))
-         (broadcast-room-list!)
-         result))
+       ;; match target and get the classic first-to-6 table. An email
+       ;; still seated in a running match (a phone whose socket died and
+       ;; whose browser fell back to the start screen) must not start a
+       ;; second life: two matches sharing one user struct corrupt both,
+       ;; so the client is bounced back towards (rejoin …) instead.
+       (cond
+         ((user-in-running-game? (cadr message)) '(error already-in-match))
+         (else
+          (let ((result (add-game-room (cadr message) (caddr message)
+                                       (if (> (length message) 3)
+                                           (cadddr message)
+                                           6))))
+            (broadcast-room-list!)
+            result))))
       ((join-room)
        (let ((result (join-room message)))
          (broadcast-room-list!)

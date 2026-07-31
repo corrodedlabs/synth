@@ -294,6 +294,28 @@
                        1
                        "the cooldown swallows the second emote"))
 
+       ;; a seat whose phone lost its socket and surfaced back on the start
+       ;; screen must not get a second life mid-match: opening or joining
+       ;; another table under a seated email is refused (the client answers
+       ;; the error with a rejoin) — two matches sharing one user struct
+       ;; would deal into the same hand and read the same channel
+       (let ((wanderer (connect-to-ws)))
+         (send-msg wanderer '(make-room match-j1 second-life-room))
+         (check-equal? (recv-until wanderer (tagged 'error))
+                       '(error already-in-match)
+                       "make-room is refused while seated in a running match")
+         (send-msg wanderer '(join-room match-room match-j1))
+         (check-equal? (recv-until wanderer (tagged 'error))
+                       '(error already-in-match)
+                       "join-room is refused while seated in a running match")
+         (check-pred null?
+                     (filter (λ (room)
+                               (eq? (cdr (assoc 'name room)) 'second-life-room))
+                             (cadr (get-active-rooms wanderer)))
+                     "the refused table was never created")
+         (ws-close! wanderer)
+         (sleep 0.3))
+
        ;; only the host can advance the match
        (send-msg (scripted-connection host) '(next-hand match-host))
 

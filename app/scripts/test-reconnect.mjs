@@ -1,7 +1,10 @@
 // Mid-match reconnection: one human + 3 bots play into the first hand, then
 // the page reloads — localStorage identity auto-rejoins the seat, the
 // snapshot restores the table (hand, trick, scores, seat labels, pending
-// request), and the hand plays out to the between-hands panel.
+// request). A mid-hand socket drop (backgrounded phone) must then show the
+// reconnecting holding screen — never the start screen, whose Create could
+// fork a second game under the same identity — and rejoin by itself before
+// the hand plays out to the between-hands panel.
 // Usage: node scripts/test-reconnect.mjs [url]
 // Screenshots land in /tmp/game-shots-reconnect.
 import { chromium } from "playwright";
@@ -128,6 +131,45 @@ check(
   await page.evaluate(() => !document.getElementById("leave-match").classList.contains("hidden"))
 );
 
+// --- a dropped socket (backgrounded phone) must hold, not offer "create" ---
+await page.evaluate(() => window.__game.dropSocket());
+await page.waitForSelector("#reconnect-panel:not(.hidden)", { timeout: 10000 });
+await shot("03-reconnect-screen");
+check(
+  "the start screen (create/join) stays hidden while reconnecting",
+  await page.evaluate(() => document.getElementById("start-screen").classList.contains("hidden"))
+);
+check(
+  "the stale hand is cleared while reconnecting",
+  (await state()).hand.length === 0
+);
+check(
+  "the stored match survives the drop",
+  (await page.evaluate(() => localStorage.getItem("game28-active-match"))) !== null
+);
+
+// the ~3s retry loop reclaims the seat without any user action
+await page.waitForFunction(
+  () => {
+    const model = window.__game?.state?.();
+    return model && model.roomName !== null && model.phase !== "idle" && model.phase !== "connecting";
+  },
+  undefined,
+  { timeout: 20000 }
+);
+const reclaimed = await state();
+await shot("04-after-auto-rejoin");
+check("auto-rejoin reclaimed the same table", reclaimed.roomName === before.roomName);
+check(
+  `hand intact after the auto-rejoin (${reclaimed.hand.length} cards)`,
+  reclaimed.hand.length === after.hand.length &&
+    reclaimed.hand.every((id) => after.hand.includes(id))
+);
+check(
+  "reconnect panel is gone after the restore",
+  await page.evaluate(() => document.getElementById("reconnect-panel").classList.contains("hidden"))
+);
+
 // --- the hand must still play out to the between-hands panel ---
 {
   const deadline = Date.now() + 120_000;
@@ -143,7 +185,7 @@ check(
   }
   check("hand played out to the between-hands panel after the rejoin", finished);
 }
-await shot("03-hand-finished");
+await shot("05-hand-finished");
 check(
   "host sees the deal button",
   await page.evaluate(() => !document.getElementById("next-hand").classList.contains("hidden"))
@@ -162,7 +204,7 @@ check(
   "next load lands on the start screen with the name prefilled",
   (await page.evaluate(() => document.getElementById("player-name").value)) === "Returner"
 );
-await shot("04-fresh-start");
+await shot("06-fresh-start");
 
 if (errors.length) {
   console.log("CONSOLE ERRORS:");

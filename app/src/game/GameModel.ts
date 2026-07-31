@@ -161,7 +161,12 @@ export const initialGameModel: GameModel = {
 export function gameReducer(state: GameModel, action: GameAction): GameModel {
   switch (action._tag) {
     case "PhaseChanged":
-      return { ...state, phase: action.phase };
+      // idle means the session died (socket drop, connect failure, server
+      // gone): wipe everything so a stale hand can never leak into a game
+      // started later on a fresh session
+      return action.phase === "idle"
+        ? initialGameModel
+        : { ...state, phase: action.phase };
 
     case "RoomEntered":
       return {
@@ -170,6 +175,9 @@ export function gameReducer(state: GameModel, action: GameAction): GameModel {
         roomName: action.roomName,
         members: action.members,
         isHost: action.isHost,
+        // a fresh table never inherits cards from a previous life
+        hand: [],
+        playedCards: [],
         matchTarget: action.target ?? state.matchTarget,
         handResults: [],
       };

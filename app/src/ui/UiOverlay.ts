@@ -1,4 +1,4 @@
-import { GameModel, Suit } from "../game/GameModel";
+import { GameModel, PlayerIndex, Suit } from "../game/GameModel";
 import type { GamePacingProfile } from "../game/GamePacing";
 import { RoomInfo } from "../net/protocol";
 
@@ -24,6 +24,8 @@ export interface UiCallbacks {
   readonly onEndMatch: () => void;
   readonly onGoHome: () => void;
   readonly onCyclePacing: () => GamePacingProfile;
+  // give up on reconnecting to an interrupted match
+  readonly onAbandonReconnect: () => void;
 }
 
 export const SEAT_NAMES = ["You", "Right", "Partner", "Left"] as const;
@@ -66,7 +68,9 @@ export class UiOverlay {
   private leaveTableButton = element("leave-table") as HTMLButtonElement;
   private lobbyHint = element("lobby-hint");
   private statusLine = element("status-line");
-  private bidHistory = element("bid-history");
+  private bidMoment = element("bid-moment");
+  private bidMomentSymbol = element("bid-moment-symbol");
+  private bidMomentAction = element("bid-moment-action");
   private trickOutcome = element("trick-outcome");
   private tableMoment = element("table-moment");
   private tableMomentSymbol = element("table-moment-symbol");
@@ -96,12 +100,14 @@ export class UiOverlay {
   private emoteStrip = element("emote-strip");
   private abandonPanel = element("abandon-panel");
   private abandonText = element("abandon-text");
+  private reconnectPanel = element("reconnect-panel");
   private createPanel = element("create-panel");
   private leaderboardPanel = element("leaderboard-panel");
   private leaderboardList = element("leaderboard-list");
   private uiLayer = element("ui-layer");
   private trumpIndicator = element("trump-indicator");
   private statusTimer: number | null = null;
+  private bidMomentTimer: number | null = null;
   private tableMomentTimer: number | null = null;
   private leaveArmTimer: number | null = null;
   private copyResetTimer: number | null = null;
@@ -234,6 +240,10 @@ export class UiOverlay {
       this.hideAbandonPanel();
       callbacks.onEndMatch();
     });
+    element("reconnect-abandon").addEventListener("click", () => {
+      this.hide(this.reconnectPanel);
+      callbacks.onAbandonReconnect();
+    });
     this.speedButton.addEventListener("click", () => this.setPacing(callbacks.onCyclePacing()));
     for (const [id, glyph] of Object.entries(EMOTES)) {
       const button = document.createElement("button");
@@ -286,7 +296,22 @@ export class UiOverlay {
   showStartScreen() {
     this.hide(this.lobbyPanel);
     this.hide(this.createPanel); // never a stale question over a fresh start
+    this.hide(this.reconnectPanel);
     this.show(this.startScreen);
+  }
+
+  // The connection died mid-match: a holding screen while the session
+  // retries the rejoin — deliberately NOT the start screen, whose create
+  // and join actions could fork a second game under the same identity.
+  showReconnecting() {
+    this.hide(this.startScreen);
+    this.hide(this.lobbyPanel);
+    this.hide(this.createPanel);
+    this.show(this.reconnectPanel);
+  }
+
+  hideReconnecting() {
+    this.hide(this.reconnectPanel);
   }
 
   showRooms(rooms: readonly RoomInfo[]) {
@@ -411,18 +436,52 @@ export class UiOverlay {
     this.trickOutcome.classList.remove("visible", "ours");
   }
 
-  showBidEvent(seat: string, bid: number | "pass") {
-    const chip = document.createElement("span");
-    chip.className = `bid-chip ${bid === "pass" ? "pass" : "raise"}`;
-    chip.textContent = bid === "pass" ? `${seat} passes` : `${seat} ${bid}`;
-    this.bidHistory.append(chip);
-    while (this.bidHistory.childElementCount > 4) this.bidHistory.firstElementChild?.remove();
-    this.show(this.bidHistory);
+  showBidEvent(playerIndex: PlayerIndex, bid: number | "pass", durationMs: number) {
+    const kind = bid === "pass" ? "pass" : "raise";
+
+    if (this.bidMomentTimer !== null) window.clearTimeout(this.bidMomentTimer);
+    this.bidMoment.className = "";
+    this.bidMomentSymbol.textContent = bid === "pass" ? "—" : "✦";
+    this.bidMomentAction.textContent = bid === "pass" ? "PASS" : `BID ${bid}`;
+    this.bidMoment.style.setProperty("--bid-call-duration", `${durationMs}ms`);
+    this.positionBidMoment(playerIndex);
+    void this.bidMoment.offsetWidth; // restart the callout for consecutive bot actions
+    this.bidMoment.classList.add(kind, `seat-${playerIndex}`, "visible");
+    this.bidMomentTimer = window.setTimeout(() => {
+      this.bidMoment.classList.remove("visible");
+      this.bidMomentTimer = null;
+    }, durationMs);
+  }
+
+  private positionBidMoment(playerIndex: PlayerIndex) {
+    const layer = this.uiLayer.getBoundingClientRect();
+    const compact = layer.width <= 700;
+    let x = layer.width / 2;
+    let y = layer.height * (compact ? 0.5 : 0.55);
+
+    if (playerIndex !== 0) {
+      const label = document.getElementById(`seat-label-${playerIndex}`);
+      const rect = label?.getBoundingClientRect();
+      if (rect) {
+        const centerX = rect.left - layer.left + rect.width / 2;
+        if (playerIndex === 2) {
+          x = centerX;
+          y = rect.top - layer.top - (compact ? 30 : 34);
+        } else {
+          x = centerX;
+          y = rect.bottom - layer.top + (compact ? 28 : 32);
+        }
+      }
+    }
+
+    this.bidMoment.style.left = `${Math.max(68, Math.min(layer.width - 68, x))}px`;
+    this.bidMoment.style.top = `${Math.max(48, Math.min(layer.height - 48, y))}px`;
   }
 
   clearBidHistory() {
-    this.bidHistory.innerHTML = "";
-    this.hide(this.bidHistory);
+    if (this.bidMomentTimer !== null) window.clearTimeout(this.bidMomentTimer);
+    this.bidMomentTimer = null;
+    this.bidMoment.classList.remove("visible", "raise", "pass");
   }
 
   // A table-wide punctuation mark for the deal and trump reveal. It never

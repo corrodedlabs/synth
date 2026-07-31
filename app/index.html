@@ -571,6 +571,28 @@
         color: #a33c2e;
         border-color: rgba(163, 60, 46, 0.45);
       }
+      #reconnect-panel {
+        top: 50%;
+        transform: translate(-50%, -50%);
+        max-width: 420px;
+      }
+      #reconnect-panel #reconnect-text {
+        font-size: 21px;
+        margin-bottom: 10px;
+        opacity: 0.85;
+      }
+      /* the soft pulse says "still trying" without a spinner */
+      #reconnect-panel .panel-title {
+        animation: reconnect-pulse 2.2s ease-in-out infinite;
+      }
+      @keyframes reconnect-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.45; }
+      }
+      #reconnect-panel #reconnect-abandon {
+        color: #a33c2e;
+        border-color: rgba(163, 60, 46, 0.45);
+      }
       .emote-bubble {
         position: absolute;
         transform: translate(-50%, -50%);
@@ -629,8 +651,10 @@
       }
       #status-line {
         position: absolute;
-        top: 32px;
+        /* Keep table messages on their own row beneath the score HUD. */
+        top: 72px;
         left: 42px;
+        max-width: calc(100vw - 84px);
         font-size: 22px;
         opacity: 0;
         transition: opacity 300ms ease;
@@ -639,37 +663,88 @@
       #status-line.visible {
         opacity: 0.85;
       }
-      #bid-history {
+      #bid-moment {
         position: absolute;
-        top: 76px;
-        left: 42px;
-        z-index: 16;
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-        max-width: min(44vw, 520px);
+        z-index: 24;
+        display: grid;
+        grid-template-columns: 27px auto;
+        column-gap: 7px;
+        align-items: center;
+        min-width: 94px;
+        padding: 8px 15px 8px 9px;
+        border: 1px solid rgba(59, 47, 42, 0.28);
+        border-radius: 14px;
+        background: linear-gradient(135deg, rgba(255, 253, 247, 0.98), rgba(247, 239, 218, 0.96));
+        box-shadow: 0 8px 22px rgba(59, 47, 42, 0.18), inset 0 0 0 1px rgba(255, 255, 255, 0.72);
+        opacity: 0;
+        overflow: hidden;
         pointer-events: none;
+        transform: translate(-50%, -50%) scale(0.76);
       }
-      #bid-history .bid-chip {
-        padding: 4px 10px;
-        border: 1px solid rgba(59, 47, 42, 0.25);
-        border-radius: 999px;
-        background: rgba(253, 250, 243, 0.84);
-        box-shadow: 0 3px 10px rgba(59, 47, 42, 0.1);
-        font-size: 16px;
-        letter-spacing: 0.35px;
-        animation: bid-chip-in 260ms cubic-bezier(0.18, 0.78, 0.26, 1.16) both;
+      #bid-moment::after {
+        content: "";
+        position: absolute;
+        inset: -90% -30%;
+        background: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, 0.72) 50%, transparent 62%);
+        transform: translateX(-70%) rotate(8deg);
       }
-      #bid-history .bid-chip.raise {
+      #bid-moment.raise {
+        border-color: rgba(47, 96, 53, 0.5);
+        box-shadow: 0 8px 22px rgba(47, 96, 53, 0.2), inset 0 0 0 1px rgba(255, 255, 255, 0.72);
+      }
+      #bid-moment.pass {
+        border-color: rgba(126, 92, 44, 0.42);
+      }
+      #bid-moment.visible.raise {
+        animation: seat-bid-pop var(--bid-call-duration, 940ms) cubic-bezier(0.18, 0.78, 0.26, 1.1) both;
+      }
+      #bid-moment.visible.pass {
+        animation: seat-pass-pop var(--bid-call-duration, 940ms) cubic-bezier(0.2, 0.72, 0.3, 1) both;
+      }
+      #bid-moment.visible::after {
+        animation: bid-call-shine 720ms 90ms ease-out both;
+      }
+      #bid-moment-symbol {
+        display: grid;
+        place-items: center;
+        width: 25px;
+        height: 25px;
+        border-radius: 50%;
+        color: #fffdf7;
+        background: #2f6035;
+        box-shadow: 0 3px 10px rgba(47, 96, 53, 0.26);
+        font-size: 13px;
+      }
+      #bid-moment.pass #bid-moment-symbol {
+        color: #765c35;
+        background: #eee2c8;
+        box-shadow: 0 3px 10px rgba(118, 92, 53, 0.16);
+      }
+      #bid-moment-action {
         color: #2f6035;
-        border-color: rgba(47, 96, 53, 0.42);
+        font-size: 18px;
+        font-weight: 700;
+        letter-spacing: 1.1px;
+        line-height: 1;
       }
-      #bid-history .bid-chip.pass {
-        color: rgba(59, 47, 42, 0.68);
+      #bid-moment.pass #bid-moment-action {
+        color: #765c35;
       }
-      @keyframes bid-chip-in {
-        from { opacity: 0; transform: translateY(-8px) scale(0.86); }
-        to { opacity: 1; transform: translateY(0) scale(1); }
+      @keyframes seat-bid-pop {
+        0% { opacity: 0; transform: translate(-50%, -36%) scale(0.68); }
+        18% { opacity: 1; transform: translate(-50%, -50%) scale(1.07); }
+        30%, 86% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+        100% { opacity: 0; transform: translate(-50%, -66%) scale(0.94); }
+      }
+      @keyframes seat-pass-pop {
+        0% { opacity: 0; transform: translate(-44%, -50%) scale(0.82) rotate(2deg); }
+        20% { opacity: 1; transform: translate(-52%, -50%) scale(1.04) rotate(-1deg); }
+        32%, 86% { opacity: 1; transform: translate(-50%, -50%) scale(1) rotate(0); }
+        100% { opacity: 0; transform: translate(-58%, -56%) scale(0.94); }
+      }
+      @keyframes bid-call-shine {
+        from { transform: translateX(-70%) rotate(8deg); }
+        to { transform: translateX(72%) rotate(8deg); }
       }
       #trick-outcome {
         position: absolute;
@@ -792,7 +867,8 @@
         opacity: 0.8;
       }
       #trump-panel {
-        bottom: 220px;
+        /* The wider chooser needs extra room above the scaled hand fan. */
+        bottom: max(350px, calc(30vh + 160px));
       }
       #trump-panel .panel-title {
         font-size: 21px;
@@ -865,15 +941,19 @@
           font-size: 14px;
           max-width: 58vw;
         }
-        #bid-history {
-          top: calc(62px + env(safe-area-inset-top));
-          left: calc(14px + env(safe-area-inset-left));
-          max-width: 62vw;
-          gap: 4px;
+        #bid-moment {
+          grid-template-columns: 23px auto;
+          column-gap: 5px;
+          min-width: 82px;
+          padding: 7px 10px 7px 7px;
         }
-        #bid-history .bid-chip {
-          padding: 3px 7px;
-          font-size: 13px;
+        #bid-moment-symbol {
+          width: 22px;
+          height: 22px;
+          font-size: 11px;
+        }
+        #bid-moment-action {
+          font-size: 15px;
         }
         #trick-outcome {
           top: 18%;
@@ -1037,6 +1117,10 @@
           width: 86vw;
           box-sizing: border-box;
         }
+        #reconnect-panel {
+          width: 86vw;
+          box-sizing: border-box;
+        }
         #leaderboard-panel {
           min-width: 0;
           width: 86vw;
@@ -1076,7 +1160,8 @@
          very little vertical room.  Anchor the auction controls below the
          score line so they do not overlap it or the hand. */
       @media (max-height: 550px) and (min-width: 701px) {
-        #bid-panel {
+        #bid-panel,
+        #trump-panel {
           bottom: auto;
           top: calc(76px + env(safe-area-inset-top));
         }
@@ -1170,7 +1255,7 @@
         min-height: 24px;
       }
       @media (prefers-reduced-motion: reduce) {
-        #bid-history .bid-chip,
+        #bid-moment.visible,
         #table-moment.visible,
         #result-panel:not(.hidden) {
           animation: reduced-fade 120ms ease-out both;
@@ -1202,7 +1287,10 @@
         <span class="label">Match:</span><span id="match-value" class="value">0 — 0</span>
       </div>
       <div id="status-line"></div>
-      <div id="bid-history" class="hidden" aria-live="polite"></div>
+      <div id="bid-moment" aria-live="polite" aria-atomic="true">
+        <div id="bid-moment-symbol"></div>
+        <div id="bid-moment-action"></div>
+      </div>
       <div id="trick-outcome" aria-live="polite" aria-atomic="true"></div>
       <div id="table-moment" aria-live="polite" aria-atomic="true">
         <div id="table-moment-symbol"></div>
@@ -1229,6 +1317,12 @@
         <div id="abandon-text"></div>
         <button id="replace-bot" type="button">Replace with a bot</button>
         <button id="end-match" type="button">End the match</button>
+      </div>
+
+      <div id="reconnect-panel" class="panel hidden">
+        <div class="panel-title">Connection lost</div>
+        <div id="reconnect-text">Your match is still running — getting you back to the table…</div>
+        <button id="reconnect-abandon" type="button">Abandon the match</button>
       </div>
 
       <div id="leaderboard-panel" class="panel hidden">

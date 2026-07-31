@@ -5,6 +5,10 @@ export interface GameSocket {
   readonly events: Queue.Queue<ServerEvent>;
   readonly send: (command: ClientCommand) => void;
   readonly close: () => void;
+  // unlike close(), the Disconnected event still fires — severs the wire
+  // the way a backgrounded phone's OS does (used to test that path)
+  readonly drop: () => void;
+  readonly isOpen: () => boolean;
 }
 
 export class SocketError {
@@ -46,5 +50,7 @@ export const connectSocket = (url: string): Effect.Effect<GameSocket, SocketErro
         ws.onclose = null;
         ws.close();
       },
+      drop: () => ws.close(),
+      isOpen: () => ws.readyState === WebSocket.OPEN,
     };
   });

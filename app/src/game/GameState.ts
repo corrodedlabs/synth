@@ -19,7 +19,7 @@ import {
   initialGameModel,
   isLegalPlay,
 } from "./GameModel";
-import { GameSession, storedActiveMatch } from "./GameSession";
+import { forgetActiveMatch, GameSession, storedActiveMatch } from "./GameSession";
 import { Hand } from "./Hand";
 import { mockGameProgram } from "./MockGameProgram";
 import { GamePacing } from "./GamePacing";
@@ -100,6 +100,7 @@ export class GameState {
         this.playArea.setPacing(pacing);
         return pacing;
       },
+      onAbandonReconnect: () => this.abandonInterruptedMatch(),
     });
 
     this.scoreElement = document.getElementById("score-value");
@@ -347,6 +348,47 @@ export class GameState {
     this.ui.status("You left the match.");
   }
 
+  // Give up on an interrupted match from the reconnecting screen. A retry
+  // session may be mid-flight (its socket may even be live again) — turn
+  // it into an explicit leave; otherwise just forget the stored seat and
+  // let it expire in its server-side grace window.
+  private abandonInterruptedMatch() {
+    if (this.session) {
+      this.session.leaveGame();
+      this.session.destroy();
+      this.session = null;
+    } else {
+      forgetActiveMatch();
+    }
+    this.dispatch({ _tag: "RoomLeft" });
+    this.ui.status("You left the match.");
+  }
+
+  // Sweep every scrap of an in-progress game out of the scene and the
+  // overlay; the model reset (RoomLeft / idle) happens in the reducer.
+  private clearTableScene() {
+    this.hand.cancelPendingDeals();
+    this.dragControls.clearSelection();
+    for (const card of [...this.hand.getCards()]) {
+      this.hand.removeCard(card);
+      this.sceneManager.scene.remove(card.mesh);
+    }
+    this.playArea.clearTable();
+    this.playArea.clearActivePlayer();
+    this.ui.setTrump(null, false);
+    this.ui.hideBidPanel();
+    this.ui.hideTrumpPanel();
+    this.ui.setExposeVisible(false);
+    this.ui.hideResult();
+    this.ui.hideAbandonPanel();
+    this.ui.hideTrickOutcome();
+    this.ui.clearBidHistory();
+    this.ui.setLeaveMatchVisible(false);
+    this.renderScore();
+    this.ui.hideLobby();
+    this.positionSeatLabels(); // hides them (seatNames reset)
+  }
+
   // Plays a card from our hand by model id; used by the debug bridge.
   public playCardById(cardId: string): boolean {
     const card = this.model.hand.find((handCard) => handCard.id === cardId);
@@ -439,16 +481,24 @@ export class GameState {
         if (action.phase === "connecting") this.ui.status("Connecting…");
         if (action.phase === "idle") {
           // only dead sessions dispatch idle (connect failure, server gone):
-          // drop ours so the start screen's buttons build a fresh one, and
-          // clear the now-unrefreshable table list
+          // drop ours so the next screen's buttons build a fresh one, and
+          // clear the now-unrefreshable table list. The reducer has already
+          // wiped the model, so clear the scene to match.
           if (this.session) {
             this.session.destroy();
             this.session = null;
           }
-          this.ui.setLeaveMatchVisible(false);
+          this.clearTableScene();
           this.ui.resetRoomBrowser();
-          this.ui.showStartScreen();
-          this.scheduleRejoinRetry();
+          if (storedActiveMatch() !== null) {
+            // our match is still live somewhere — hold the player on a
+            // screen with no create/join actions (a second table under the
+            // same identity would corrupt both matches) and keep retrying
+            this.ui.showReconnecting();
+            this.scheduleRejoinRetry();
+          } else {
+            this.ui.showStartScreen();
+          }
         }
         break;
 
@@ -466,24 +516,8 @@ export class GameState {
       case "RoomLeft":
         // tear down any in-progress game (aborted games land here mid-hand
         // or while the between-hands result panel is up)
-        this.dragControls.clearSelection();
-        for (const card of [...this.hand.getCards()]) {
-          this.hand.removeCard(card);
-          this.sceneManager.scene.remove(card.mesh);
-        }
-        this.playArea.clearTable();
-        this.playArea.clearActivePlayer();
-        this.ui.setTrump(null, false);
-        this.ui.hideBidPanel();
-        this.ui.hideTrumpPanel();
-        this.ui.setExposeVisible(false);
-        this.ui.hideResult();
-        this.ui.hideAbandonPanel();
-        this.ui.setLeaveMatchVisible(false);
-        this.renderScore();
-        this.ui.hideLobby();
+        this.clearTableScene();
         this.ui.showStartScreen();
-        this.positionSeatLabels(); // hides them (seatNames reset)
         break;
 
       case "SeatNamesSet":
@@ -534,10 +568,8 @@ export class GameState {
         break;
 
       case "BidPlaced": {
-        const seat = this.seatName(action.playerIndex);
         this.sound.bidTick();
-        this.ui.showBidEvent(seat, action.bid);
-        this.ui.status(action.bid === "pass" ? `${seat} pass${action.playerIndex === 0 ? "" : "es"}` : `${seat} bid${action.playerIndex === 0 ? "" : "s"} ${action.bid}`, true);
+        this.ui.showBidEvent(action.playerIndex, action.bid, this.pacing.profile().bidPauseMs);
         break;
       }
 
@@ -731,6 +763,7 @@ export class GameState {
         this.playArea.clearActivePlayer();
         this.ui.hideTrickOutcome();
         this.ui.hideLobby();
+        this.ui.hideReconnecting();
         this.ui.hideBidPanel();
         this.ui.hideTrumpPanel();
         this.ui.setExposeVisible(false);
