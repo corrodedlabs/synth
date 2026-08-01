@@ -1,10 +1,12 @@
 import * as THREE from 'three';
 import { Card } from './Card';
+import { objectScreenBounds, screenPointOnPlane } from './TableLayout';
+import type { ScreenPoint } from './TableLayout';
 
 export class Hand {
   private cards: Card[] = [];
   private scene: THREE.Scene;
-  private camera: THREE.Camera;
+  private camera: THREE.PerspectiveCamera;
   private handCenter = new THREE.Vector3(0, 0.3, 2.0);
   // Narrow screens compress the fan (more overlap) so it stays in frame.
   private widthScale = 1;
@@ -24,7 +26,18 @@ export class Hand {
     this.cards.forEach((card) => card.mesh.scale.setScalar(scale));
   }
 
-  constructor(scene: THREE.Scene, camera: THREE.Camera) {
+  public setScreenCenter(
+    center: ScreenPoint,
+    viewport: { readonly width: number; readonly height: number }
+  ) {
+    const world = screenPointOnPlane(center, this.handCenter.y, this.camera, viewport);
+    if (world.x === this.handCenter.x && world.z === this.handCenter.z) return;
+    this.handCenter.x = world.x;
+    this.handCenter.z = world.z;
+    this.arrangeCards();
+  }
+
+  constructor(scene: THREE.Scene, camera: THREE.PerspectiveCamera) {
     this.scene = scene;
     this.camera = camera;
   }
@@ -141,8 +154,15 @@ export class Hand {
       card.setRotation(layout.rotation.x, layout.rotation.y, layout.rotation.z);
     });
   }
-  
+
   public getCards(): Card[] {
     return this.cards;
+  }
+
+  public cardScreenBounds(canvas: HTMLElement) {
+    return this.cards.map((card) => ({
+      id: (card.mesh.userData.modelId as string) ?? "",
+      ...objectScreenBounds(card.mesh, this.camera, canvas),
+    }));
   }
 }

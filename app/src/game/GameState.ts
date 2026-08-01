@@ -25,6 +25,8 @@ import { Hand } from "./Hand";
 import { mockGameProgram } from "./MockGameProgram";
 import { GamePacing } from "./GamePacing";
 import { PlayArea } from "./PlayArea";
+import { responsiveTableLayout, screenPointOnPlane } from "./TableLayout";
+import type { ResponsiveTableLayout } from "./TableLayout";
 
 export class GameState {
   private sceneManager: SceneManager;
@@ -35,8 +37,10 @@ export class GameState {
   private pacing = new GamePacing();
   private zenTextures: ZenCardTextures;
   private dragControls: DragControls;
-  // Phones render cards larger; applied to the hand fan and played cards.
-  private cardScale = 1;
+  private tableLayout: ResponsiveTableLayout = responsiveTableLayout(
+    window.innerWidth,
+    window.innerHeight
+  );
   private ui: UiOverlay;
   private sound = new SoundService();
   private session: GameSession | null = null;
@@ -119,20 +123,31 @@ export class GameState {
     this.applyViewportLayout();
     window.addEventListener("resize", () => {
       this.applyViewportLayout();
-      this.positionSeatLabels();
     });
   }
 
-  // Portrait/narrow screens get a tighter fan of larger cards so ranks
-  // stay readable under a thumb.
+  // Seats, played-card lanes, and the hand all consume one screen-space
+  // composition. The Three.js pieces are projected back onto the table plane.
   private applyViewportLayout() {
-    const portrait = window.innerWidth < window.innerHeight;
-    this.cardScale = portrait ? 1.18 : 1;
-    this.hand.setWidthScale(portrait ? 0.78 : 1);
-    this.hand.setCardScale(this.cardScale);
-    this.playArea.setCardScale(this.cardScale);
+    this.tableLayout = responsiveTableLayout(window.innerWidth, window.innerHeight);
+    this.hand.setWidthScale(this.tableLayout.handWidthScale);
+    this.hand.setCardScale(this.tableLayout.handCardScale);
+    this.hand.setScreenCenter(this.tableLayout.handCenter, this.tableLayout.viewport);
+    this.playArea.setCardScale(this.tableLayout.tableCardScale);
+    this.playArea.setViewportLayout(this.tableLayout);
+    this.positionSeatAnchors();
     // re-laying out the fan flattens a raised card — it must not stay armed
     this.dragControls.clearSelection();
+  }
+
+  private positionSeatAnchors() {
+    for (const seat of [1, 2, 3] as const) {
+      const label = document.getElementById(`seat-label-${seat}`);
+      const anchor = this.tableLayout.opponentSeats[seat];
+      if (!label) continue;
+      label.style.left = `${anchor.x}px`;
+      label.style.top = `${anchor.y}px`;
+    }
   }
 
   private cardIsPlayable(card: Card): boolean {
@@ -157,9 +172,10 @@ export class GameState {
     return this.model.seatNames?.[playerIndex] ?? SEAT_NAMES[playerIndex];
   }
 
-  // Pin opponent name labels under their enso markers.
+  // Build each opponent as one projected seat: the avatar is centered inside
+  // a fixed DOM enso, with identity and the auction action attached. Keeping
+  // seats in screen space makes their size and card clearance deterministic.
   private positionSeatLabels() {
-    const canvas = this.sceneManager.renderer.domElement;
     for (const seat of [1, 2, 3] as const) {
       const label = document.getElementById(`seat-label-${seat}`);
       if (!label) continue;
@@ -169,36 +185,30 @@ export class GameState {
         label.classList.remove("visible");
         continue;
       }
-      const screen = this.playArea.markerScreenPosition(seat, canvas);
-      if (!screen) continue;
       const profile = playerProfile(members[seat] ?? "", members);
-      label.replaceChildren(createPlayerIdentity(profile));
+      const identity = createPlayerIdentity(profile, "table");
+      const action = document.createElement("span");
+      action.id = `seat-action-${seat}`;
+      action.className = "seat-action";
+      action.setAttribute("aria-live", "polite");
+      action.setAttribute("aria-atomic", "true");
+      label.replaceChildren(identity);
       if (seat === 2) {
         const tag = document.createElement("span");
         tag.className = "partner-tag";
         tag.textContent = "your partner";
         label.append(tag);
       }
-      // Keep clear of the played-card cross: partner's label sits above their
-      // marker, side labels are pushed outward and down. Tighter on phones.
-      const compact = window.innerWidth < 700;
-      const out = compact ? 48 : 78;
-      const down = compact ? 8 : 68;
-      const offset =
-        seat === 2
-          ? { x: 0, y: compact ? -116 : -136 } // clear of the avatar and larger phone trick cards
-          : seat === 1
-            ? { x: out, y: down }
-            : { x: -out, y: down };
-      const desiredX = screen.x + offset.x;
-      const halfWidth = label.offsetWidth / 2;
-      const safeEdge = compact ? 8 : 14;
-      label.style.left = `${Math.max(
-        halfWidth + safeEdge,
-        Math.min(window.innerWidth - halfWidth - safeEdge, desiredX)
-      )}px`;
-      label.style.top = `${screen.y + offset.y}px`;
+      label.append(action);
       label.classList.add("visible");
+    }
+    this.positionSeatAnchors();
+    this.setActiveSeat(this.model.activePlayer);
+  }
+
+  private setActiveSeat(playerIndex: PlayerIndex | null) {
+    for (const seat of [1, 2, 3] as const) {
+      document.getElementById(`seat-label-${seat}`)?.classList.toggle("active", seat === playerIndex);
     }
   }
 
@@ -307,10 +317,13 @@ export class GameState {
   // markers, our own from the bottom edge (clear of the bid/result panels).
   private showEmote(seat: PlayerIndex, emote: string) {
     const canvas = this.sceneManager.renderer.domElement;
-    const screen =
-      seat === 0
-        ? { x: canvas.clientWidth / 2, y: canvas.clientHeight - 150 }
-        : this.playArea.markerScreenPosition(seat, canvas);
+    const label = seat === 0 ? null : document.getElementById(`seat-label-${seat}`);
+    const rect = label?.getBoundingClientRect();
+    const screen = seat === 0
+      ? { x: canvas.clientWidth / 2, y: canvas.clientHeight - 150 }
+      : rect
+        ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+        : null;
     if (!screen) return;
     this.sound.emote();
     this.ui.showEmoteAt(screen.x, screen.y, emote);
@@ -383,7 +396,7 @@ export class GameState {
       this.sceneManager.scene.remove(card.mesh);
     }
     this.playArea.clearTable();
-    this.playArea.clearActivePlayer();
+    this.setActiveSeat(null);
     this.ui.setTrump(null, false);
     this.ui.hideBidPanel();
     this.ui.hideTrumpPanel();
@@ -428,6 +441,14 @@ export class GameState {
       x: ((projected.x + 1) / 2) * canvas.clientWidth,
       y: ((1 - projected.y) / 2) * canvas.clientHeight,
     };
+  }
+
+  public playedCardScreenBounds() {
+    return this.playArea.playedCardScreenBounds(this.sceneManager.renderer.domElement);
+  }
+
+  public handCardScreenBounds() {
+    return this.hand.cardScreenBounds(this.sceneManager.renderer.domElement);
   }
 
   public update() {
@@ -565,11 +586,7 @@ export class GameState {
         break;
 
       case "ActivePlayerChanged":
-        if (action.playerIndex === null) {
-          this.playArea.clearActivePlayer();
-        } else {
-          this.playArea.setActivePlayer(action.playerIndex);
-        }
+        this.setActiveSeat(action.playerIndex);
         break;
 
       case "TrickScored":
@@ -680,7 +697,7 @@ export class GameState {
         this.ui.setExposeVisible(false);
         // no turn broadcast follows the last trick, so the marker of the
         // hand's final player would keep pulsing through the result panel
-        this.playArea.clearActivePlayer();
+        this.setActiveSeat(null);
         break;
 
       case "HandResult": {
@@ -730,7 +747,7 @@ export class GameState {
           this.sceneManager.scene.remove(card.mesh);
         }
         this.playArea.clearTable();
-        this.playArea.clearActivePlayer();
+        this.setActiveSeat(null);
         this.ui.hideTrickOutcome();
         this.ui.clearBidHistory();
         this.ui.setTrump(null, false);
@@ -769,7 +786,7 @@ export class GameState {
           this.sceneManager.scene.remove(card.mesh);
         }
         this.playArea.clearTable();
-        this.playArea.clearActivePlayer();
+        this.setActiveSeat(null);
         this.ui.hideTrickOutcome();
         this.ui.hideLobby();
         this.ui.hideReconnecting();
@@ -782,9 +799,6 @@ export class GameState {
         this.model.hand.forEach((card) => this.hand.addCard(this.createCard(card)));
         for (const played of this.model.playedCards) {
           this.playCard(played.card, played.playerIndex);
-        }
-        if (this.model.activePlayer !== null) {
-          this.playArea.setActivePlayer(this.model.activePlayer);
         }
         this.ui.setTrump(this.model.trumpSuit, this.model.trumpExposed);
         this.renderScore();
@@ -814,9 +828,10 @@ export class GameState {
       this.sceneManager.scene.add(card.mesh);
     }
 
-    // table cards match the hand's phone-friendly sizing, never dimmed
+    // Table cards use their own responsive scale; the hand can remain more
+    // readable without making the bottom play collide with it.
     card.setDimmed(false);
-    card.mesh.scale.setScalar(this.cardScale);
+    card.mesh.scale.setScalar(this.tableLayout.tableCardScale);
     this.playArea.playCard(card, playerIndex);
   }
 
@@ -825,16 +840,15 @@ export class GameState {
   }
 
   private startPositionForPlayer(playerIndex: PlayerIndex) {
-    switch (playerIndex) {
-      case 0:
-        return { x: 0, y: 0.5, z: 2.5 };
-      case 1:
-        return { x: 2.9, y: 0.5, z: -0.3 };
-      case 2:
-        return { x: 0, y: 0.5, z: -2.4 };
-      case 3:
-        return { x: -2.9, y: 0.5, z: -0.3 };
-    }
+    const screen = playerIndex === 0
+      ? this.tableLayout.handCenter
+      : this.tableLayout.opponentSeats[playerIndex];
+    return screenPointOnPlane(
+      screen,
+      0.5,
+      this.sceneManager.camera,
+      this.tableLayout.viewport
+    );
   }
 
   private renderScore(duration = 0) {

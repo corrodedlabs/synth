@@ -51,9 +51,13 @@ export const EMOTES: Record<string, string> = {
   fire: "🔥",
 };
 
-export function createPlayerIdentity(profile: PlayerProfile): HTMLElement {
+export function createPlayerIdentity(
+  profile: PlayerProfile,
+  context: "lobby" | "table" = "lobby"
+): HTMLElement {
   const identity = document.createElement("span");
-  identity.className = `player-identity ${profile.isBot ? "bot-player" : "human-player"}`;
+  identity.className =
+    `player-identity ${context}-player-identity ${profile.isBot ? "bot-player" : "human-player"}`;
   identity.style.setProperty("--avatar-accent", profile.accent);
 
   const avatar = document.createElement("span");
@@ -71,11 +75,18 @@ export function createPlayerIdentity(profile: PlayerProfile): HTMLElement {
   if (profile.isBot) {
     const botTag = document.createElement("span");
     botTag.className = "bot-tag";
-    botTag.textContent = "BOT";
+    botTag.textContent = context === "table" ? "bot" : "BOT";
     copy.append(botTag);
   }
 
-  identity.append(avatar, copy);
+  if (context === "table") {
+    const marker = document.createElement("span");
+    marker.className = "seat-marker";
+    marker.append(avatar);
+    identity.append(marker, copy);
+  } else {
+    identity.append(avatar, copy);
+  }
   return identity;
 }
 
@@ -93,9 +104,6 @@ export class UiOverlay {
   private leaveTableButton = element("leave-table") as HTMLButtonElement;
   private lobbyHint = element("lobby-hint");
   private statusLine = element("status-line");
-  private bidMoment = element("bid-moment");
-  private bidMomentSymbol = element("bid-moment-symbol");
-  private bidMomentAction = element("bid-moment-action");
   private trickOutcome = element("trick-outcome");
   private tableMoment = element("table-moment");
   private tableMomentSymbol = element("table-moment-symbol");
@@ -132,7 +140,7 @@ export class UiOverlay {
   private uiLayer = element("ui-layer");
   private trumpIndicator = element("trump-indicator");
   private statusTimer: number | null = null;
-  private bidMomentTimer: number | null = null;
+  private bidActionTimer: number | null = null;
   private tableMomentTimer: number | null = null;
   private leaveArmTimer: number | null = null;
   private copyResetTimer: number | null = null;
@@ -463,50 +471,29 @@ export class UiOverlay {
 
   showBidEvent(playerIndex: PlayerIndex, bid: number | "pass", durationMs: number) {
     const kind = bid === "pass" ? "pass" : "raise";
+    this.clearBidHistory();
+    const action = document.getElementById(`seat-action-${playerIndex}`);
+    if (!action) return;
 
-    if (this.bidMomentTimer !== null) window.clearTimeout(this.bidMomentTimer);
-    this.bidMoment.className = "";
-    this.bidMomentSymbol.textContent = bid === "pass" ? "—" : "✦";
-    this.bidMomentAction.textContent = bid === "pass" ? "PASS" : `BID ${bid}`;
-    this.bidMoment.style.setProperty("--bid-call-duration", `${durationMs}ms`);
-    this.positionBidMoment(playerIndex);
-    void this.bidMoment.offsetWidth; // restart the callout for consecutive bot actions
-    this.bidMoment.classList.add(kind, `seat-${playerIndex}`, "visible");
-    this.bidMomentTimer = window.setTimeout(() => {
-      this.bidMoment.classList.remove("visible");
-      this.bidMomentTimer = null;
+    action.textContent = bid === "pass" ? "— Pass" : `✦ Bid ${bid}`;
+    action.style.setProperty("--bid-call-duration", `${durationMs}ms`);
+    void action.offsetWidth; // restart the callout for consecutive actions
+    action.classList.add(kind, "visible");
+    action.closest(".seat-name-label")?.classList.add("speaking");
+    this.bidActionTimer = window.setTimeout(() => {
+      action.classList.remove("visible");
+      action.closest(".seat-name-label")?.classList.remove("speaking");
+      this.bidActionTimer = null;
     }, durationMs);
   }
 
-  private positionBidMoment(playerIndex: PlayerIndex) {
-    const layer = this.uiLayer.getBoundingClientRect();
-    const compact = layer.width <= 700;
-    let x = layer.width / 2;
-    let y = layer.height * (compact ? 0.5 : 0.55);
-
-    if (playerIndex !== 0) {
-      const label = document.getElementById(`seat-label-${playerIndex}`);
-      const rect = label?.getBoundingClientRect();
-      if (rect) {
-        const centerX = rect.left - layer.left + rect.width / 2;
-        if (playerIndex === 2) {
-          x = centerX;
-          y = rect.top - layer.top - (compact ? 30 : 34);
-        } else {
-          x = centerX;
-          y = rect.bottom - layer.top + (compact ? 28 : 32);
-        }
-      }
-    }
-
-    this.bidMoment.style.left = `${Math.max(68, Math.min(layer.width - 68, x))}px`;
-    this.bidMoment.style.top = `${Math.max(48, Math.min(layer.height - 48, y))}px`;
-  }
-
   clearBidHistory() {
-    if (this.bidMomentTimer !== null) window.clearTimeout(this.bidMomentTimer);
-    this.bidMomentTimer = null;
-    this.bidMoment.classList.remove("visible", "raise", "pass");
+    if (this.bidActionTimer !== null) window.clearTimeout(this.bidActionTimer);
+    this.bidActionTimer = null;
+    document.querySelectorAll<HTMLElement>(".seat-action").forEach((action) => {
+      action.classList.remove("visible", "raise", "pass");
+      action.closest(".seat-name-label")?.classList.remove("speaking");
+    });
   }
 
   // A table-wide punctuation mark for the deal and trump reveal. It never
@@ -527,6 +514,7 @@ export class UiOverlay {
     this.tableMoment.classList.remove("visible");
     void this.tableMoment.offsetWidth; // restart the entrance animation
     this.tableMoment.classList.add("visible");
+    this.uiLayer.classList.add("table-announcing");
     this.tableMomentTimer = window.setTimeout(() => this.hideTableMoment(), duration);
   }
 
@@ -542,6 +530,7 @@ export class UiOverlay {
       this.tableMomentTimer = null;
     }
     this.tableMoment.classList.remove("visible", "dismissible");
+    this.uiLayer.classList.remove("table-announcing");
   }
 
   setPacing(pacing: GamePacingProfile) {

@@ -112,6 +112,8 @@ let shotFullHand = false;
 let shotTrick = false;
 let shotTrickEnd = false;
 let dimmingChecked = false;
+let seatPresentationChecked = false;
+let seatClearanceChecked = false;
 let lastLog = "";
 let playsMade = 0;
 const gestureResults = [];
@@ -136,6 +138,52 @@ const playByGesture = async (cardId, kind) => {
 
 while (Date.now() < deadline) {
   const state = await getState();
+
+  if (!seatPresentationChecked && state.phase !== "lobby") {
+    const seats = await page.evaluate(() =>
+      [...document.querySelectorAll(".seat-name-label.visible")].map((seat) => {
+        const marker = seat.querySelector(".seat-marker");
+        const avatar = seat.querySelector(".player-avatar");
+        if (!(marker instanceof HTMLElement) || !(avatar instanceof HTMLElement)) return null;
+        const markerRect = marker.getBoundingClientRect();
+        const avatarRect = avatar.getBoundingClientRect();
+        const style = getComputedStyle(avatar);
+        return {
+          avatarSmaller:
+            avatarRect.width < markerRect.width * 0.65 && avatarRect.height < markerRect.height * 0.65,
+          avatarBorderless:
+            style.borderTopWidth === "0px" && style.backgroundColor === "rgba(0, 0, 0, 0)",
+        };
+      })
+    );
+    if (
+      seats.length !== 3 ||
+      seats.some((seat) => !seat?.avatarSmaller || !seat.avatarBorderless)
+    ) {
+      errors.push(`desktop seat proportions are invalid: ${JSON.stringify(seats)}`);
+    }
+    seatPresentationChecked = true;
+  }
+
+  if (state.played >= 2 && !seatClearanceChecked) {
+    await page.waitForTimeout(600);
+    const layout = await page.evaluate(() => ({
+      markers: [...document.querySelectorAll(".seat-marker")].map((marker) => {
+        const rect = marker.getBoundingClientRect();
+        return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+      }),
+      cards: window.__game.playedCardBounds(),
+    }));
+    const overlaps = layout.markers.some((marker) =>
+      layout.cards.some((card) =>
+        card.left < marker.right && card.right > marker.left &&
+        card.top < marker.bottom && card.bottom > marker.top
+      )
+    );
+    if (overlaps) errors.push(`played cards overlap desktop seats: ${JSON.stringify(layout)}`);
+    else console.log("played cards stay clear of desktop seat circles");
+    seatClearanceChecked = true;
+  }
 
   const logLine = `phase=${state.phase} pending=${state.pending?.kind ?? "-"} hand=${state.hand.length} tricks=${state.tricks} trump=${state.trumpSuit ?? "?"}${state.trumpExposed ? "!" : ""}`;
   if (logLine !== lastLog) {
@@ -251,6 +299,9 @@ console.log("gesture results:", gestureResults.join(", ") || "none");
 if (finalState.phase !== "hand-finished") {
   console.log("TIMED OUT — final state:", JSON.stringify(finalState));
   await shot("99-timeout");
+}
+if (!seatPresentationChecked || !seatClearanceChecked) {
+  errors.push("desktop seat presentation checks did not run");
 }
 if (errors.length) {
   console.log("CONSOLE ERRORS:");

@@ -48,6 +48,7 @@ const state = () =>
       phase: model.phase,
       pending: model.pendingRequest?.kind ?? null,
       hand: model.hand.map((card) => card.id),
+      played: model.playedCards.length,
       legal: window.__game.legalCards(),
       points: model.points,
     };
@@ -122,6 +123,33 @@ check(
     lobbyBots.every((bot) => !/^Bot \d+$/.test(bot.name))
 );
 await page.tap("#start-game");
+await page.waitForSelector(".seat-name-label.visible .seat-marker");
+const seatPresentation = await page.evaluate(() =>
+  [...document.querySelectorAll(".seat-name-label.visible")].map((seat) => {
+    const marker = seat.querySelector(".seat-marker");
+    const avatar = seat.querySelector(".player-avatar");
+    if (!(marker instanceof HTMLElement) || !(avatar instanceof HTMLElement)) return null;
+    const markerRect = marker.getBoundingClientRect();
+    const avatarRect = avatar.getBoundingClientRect();
+    const avatarStyle = getComputedStyle(avatar);
+    return {
+      markerFits:
+        markerRect.left >= 0 && markerRect.top >= 0 &&
+        markerRect.right <= innerWidth && markerRect.bottom <= innerHeight,
+      avatarSmaller:
+        avatarRect.width < markerRect.width * 0.65 && avatarRect.height < markerRect.height * 0.65,
+      avatarBorderless:
+        avatarStyle.borderTopWidth === "0px" && avatarStyle.backgroundColor === "rgba(0, 0, 0, 0)",
+    };
+  })
+);
+check(
+  "seat circles fit and avatars are smaller, transparent, and borderless",
+  seatPresentation.length === 3 &&
+    seatPresentation.every((seat) =>
+      seat?.markerFits && seat.avatarSmaller && seat.avatarBorderless
+    )
+);
 
 // play the hand: bid panel, then tap cards to play (two-step on touch)
 let tappedPlays = 0;
@@ -130,7 +158,8 @@ let shotTrick = false;
 let checkedDimming = false;
 let checkedArming = false;
 let checkedDealMoment = false;
-let checkedBidCallout = false;
+let checkedSeatAction = false;
+let checkedSeatClearance = false;
 let checkedTrickOutcome = false;
 const deadline = Date.now() + 180_000;
 while (Date.now() < deadline) {
@@ -138,23 +167,70 @@ while (Date.now() < deadline) {
   if (snapshot.phase === "hand-finished") break;
 
   const presentation = await page.evaluate(() => {
+    const bidAction = document.querySelector(".seat-action.visible");
     return {
       dealMoment: document.getElementById("table-moment")?.classList.contains("visible") ?? false,
-      bidCallout: document.getElementById("bid-moment")?.classList.contains("visible") ?? false,
+      bidActionId: bidAction?.id ?? null,
+      bidActionAttached:
+        bidAction?.id === "seat-action-0" || bidAction?.closest(".seat-name-label") !== null,
       trickOutcome: document.getElementById("trick-outcome")?.classList.contains("visible") ?? false,
     };
   });
   if (presentation.dealMoment && !checkedDealMoment) {
     await checkFits("#table-moment", "deal moment");
+    const dealSeats = await page.evaluate(() => {
+      const panel = document.getElementById("table-moment")?.getBoundingClientRect();
+      const overlaps = (first, second) =>
+        first && second &&
+        first.left < second.right && first.right > second.left &&
+        first.top < second.bottom && first.bottom > second.top;
+      return [1, 2, 3].map((player) => {
+        const root = document.getElementById(`seat-label-${player}`);
+        const parts = [
+          root?.querySelector(".seat-marker"),
+          root?.querySelector(".player-copy"),
+          root?.querySelector(".partner-tag"),
+        ].filter((part) => part instanceof HTMLElement);
+        return {
+          visible: root instanceof HTMLElement && Number.parseFloat(getComputedStyle(root).opacity) >= 0.5,
+          collision: parts.some((part) => overlaps(panel, part.getBoundingClientRect())),
+        };
+      });
+    });
+    check(
+      "deal moment keeps all player seats visible and clear",
+      dealSeats.every((seat) => seat.visible && !seat.collision),
+    );
     checkedDealMoment = true;
   }
-  if (presentation.bidCallout && !checkedBidCallout) {
-    await checkFits("#bid-moment", "bid callout");
-    checkedBidCallout = true;
+  if (presentation.bidActionId && !checkedSeatAction) {
+    await checkFits(`#${presentation.bidActionId}`, "seat bid action");
+    check("bid action is attached to a player seat", presentation.bidActionAttached);
+    checkedSeatAction = true;
   }
   if (presentation.trickOutcome && !checkedTrickOutcome) {
     await checkFits("#trick-outcome", "trick outcome");
     checkedTrickOutcome = true;
+  }
+
+  if (snapshot.played >= 2 && !checkedSeatClearance) {
+    await page.waitForTimeout(600);
+    const layout = await page.evaluate(() => ({
+      markers: [...document.querySelectorAll(".seat-marker")].map((marker) => {
+        const rect = marker.getBoundingClientRect();
+        return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+      }),
+      cards: window.__game.playedCardBounds(),
+    }));
+    const overlaps = layout.markers.some((marker) =>
+      layout.cards.some((card) =>
+        card.left < marker.right && card.right > marker.left &&
+        card.top < marker.bottom && card.bottom > marker.top
+      )
+    );
+    check("played cards stay clear of every seat circle", !overlaps);
+    if (overlaps) console.log("  table layout:", JSON.stringify(layout));
+    checkedSeatClearance = true;
   }
 
   if (snapshot.hand.length === 8 && !shotHand) {
@@ -232,7 +308,8 @@ await page.waitForSelector("#result-panel:not(.hidden)", { timeout: 10000 });
 await checkFits("#result-panel", "result panel");
 await checkFits("#result-delta", "match-point result chip");
 check("deal moment appeared", checkedDealMoment);
-check("bid callout appeared", checkedBidCallout);
+check("seat bid action appeared", checkedSeatAction);
+check("seat circles stayed clear of played cards", checkedSeatClearance);
 check("trick outcome appeared", checkedTrickOutcome);
 await shot("06-result");
 
