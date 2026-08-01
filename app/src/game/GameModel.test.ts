@@ -186,6 +186,16 @@ describe("gameReducer", () => {
     expect(gameReducer(midGame, { _tag: "RoomLeft" })).toEqual(initialGameModel);
   });
 
+  it("pins raw seat identities with their public names", () => {
+    const model = gameReducer(initialGameModel, {
+      _tag: "SeatNamesSet",
+      members: ["me@x", "bot-6", "friend@x", "bot-7"],
+      names: ["Me", "Dev", "Friend", "Asha"],
+    });
+    expect(model.seatMembers).toEqual(["me@x", "bot-6", "friend@x", "bot-7"]);
+    expect(model.seatNames).toEqual(["Me", "Dev", "Friend", "Asha"]);
+  });
+
   it("wipes everything when the session dies (phase → idle)", () => {
     // a dropped socket mid-match: nothing of the hand may survive into a
     // game started later on a fresh session (the 20-card bug)

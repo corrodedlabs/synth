@@ -6,7 +6,8 @@ import { Lighting } from "../scene/Lighting";
 import { Table } from "../scene/Table";
 import { SoundService } from "../utils/Sound";
 import { ZenCardTextures } from "../utils/ZenCardTextures";
-import { SEAT_NAMES, UiOverlay } from "../ui/UiOverlay";
+import { createPlayerIdentity, SEAT_NAMES, UiOverlay } from "../ui/UiOverlay";
+import { playerProfile } from "../ui/PlayerProfile";
 import { Card } from "./Card";
 import {
   GameAction,
@@ -163,13 +164,15 @@ export class GameState {
       const label = document.getElementById(`seat-label-${seat}`);
       if (!label) continue;
       const names = this.model.seatNames;
-      if (!names) {
+      const members = this.model.seatMembers;
+      if (!names || !members) {
         label.classList.remove("visible");
         continue;
       }
       const screen = this.playArea.markerScreenPosition(seat, canvas);
       if (!screen) continue;
-      label.textContent = names[seat];
+      const profile = playerProfile(members[seat] ?? "", members);
+      label.replaceChildren(createPlayerIdentity(profile));
       if (seat === 2) {
         const tag = document.createElement("span");
         tag.className = "partner-tag";
@@ -179,15 +182,21 @@ export class GameState {
       // Keep clear of the played-card cross: partner's label sits above their
       // marker, side labels are pushed outward and down. Tighter on phones.
       const compact = window.innerWidth < 700;
-      const out = compact ? 38 : 64;
-      const down = compact ? 34 : 54;
+      const out = compact ? 48 : 78;
+      const down = compact ? 8 : 68;
       const offset =
         seat === 2
-          ? { x: 0, y: compact ? -78 : -96 } // clear of the larger phone trick cards
+          ? { x: 0, y: compact ? -116 : -136 } // clear of the avatar and larger phone trick cards
           : seat === 1
             ? { x: out, y: down }
             : { x: -out, y: down };
-      label.style.left = `${screen.x + offset.x}px`;
+      const desiredX = screen.x + offset.x;
+      const halfWidth = label.offsetWidth / 2;
+      const safeEdge = compact ? 8 : 14;
+      label.style.left = `${Math.max(
+        halfWidth + safeEdge,
+        Math.min(window.innerWidth - halfWidth - safeEdge, desiredX)
+      )}px`;
       label.style.top = `${screen.y + offset.y}px`;
       label.classList.add("visible");
     }

@@ -108,6 +108,19 @@ for (let bots = 1; bots <= 3; bots++) {
   );
 }
 await shot("03-lobby");
+const lobbyBots = await page.locator("#seat-list .bot-player").evaluateAll((players) =>
+  players.map((player) => ({
+    name: player.querySelector(".player-display-name")?.textContent ?? "",
+    avatar: player.querySelector(".player-avatar")?.textContent ?? "",
+  }))
+);
+check(
+  `three distinct mobile bot personas (${JSON.stringify(lobbyBots)})`,
+  lobbyBots.length === 3 &&
+    new Set(lobbyBots.map((bot) => bot.name)).size === 3 &&
+    new Set(lobbyBots.map((bot) => bot.avatar)).size === 3 &&
+    lobbyBots.every((bot) => !/^Bot \d+$/.test(bot.name))
+);
 await page.tap("#start-game");
 
 // play the hand: bid panel, then tap cards to play (two-step on touch)
@@ -117,7 +130,7 @@ let shotTrick = false;
 let checkedDimming = false;
 let checkedArming = false;
 let checkedDealMoment = false;
-let checkedBidHistory = false;
+let checkedBidCallout = false;
 let checkedTrickOutcome = false;
 const deadline = Date.now() + 180_000;
 while (Date.now() < deadline) {
@@ -125,10 +138,9 @@ while (Date.now() < deadline) {
   if (snapshot.phase === "hand-finished") break;
 
   const presentation = await page.evaluate(() => {
-    const visible = (id) => !document.getElementById(id)?.classList.contains("hidden");
     return {
       dealMoment: document.getElementById("table-moment")?.classList.contains("visible") ?? false,
-      bidHistory: visible("bid-history"),
+      bidCallout: document.getElementById("bid-moment")?.classList.contains("visible") ?? false,
       trickOutcome: document.getElementById("trick-outcome")?.classList.contains("visible") ?? false,
     };
   });
@@ -136,9 +148,9 @@ while (Date.now() < deadline) {
     await checkFits("#table-moment", "deal moment");
     checkedDealMoment = true;
   }
-  if (presentation.bidHistory && !checkedBidHistory) {
-    await checkFits("#bid-history", "bid history");
-    checkedBidHistory = true;
+  if (presentation.bidCallout && !checkedBidCallout) {
+    await checkFits("#bid-moment", "bid callout");
+    checkedBidCallout = true;
   }
   if (presentation.trickOutcome && !checkedTrickOutcome) {
     await checkFits("#trick-outcome", "trick outcome");
@@ -220,7 +232,7 @@ await page.waitForSelector("#result-panel:not(.hidden)", { timeout: 10000 });
 await checkFits("#result-panel", "result panel");
 await checkFits("#result-delta", "match-point result chip");
 check("deal moment appeared", checkedDealMoment);
-check("bid history appeared", checkedBidHistory);
+check("bid callout appeared", checkedBidCallout);
 check("trick outcome appeared", checkedTrickOutcome);
 await shot("06-result");
 

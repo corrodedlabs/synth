@@ -44,7 +44,10 @@ export interface GameModel {
   readonly roomName: string | null;
   readonly members: readonly string[];
   readonly isHost: boolean;
-  // Display names by view index (0 = us), fixed once the hand is dealt.
+  // Public identities by view index (0 = us), fixed once the hand is dealt.
+  // The raw member ids stay available so the renderer can resolve avatars
+  // without leaking the server's `bot-N` implementation names into the UI.
+  readonly seatMembers: readonly string[] | null;
   readonly seatNames: readonly string[] | null;
   // All player indices in the model are *view* indices:
   // 0 = us (bottom), 1 = right, 2 = top (partner), 3 = left.
@@ -89,7 +92,11 @@ export type GameAction =
       readonly target?: number;
     }
   | { readonly _tag: "RoomLeft" }
-  | { readonly _tag: "SeatNamesSet"; readonly names: readonly string[] }
+  | {
+      readonly _tag: "SeatNamesSet";
+      readonly members: readonly string[];
+      readonly names: readonly string[];
+    }
   | { readonly _tag: "HandDealt"; readonly cards: readonly CardModel[] }
   | { readonly _tag: "CardPlayed"; readonly card: CardModel; readonly playerIndex: PlayerIndex }
   | { readonly _tag: "ActivePlayerChanged"; readonly playerIndex: PlayerIndex | null }
@@ -134,6 +141,7 @@ export const initialGameModel: GameModel = {
   roomName: null,
   members: [],
   isHost: false,
+  seatMembers: null,
   seatNames: null,
   hand: [],
   playedCards: [],
@@ -195,7 +203,7 @@ export function gameReducer(state: GameModel, action: GameAction): GameModel {
       return initialGameModel;
 
     case "SeatNamesSet":
-      return { ...state, seatNames: action.names };
+      return { ...state, seatMembers: action.members, seatNames: action.names };
 
     case "HandDealt":
       return {

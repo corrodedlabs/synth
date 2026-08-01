@@ -47,6 +47,7 @@ const state = () =>
       handNumber: model.handNumber,
       matchUs: model.matchUs,
       matchThem: model.matchThem,
+      seatMembers: model.seatMembers,
       seatNames: model.seatNames,
       roomName: model.roomName,
       isHost: model.isHost,
@@ -125,6 +126,15 @@ check(
 );
 check("tricks taken survived", after.tricksTotal >= before.tricksTotal);
 check("seat names restored", Array.isArray(after.seatNames) && after.seatNames.length === 4);
+check(
+  "bot personas survived reconnect",
+  JSON.stringify(after.seatMembers) === JSON.stringify(before.seatMembers) &&
+    JSON.stringify(after.seatNames) === JSON.stringify(before.seatNames)
+);
+check(
+  "bot avatars restored",
+  (await page.locator(".seat-name-label .bot-player .player-avatar").count()) === 3
+);
 check("still the host", after.isHost === true);
 check(
   "leave button is back after the restore",
@@ -210,7 +220,13 @@ if (errors.length) {
   console.log("CONSOLE ERRORS:");
   for (const error of errors) console.log("  " + error);
 }
-await browser.close();
+// A reconnecting WebSocket can keep headed Chrome's shutdown handshake alive
+// after every assertion has completed. Bound cleanup so the suite reports
+// its result instead of hanging indefinitely on browser teardown.
+await Promise.race([
+  browser.close(),
+  new Promise((resolve) => setTimeout(resolve, 5_000)),
+]);
 if (failures.length || errors.length) {
   console.log(`\n${failures.length} check(s) failed`);
   process.exit(1);

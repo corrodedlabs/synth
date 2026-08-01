@@ -88,6 +88,21 @@ for (let bots = 1; bots <= 3; bots++) {
 }
 await shot("01c-lobby-full");
 
+const lobbyBots = await page.locator("#seat-list .bot-player").evaluateAll((players) =>
+  players.map((player) => ({
+    name: player.querySelector(".player-display-name")?.textContent ?? "",
+    avatar: player.querySelector(".player-avatar")?.textContent ?? "",
+  }))
+);
+if (
+  lobbyBots.length !== 3 ||
+  new Set(lobbyBots.map((bot) => bot.name)).size !== 3 ||
+  new Set(lobbyBots.map((bot) => bot.avatar)).size !== 3 ||
+  lobbyBots.some((bot) => /^Bot \d+$/.test(bot.name))
+) {
+  throw new Error(`bot personas are not distinct: ${JSON.stringify(lobbyBots)}`);
+}
+
 if (await startDisabled()) throw new Error("start button still disabled with 4 players");
 console.log(`seats full (${await seatCount()}), starting game`);
 await page.click("#start-game");

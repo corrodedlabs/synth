@@ -1,7 +1,7 @@
 import { Effect, Fiber, Queue } from "effect";
 import { cardPoints, RoomInfo, ServerEvent } from "../net/protocol";
 import { connectSocket, GameSocket, SocketError } from "../net/SocketService";
-import { memberDisplayName } from "../ui/UiOverlay";
+import { memberDisplayName } from "../ui/PlayerProfile";
 import {
   CardModel,
   GameAction,
@@ -346,6 +346,16 @@ export class GameSession {
     return (viewIndex + this.myServerIndex) % 4;
   }
 
+  private seatPresentation(members: readonly string[]) {
+    const seatMembers = [0, 1, 2, 3].map(
+      (view) => members[this.toServer(view)] ?? ""
+    );
+    return {
+      members: seatMembers,
+      names: seatMembers.map((member) => memberDisplayName(member, members)),
+    };
+  }
+
   // --- session program ---
 
   private program(intent: SessionIntent, joinRoom?: string): Effect.Effect<void, SocketError> {
@@ -507,10 +517,7 @@ export class GameSession {
           // First deal: seats are final now, pin everyone's display name.
           const model = this.callbacks.getModel();
           if (model.seatNames === null && model.members.length === 4) {
-            const names = [0, 1, 2, 3].map((view) =>
-              memberDisplayName(model.members[this.toServer(view)] ?? "")
-            );
-            dispatch({ _tag: "SeatNamesSet", names });
+            dispatch({ _tag: "SeatNamesSet", ...this.seatPresentation(model.members) });
           }
           dispatch({ _tag: "HandDealt", cards: event.cards });
           yield* Effect.sleep(`${this.callbacks.getPacing().dealCompleteMs} millis`);
@@ -632,7 +639,7 @@ export class GameSession {
           // our own drop notice can only reach us after we reconnected
           if (event.email !== this.email) {
             this.callbacks.status(
-              `${memberDisplayName(event.email)} lost connection — holding their seat ` +
+              `${memberDisplayName(event.email, this.callbacks.getModel().members)} lost connection — holding their seat ` +
                 `up to ${event.graceSeconds}s…`
             );
           }
@@ -640,7 +647,9 @@ export class GameSession {
 
         case "PlayerReconnected":
           if (event.email !== this.email) {
-            this.callbacks.status(`${memberDisplayName(event.email)} is back.`);
+            this.callbacks.status(
+              `${memberDisplayName(event.email, this.callbacks.getModel().members)} is back.`
+            );
           }
           return false;
 
@@ -665,12 +674,11 @@ export class GameSession {
           const model = this.callbacks.getModel();
           dispatch({ _tag: "MembersChanged", members: event.members });
           if (model.seatNames !== null) {
-            const names = [0, 1, 2, 3].map((view) =>
-              memberDisplayName(event.members[this.toServer(view)] ?? "")
-            );
-            dispatch({ _tag: "SeatNamesSet", names });
+            dispatch({ _tag: "SeatNamesSet", ...this.seatPresentation(event.members) });
           }
-          this.callbacks.status(`${memberDisplayName(event.email)} takes over the seat.`);
+          this.callbacks.status(
+            `${memberDisplayName(event.email, event.members)} takes over the seat.`
+          );
           this.callbacks.seatResolved();
           return false;
         }
@@ -705,9 +713,7 @@ export class GameSession {
             : s.stage === "choosing-trump" ? "choosing-trump"
             : s.stage === "playing" ? "playing"
             : "bidding";
-          const seatNames = [0, 1, 2, 3].map((view) =>
-            memberDisplayName(s.members[this.toServer(view)] ?? "")
-          );
+          const seats = this.seatPresentation(s.members);
           const tricksByView = [0, 1, 2, 3].map(
             (view) => s.tricks.get(this.toServer(view)) ?? 0
           );
@@ -722,7 +728,8 @@ export class GameSession {
               // the host created the room first, so they sit at the end of
               // the server's newest-first member list
               isHost: s.members[s.members.length - 1] === this.email,
-              seatNames,
+              seatMembers: seats.members,
+              seatNames: seats.names,
               hand: [...s.yourHand],
               playedCards: s.trick.map((play) => ({
                 card: play.card,

@@ -1,6 +1,10 @@
 import { GameModel, PlayerIndex, Suit } from "../game/GameModel";
 import type { GamePacingProfile } from "../game/GamePacing";
 import { RoomInfo } from "../net/protocol";
+import { playerProfile } from "./PlayerProfile";
+import type { PlayerProfile } from "./PlayerProfile";
+
+export { memberDisplayName } from "./PlayerProfile";
 
 export interface UiCallbacks {
   readonly onCreate: (playerName: string, target: number) => void;
@@ -47,11 +51,32 @@ export const EMOTES: Record<string, string> = {
   fire: "🔥",
 };
 
-// "antash-x7k2p9@game.local" → "antash", "bot-2" → "Bot 2"
-export function memberDisplayName(member: string): string {
-  const botMatch = member.match(/^bot-(\d+)$/);
-  if (botMatch) return `Bot ${botMatch[1]}`;
-  return member.split("@")[0].replace(/-[a-z0-9]{6}$/, "");
+export function createPlayerIdentity(profile: PlayerProfile): HTMLElement {
+  const identity = document.createElement("span");
+  identity.className = `player-identity ${profile.isBot ? "bot-player" : "human-player"}`;
+  identity.style.setProperty("--avatar-accent", profile.accent);
+
+  const avatar = document.createElement("span");
+  avatar.className = "player-avatar";
+  avatar.setAttribute("aria-hidden", "true");
+  avatar.textContent = profile.avatar;
+
+  const copy = document.createElement("span");
+  copy.className = "player-copy";
+  const name = document.createElement("span");
+  name.className = "player-display-name";
+  name.textContent = profile.displayName;
+  copy.append(name);
+
+  if (profile.isBot) {
+    const botTag = document.createElement("span");
+    botTag.className = "bot-tag";
+    botTag.textContent = "BOT";
+    copy.append(botTag);
+  }
+
+  identity.append(avatar, copy);
+  return identity;
 }
 
 export class UiOverlay {
@@ -363,12 +388,12 @@ export class UiOverlay {
         item.className = "empty-seat";
         item.textContent = "empty seat";
       } else {
+        const profile = playerProfile(member, model.members);
         const tags = [
           seat === 0 ? "host" : null,
           member === selfEmail ? "you" : null,
         ].filter(Boolean);
-        const name = document.createElement("span");
-        name.textContent = memberDisplayName(member);
+        const identity = createPlayerIdentity(profile);
         const right = document.createElement("span");
         right.className = "seat-tags";
         const label = document.createElement("span");
@@ -380,12 +405,12 @@ export class UiOverlay {
           const kick = document.createElement("button");
           kick.type = "button";
           kick.className = "kick-button";
-          kick.title = `Remove ${memberDisplayName(member)}`;
+          kick.title = `Remove ${profile.displayName}`;
           kick.textContent = "✕";
           kick.addEventListener("click", () => this.callbacks.onKick(member));
           right.append(kick);
         }
-        item.append(name, right);
+        item.append(identity, right);
       }
       this.seatList.append(item);
     }

@@ -222,11 +222,23 @@ await host.waitForFunction(
 );
 check("a bot took the guest's seat", true);
 check("the abandon panel is gone", !(await visible(host, "abandon-panel")));
-const seatNames = await host.evaluate(() => window.__game.state().seatNames);
+const botPresentation = await host.evaluate(() => {
+  const model = window.__game.state();
+  const botNames = model.seatMembers
+    .map((member, index) => (/^bot-/.test(member) ? model.seatNames[index] : null))
+    .filter(Boolean);
+  return {
+    botNames,
+    avatarCount: document.querySelectorAll(".seat-name-label .bot-player .player-avatar").length,
+  };
+});
 check(
-  `the seat label now names the bot (${JSON.stringify(seatNames)})`,
-  seatNames.some((name) => /^Bot \d+$/.test(name))
+  `bots have distinct friendly names (${JSON.stringify(botPresentation.botNames)})`,
+  botPresentation.botNames.length === 3 &&
+    new Set(botPresentation.botNames).size === 3 &&
+    botPresentation.botNames.every((name) => !/^Bot \d+$/.test(name))
 );
+check("each bot seat renders an avatar", botPresentation.avatarCount === 3);
 
 // --- the match carries on: the host deals and plays hand 3 vs three bots ---
 await host.waitForSelector("#next-hand:not(.hidden)", { timeout: 10000 });
@@ -257,7 +269,10 @@ if (errors.length) {
   console.log("CONSOLE ERRORS:");
   for (const error of errors) console.log("  " + error);
 }
-await browser.close();
+await Promise.race([
+  browser.close(),
+  new Promise((resolve) => setTimeout(resolve, 5_000)),
+]);
 if (failures.length || errors.length) {
   console.log(`\n${failures.length} check(s) failed`);
   process.exit(1);
