@@ -194,8 +194,14 @@ export class SoundService {
     }
   }
 
+  // the button is icon-based: the `muted` class swaps the speaker glyph,
+  // aria keeps the state announced
   private renderButton() {
-    if (this.button) this.button.textContent = this.muted ? "sound off" : "sound on";
+    if (!this.button) return;
+    this.button.classList.toggle("muted", this.muted);
+    this.button.setAttribute("aria-pressed", String(this.muted));
+    this.button.setAttribute("aria-label", this.muted ? "Turn sound on" : "Turn sound off");
+    this.button.title = this.muted ? "sound off" : "sound on";
   }
 
   private ready(): AudioContext | null {

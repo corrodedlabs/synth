@@ -17,8 +17,17 @@ beforeEach(() => {
 });
 
 function fakeButton() {
+  const classes = new Set<string>();
   const button = {
-    textContent: "",
+    classList: {
+      toggle: (name: string, force?: boolean) => {
+        if (force) classes.add(name);
+        else classes.delete(name);
+      },
+      contains: (name: string) => classes.has(name),
+    },
+    setAttribute: () => undefined,
+    title: "",
     click: () => undefined as void,
     addEventListener: (_event: string, handler: () => void) => {
       button.click = handler;
@@ -69,19 +78,19 @@ describe("SoundService", () => {
     expect(new SoundService().isMuted()).toBe(false);
   });
 
-  it("drives the toggle button label and reacts to its clicks", () => {
+  it("drives the toggle button state and reacts to its clicks", () => {
     const sound = new SoundService();
     const button = fakeButton();
     sound.bindToggle(button as unknown as HTMLElement);
-    expect(button.textContent).toBe("sound on");
+    expect(button.classList.contains("muted")).toBe(false);
 
     button.click();
     expect(sound.isMuted()).toBe(true);
-    expect(button.textContent).toBe("sound off");
+    expect(button.classList.contains("muted")).toBe(true);
 
     button.click();
     expect(sound.isMuted()).toBe(false);
-    expect(button.textContent).toBe("sound on");
+    expect(button.classList.contains("muted")).toBe(false);
   });
 
   it("still counts attempts while muted", () => {
