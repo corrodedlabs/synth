@@ -203,7 +203,7 @@ Server events drive a pure reducer; rendering reacts to dispatched actions
   `PlayArea.ts` (scene objects), `MockGameProgram.ts` (`?mock=1` offline mode)
 - `app/src/ui/UiOverlay.ts` — DOM overlay: start screen (incl. the `?join=`
   invite-link entry and the standings panel), room browser (list is pushed
-  live by the server), lobby (copy-invite button), bid/trump panels, the
+  live by the server), lobby (share-invite button), bid/trump panels, the
   abandon (replace-with-bot) panel, the reconnecting holding screen (with
   an abandon-the-match escape), emote strip + bubbles, help overlay
 - `app/src/utils/Sound.ts` — synthesized Web Audio effects (card swishes,

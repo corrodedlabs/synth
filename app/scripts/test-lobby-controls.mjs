@@ -184,9 +184,22 @@ await host.click('#create-panel .table-choice[data-target="6"]');
 await host.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });
 const inviteUrl = await host.evaluate(() => window.__game.inviteLink());
 console.log(`invite link: ${inviteUrl}`);
-check("lobby offers a copy-invite button", await host.evaluate(
-  () => !document.getElementById("copy-invite").classList.contains("hidden")
+check("lobby offers a share-invite button", await host.evaluate(
+  () => !document.getElementById("share-invite").classList.contains("hidden")
 ));
+// clicking it hands the invite URL to the native share sheet — stubbed here
+// so the check is deterministic across browsers/headless
+const sharedUrl = await host.evaluate(async () => {
+  let shared = null;
+  navigator.share = (data) => {
+    shared = data;
+    return Promise.resolve();
+  };
+  document.getElementById("share-invite").click();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  return shared?.url ?? null;
+});
+check("share sheet receives the invite link", sharedUrl === inviteUrl);
 const invited = await browser.newPage({ viewport: { width: 1280, height: 800 } });
 invited.on("pageerror", (error) => errors.push(`[invited] ${error}`));
 await invited.goto(inviteUrl);

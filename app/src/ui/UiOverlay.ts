@@ -132,7 +132,7 @@ export class UiOverlay {
   private leaveMatchButton = element("leave-match") as HTMLButtonElement;
   private speedButton = element("speed-button") as HTMLButtonElement;
   private joinLinkButton = element("join-link") as HTMLButtonElement;
-  private copyInviteButton = element("copy-invite") as HTMLButtonElement;
+  private shareInviteButton = element("share-invite") as HTMLButtonElement;
   private emoteButton = element("emote-button") as HTMLButtonElement;
   private emoteStrip = element("emote-strip");
   private arrangeButton = element("arrange-button") as HTMLButtonElement;
@@ -150,7 +150,7 @@ export class UiOverlay {
   private bidActionTimer: number | null = null;
   private tableMomentTimer: number | null = null;
   private leaveArmTimer: number | null = null;
-  private copyResetTimer: number | null = null;
+  private shareResetTimer: number | null = null;
   private joinTarget: string | null = null;
   private currentRoomName: string | null = null;
 
@@ -253,18 +253,24 @@ export class UiOverlay {
       callbacks.onJoinLink(this.playerNameInput.value, target);
     });
 
-    this.copyInviteButton.addEventListener("click", () => {
+    this.shareInviteButton.addEventListener("click", () => {
       if (this.currentRoomName === null) return;
-      const link = inviteLink(this.currentRoomName);
-      // optional chaining alone would silently skip BOTH branches when the
-      // clipboard API is missing (http on a LAN, some webviews)
-      if (navigator.clipboard?.writeText) {
-        navigator.clipboard.writeText(link).then(
-          () => this.flashCopied(),
-          () => window.prompt("Copy this invite link:", link)
+      const room = this.currentRoomName;
+      const link = inviteLink(room);
+      if (navigator.share) {
+        navigator.share({
+          title: "28 — join my table",
+          text: `Join my 28 table "${room}"`,
+          url: link,
+        }).then(
+          () => this.flashShared("shared ✓"),
+          (error) => {
+            // dismissing the share sheet is not a failure
+            if ((error as DOMException | null)?.name !== "AbortError") this.copyLink(link);
+          }
         );
       } else {
-        window.prompt("Copy this invite link:", link);
+        this.copyLink(link);
       }
     });
 
@@ -332,12 +338,27 @@ export class UiOverlay {
     }
   }
 
-  private flashCopied() {
-    if (this.copyResetTimer !== null) window.clearTimeout(this.copyResetTimer);
-    this.copyInviteButton.textContent = "copied ✓";
-    this.copyResetTimer = window.setTimeout(() => {
-      this.copyInviteButton.textContent = "copy invite link";
-      this.copyResetTimer = null;
+  // Desktop fallback where no native share sheet exists: clipboard, with the
+  // prompt as a last resort.
+  private copyLink(link: string) {
+    // optional chaining alone would silently skip BOTH branches when the
+    // clipboard API is missing (http on a LAN, some webviews)
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(link).then(
+        () => this.flashShared("copied ✓"),
+        () => window.prompt("Copy this invite link:", link)
+      );
+    } else {
+      window.prompt("Copy this invite link:", link);
+    }
+  }
+
+  private flashShared(feedback: string) {
+    if (this.shareResetTimer !== null) window.clearTimeout(this.shareResetTimer);
+    this.shareInviteButton.textContent = feedback;
+    this.shareResetTimer = window.setTimeout(() => {
+      this.shareInviteButton.textContent = "share invite link";
+      this.shareResetTimer = null;
     }, 2000);
   }
 
