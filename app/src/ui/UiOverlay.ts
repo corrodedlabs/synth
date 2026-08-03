@@ -1,4 +1,5 @@
 import { GameModel, PlayerIndex, Suit } from "../game/GameModel";
+import type { ArrangementMode, ArrangementPreset } from "../game/CardArrangement";
 import type { GamePacingProfile } from "../game/GamePacing";
 import { RoomInfo } from "../net/protocol";
 import { playerProfile } from "./PlayerProfile";
@@ -28,6 +29,9 @@ export interface UiCallbacks {
   readonly onEndMatch: () => void;
   readonly onGoHome: () => void;
   readonly onCyclePacing: () => GamePacingProfile;
+  readonly onArrangePreset: (preset: ArrangementPreset) => void;
+  readonly onArrangeCustom: () => void;
+  readonly onArrangeDone: () => void;
   // give up on reconnecting to an interrupted match
   readonly onAbandonReconnect: () => void;
 }
@@ -131,6 +135,9 @@ export class UiOverlay {
   private copyInviteButton = element("copy-invite") as HTMLButtonElement;
   private emoteButton = element("emote-button") as HTMLButtonElement;
   private emoteStrip = element("emote-strip");
+  private arrangeButton = element("arrange-button") as HTMLButtonElement;
+  private arrangePanel = element("arrange-panel");
+  private arrangeTrumpButton = element("arrange-trump") as HTMLButtonElement;
   private abandonPanel = element("abandon-panel");
   private abandonText = element("abandon-text");
   private reconnectPanel = element("reconnect-panel");
@@ -263,6 +270,40 @@ export class UiOverlay {
 
     this.emoteButton.addEventListener("click", () => {
       this.emoteStrip.classList.toggle("hidden");
+    });
+    this.arrangeButton.addEventListener("click", () => {
+      if (this.arrangeButton.classList.contains("active")) {
+        callbacks.onArrangeDone();
+        return;
+      }
+      const opening = this.arrangePanel.classList.contains("hidden");
+      this.arrangePanel.classList.toggle("hidden", !opening);
+      this.arrangeButton.setAttribute("aria-expanded", String(opening));
+    });
+    this.arrangePanel
+      .querySelectorAll<HTMLButtonElement>("[data-arrangement-preset]")
+      .forEach((button) => {
+        button.addEventListener("click", () => {
+          this.hide(this.arrangePanel);
+          this.arrangeButton.setAttribute("aria-expanded", "false");
+          callbacks.onArrangePreset(button.dataset.arrangementPreset as ArrangementPreset);
+        });
+      });
+    element("arrange-custom").addEventListener("click", () => {
+      this.hide(this.arrangePanel);
+      this.arrangeButton.setAttribute("aria-expanded", "false");
+      callbacks.onArrangeCustom();
+    });
+    // A felt tap closes only the preset menu. Custom mode is deliberately
+    // sticky until Done so an ordinary card gesture cannot escape into play.
+    document.addEventListener("pointerdown", (event) => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest?.("#arrange-button, #arrange-panel")) {
+        this.hide(this.arrangePanel);
+        if (!this.arrangeButton.classList.contains("active")) {
+          this.arrangeButton.setAttribute("aria-expanded", "false");
+        }
+      }
     });
     element("replace-bot").addEventListener("click", () => {
       this.hideAbandonPanel();
@@ -732,6 +773,37 @@ export class UiOverlay {
     this.leaveMatchButton.classList.toggle("hidden", !visible);
     this.emoteButton.classList.toggle("hidden", !visible);
     if (!visible) this.hide(this.emoteStrip);
+  }
+
+  setArrangeAvailable(available: boolean, trumpKnown: boolean) {
+    this.arrangeButton.classList.toggle("hidden", !available);
+    this.arrangeTrumpButton.disabled = !trumpKnown;
+    this.arrangeTrumpButton.title = trumpKnown
+      ? "Put the trump suit first"
+      : "Available when trump is known";
+    if (!available) {
+      this.hide(this.arrangePanel);
+      this.setArranging(false);
+    }
+  }
+
+  setArranging(active: boolean) {
+    this.arrangeButton.classList.toggle("active", active);
+    const label = active ? "Finish arranging" : "Arrange cards";
+    this.arrangeButton.setAttribute("aria-label", label);
+    this.arrangeButton.title = label;
+    this.arrangeButton.setAttribute("aria-expanded", "false");
+    if (active) this.hide(this.arrangePanel);
+  }
+
+  setArrangementSelection(mode: ArrangementMode) {
+    this.arrangePanel
+      .querySelectorAll<HTMLButtonElement>("[data-arrangement-mode]")
+      .forEach((button) => {
+        const selected = button.dataset.arrangementMode === mode;
+        button.classList.toggle("selected", selected);
+        button.setAttribute("aria-checked", String(selected));
+      });
   }
 
   private disarmLeaveMatch() {

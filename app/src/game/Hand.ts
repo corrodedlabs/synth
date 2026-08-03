@@ -68,7 +68,12 @@ export class Hand {
   // The server already sends four cards before the auction and four after
   // trump selection. Staggering each packet gives the hand a clear deal
   // rhythm without delaying the authoritative hand model.
-  public dealCards(cards: readonly Card[], staggerMs: number) {
+  public dealCards(
+    cards: readonly Card[],
+    staggerMs: number,
+    onComplete?: () => void,
+    completeMs = staggerMs * Math.max(0, cards.length - 1) + 400
+  ) {
     this.cancelPendingDeals();
     cards.forEach((card, index) => {
       const delay = staggerMs * index;
@@ -82,6 +87,17 @@ export class Hand {
       }, delay);
       this.dealTimers.add(timer);
     });
+    if (onComplete) {
+      if (completeMs <= 0) {
+        onComplete();
+      } else {
+        const timer = window.setTimeout(() => {
+          this.dealTimers.delete(timer);
+          onComplete();
+        }, completeMs);
+        this.dealTimers.add(timer);
+      }
+    }
   }
 
   public cancelPendingDeals() {
@@ -95,6 +111,62 @@ export class Hand {
       this.cards.splice(index, 1);
       this.arrangeCards();
     }
+  }
+
+  // Visual order is deliberately owned by Hand, not GameModel: arranging a
+  // hand is private presentation and must never alter authoritative cards.
+  public orderIds(): string[] {
+    return this.cards.map((card) => (card.mesh.userData.modelId as string) ?? "");
+  }
+
+  public setOrder(cardIds: readonly string[]) {
+    const byId = new Map(
+      this.cards.map((card) => [(card.mesh.userData.modelId as string) ?? "", card])
+    );
+    const ordered: Card[] = [];
+    const seen = new Set<Card>();
+    for (const id of cardIds) {
+      const card = byId.get(id);
+      if (card && !seen.has(card)) {
+        ordered.push(card);
+        seen.add(card);
+      }
+    }
+    for (const card of this.cards) {
+      if (!seen.has(card)) ordered.push(card);
+    }
+    this.cards = ordered;
+    this.arrangeCards();
+  }
+
+  // Move one card while leaving it under the pointer. Neighbours animate to
+  // their new fan slots and the floating card settles on pointer-up.
+  public moveCard(card: Card, targetIndex: number): boolean {
+    const currentIndex = this.cards.indexOf(card);
+    if (currentIndex < 0) return false;
+    const clamped = Math.max(0, Math.min(this.cards.length - 1, targetIndex));
+    if (currentIndex === clamped) return false;
+    this.cards.splice(currentIndex, 1);
+    this.cards.splice(clamped, 0, card);
+    this.arrangeCards(card);
+    return true;
+  }
+
+  public closestSlotIndex(clientX: number, canvas: HTMLElement): number {
+    if (this.cards.length === 0) return 0;
+    const rect = canvas.getBoundingClientRect();
+    let closestIndex = 0;
+    let closestDistance = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < this.cards.length; index += 1) {
+      const projected = this.computeLayout(index, this.cards.length).position.clone().project(this.camera);
+      const slotX = rect.left + ((projected.x + 1) / 2) * rect.width;
+      const distance = Math.abs(clientX - slotX);
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestIndex = index;
+      }
+    }
+    return closestIndex;
   }
 
   // Canonical fan slot for a card index in a hand of `count` cards.
@@ -138,11 +210,17 @@ export class Hand {
     return this.computeLayout(index, this.cards.length);
   }
 
-  public arrangeCards() {
+  public arrangeCards(floatingCard: Card | null = null, immediate = false, duration = 400) {
     const count = this.cards.length;
     this.cards.forEach((card, index) => {
       const layout = this.computeLayout(index, count);
-      card.setPosition(layout.position.x, layout.position.y, layout.position.z, false, 400);
+      if (card === floatingCard) {
+        card.mesh.traverse((obj) => {
+          if (obj instanceof THREE.Mesh) obj.renderOrder = 100;
+        });
+        return;
+      }
+      card.setPosition(layout.position.x, layout.position.y, layout.position.z, immediate, duration);
 
       const renderOrder = index;
       card.mesh.traverse((obj) => {
@@ -151,7 +229,7 @@ export class Hand {
         }
       });
 
-      card.setRotation(layout.rotation.x, layout.rotation.y, layout.rotation.z);
+      card.setRotation(layout.rotation.x, layout.rotation.y, layout.rotation.z, immediate, duration);
     });
   }
 

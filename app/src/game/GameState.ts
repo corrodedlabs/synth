@@ -9,6 +9,8 @@ import { ZenCardTextures } from "../utils/ZenCardTextures";
 import { createPlayerIdentity, SEAT_NAMES, UiOverlay } from "../ui/UiOverlay";
 import { playerProfile } from "../ui/PlayerProfile";
 import { Card } from "./Card";
+import { arrangedCardIds } from "./CardArrangement";
+import type { ArrangementMode, ArrangementPreset } from "./CardArrangement";
 import {
   GameAction,
   GameModel,
@@ -48,6 +50,10 @@ export class GameState {
   private mockFiber: Fiber.RuntimeFiber<void, never> | null = null;
   private mockMode = false;
   private trumpRevealAnnounced = false;
+  private arrangementAvailable = false;
+  private arranging = false;
+  private arrangementMode: ArrangementMode = "deal";
+  private dealOrderIds: string[] = [];
 
   private scoreElement: HTMLElement | null = null;
   private tricksElement: HTMLElement | null = null;
@@ -71,9 +77,15 @@ export class GameState {
       this.sceneManager.renderer.domElement,
       this.hand,
       {
-        canDrag: () => this.mockMode || this.model.pendingRequest?.kind === "play",
+        mode: () =>
+          this.arranging
+            ? "arrange"
+            : this.mockMode || this.model.pendingRequest?.kind === "play"
+              ? "play"
+              : "inactive",
         canPlay: (card) => this.cardIsPlayable(card),
         tryPlay: (card) => this.tryPlayCard(card),
+        arrangementChanged: () => this.saveArrangement(),
       }
     );
 
@@ -105,6 +117,9 @@ export class GameState {
         this.playArea.setPacing(pacing);
         return pacing;
       },
+      onArrangePreset: (preset) => this.applyArrangementPreset(preset),
+      onArrangeCustom: () => this.startCustomArrangement(),
+      onArrangeDone: () => this.finishCustomArrangement(),
       onAbandonReconnect: () => this.abandonInterruptedMatch(),
     });
 
@@ -342,6 +357,158 @@ export class GameState {
     return this.session;
   }
 
+  public arrangementState() {
+    return {
+      available: this.arrangementAvailable,
+      arranging: this.arranging,
+      mode: this.arrangementMode,
+      order: this.hand.orderIds(),
+    };
+  }
+
+  public arrangeCards(mode: ArrangementMode): boolean {
+    if (mode === "custom") return this.startCustomArrangement();
+    return this.applyArrangementPreset(mode);
+  }
+
+  public finishArranging(): boolean {
+    if (!this.arranging) return false;
+    this.finishCustomArrangement();
+    return true;
+  }
+
+  private applyArrangementPreset(preset: ArrangementPreset): boolean {
+    if (!this.arrangementAvailable) return false;
+    if (preset === "trump" && this.model.trumpSuit === null) return false;
+    this.arranging = false;
+    this.arrangementMode = preset;
+    this.dragControls.clearSelection();
+    this.ui.setArranging(false);
+    this.ui.setArrangementSelection(preset);
+    this.hand.setOrder(
+      arrangedCardIds(this.model.hand, preset, {
+        trumpSuit: this.model.trumpSuit,
+        dealOrder: this.dealOrderIds,
+      })
+    );
+    this.saveArrangement();
+    return true;
+  }
+
+  private startCustomArrangement(): boolean {
+    if (!this.arrangementAvailable) return false;
+    this.dragControls.clearSelection();
+    // A preset may still be tweening. Custom hit-testing must immediately
+    // agree with the logical slot order before the first drag begins.
+    this.hand.arrangeCards(null, true, 0);
+    this.arranging = true;
+    this.arrangementMode = "custom";
+    this.ui.setArranging(true);
+    this.ui.setArrangementSelection("custom");
+    this.saveArrangement();
+    return true;
+  }
+
+  private finishCustomArrangement() {
+    this.dragControls.clearSelection();
+    this.hand.arrangeCards();
+    this.arranging = false;
+    this.ui.setArranging(false);
+    this.saveArrangement();
+  }
+
+  private enableArrangement() {
+    if (this.model.hand.length === 0) return;
+    this.arrangementAvailable = true;
+    if (this.dealOrderIds.length === 0) {
+      this.dealOrderIds = this.model.hand.map((card) => card.id);
+    }
+    this.ui.setArrangeAvailable(true, this.model.trumpSuit !== null);
+    this.saveArrangement();
+  }
+
+  private resetArrangement(clearStored = true) {
+    this.arrangementAvailable = false;
+    this.arranging = false;
+    this.arrangementMode = "deal";
+    this.dealOrderIds = [];
+    this.dragControls.clearSelection();
+    this.ui.setArrangeAvailable(false, false);
+    this.ui.setArrangementSelection("deal");
+    if (clearStored) this.clearStoredArrangement();
+  }
+
+  private saveArrangement() {
+    if (!this.arrangementAvailable || !this.session || !this.model.roomName) return;
+    try {
+      localStorage.setItem(
+        "game28-card-arrangement",
+        JSON.stringify({
+          email: this.session.email,
+          room: this.model.roomName,
+          handNumber: this.model.handNumber,
+          mode: this.arrangementMode,
+          dealOrder: this.dealOrderIds,
+          visualOrder: this.hand.orderIds(),
+        })
+      );
+    } catch {
+      // Arrangement remains usable when browser storage is unavailable.
+    }
+  }
+
+  private restoreArrangement(): boolean {
+    if (!this.session || !this.model.roomName) return false;
+    try {
+      const raw = localStorage.getItem("game28-card-arrangement");
+      if (!raw) return false;
+      const stored = JSON.parse(raw) as {
+        readonly email?: string;
+        readonly room?: string;
+        readonly handNumber?: number;
+        readonly mode?: ArrangementMode;
+        readonly dealOrder?: string[];
+        readonly visualOrder?: string[];
+      };
+      const modes: readonly ArrangementMode[] = ["suit", "strength", "trump", "deal", "custom"];
+      if (
+        stored.email !== this.session.email ||
+        stored.room !== this.model.roomName ||
+        stored.handNumber !== this.model.handNumber ||
+        !stored.mode ||
+        !modes.includes(stored.mode)
+      ) {
+        return false;
+      }
+      this.arrangementMode = stored.mode;
+      this.ui.setArrangementSelection(stored.mode);
+      this.dealOrderIds = Array.isArray(stored.dealOrder)
+        ? stored.dealOrder
+        : this.model.hand.map((card) => card.id);
+      if (stored.mode === "custom") {
+        if (Array.isArray(stored.visualOrder)) this.hand.setOrder(stored.visualOrder);
+      } else if (stored.mode !== "trump" || this.model.trumpSuit !== null) {
+        this.hand.setOrder(
+          arrangedCardIds(this.model.hand, stored.mode, {
+            trumpSuit: this.model.trumpSuit,
+            dealOrder: this.dealOrderIds,
+          })
+        );
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private clearStoredArrangement() {
+    try {
+      localStorage.removeItem("game28-card-arrangement");
+    } catch {
+      // Nothing else depends on this optional local preference.
+    }
+  }
+
   // The connection died while a match of ours is still stored (a deploy,
   // a server blip, flaky wifi): keep trying to rejoin every few seconds.
   // The loop ends by itself — a successful snapshot restores the table,
@@ -388,9 +555,9 @@ export class GameState {
 
   // Sweep every scrap of an in-progress game out of the scene and the
   // overlay; the model reset (RoomLeft / idle) happens in the reducer.
-  private clearTableScene() {
+  private clearTableScene(clearArrangementStorage = true) {
     this.hand.cancelPendingDeals();
-    this.dragControls.clearSelection();
+    this.resetArrangement(clearArrangementStorage);
     for (const card of [...this.hand.getCards()]) {
       this.hand.removeCard(card);
       this.sceneManager.scene.remove(card.mesh);
@@ -518,9 +685,10 @@ export class GameState {
             this.session.destroy();
             this.session = null;
           }
-          this.clearTableScene();
+          const reconnecting = storedActiveMatch() !== null;
+          this.clearTableScene(!reconnecting);
           this.ui.resetRoomBrowser();
-          if (storedActiveMatch() !== null) {
+          if (reconnecting) {
             // our match is still live somewhere — hold the player on a
             // screen with no create/join actions (a second table under the
             // same identity would corrupt both matches) and keep retrying
@@ -562,13 +730,23 @@ export class GameState {
         // owns all received cards; this only stages their arrival in the fan.
         const firstPacket = this.model.hand.length === action.cards.length;
         if (firstPacket) {
+          this.resetArrangement();
           this.trumpRevealAnnounced = false;
           this.ui.clearBidHistory();
         }
         this.sound.deal(action.cards.length);
+        const pacing = this.pacing.profile();
+        const fullHand = this.model.hand.length === 8;
+        const arrangementDelay = Math.max(
+          pacing.dealCompleteMs,
+          pacing.dealCardStaggerMs * Math.max(0, action.cards.length - 1) + 400
+        );
+        if (fullHand) this.dealOrderIds = this.model.hand.map((card) => card.id);
         this.hand.dealCards(
           action.cards.map((card) => this.createCard(card)),
-          this.pacing.profile().dealCardStaggerMs
+          pacing.dealCardStaggerMs,
+          fullHand ? () => this.enableArrangement() : undefined,
+          arrangementDelay
         );
         this.ui.showTableMoment(
           "✦",
@@ -583,6 +761,7 @@ export class GameState {
       case "CardPlayed":
         this.sound.cardPlay();
         this.playCard(action.card, action.playerIndex);
+        this.saveArrangement();
         break;
 
       case "ActivePlayerChanged":
@@ -606,6 +785,7 @@ export class GameState {
 
       case "TrumpSet":
         this.ui.setTrump(this.model.trumpSuit, this.model.trumpExposed);
+        this.ui.setArrangeAvailable(this.arrangementAvailable, this.model.trumpSuit !== null);
         // Rejoin snapshots and older servers may establish an already
         // exposed trump without a live TrumpRevealed event.
         if (
@@ -625,6 +805,7 @@ export class GameState {
       case "TrumpRevealed":
         this.sound.trumpReveal();
         this.ui.setTrump(this.model.trumpSuit, this.model.trumpExposed);
+        this.ui.setArrangeAvailable(this.arrangementAvailable, this.model.trumpSuit !== null);
         if (!this.trumpRevealAnnounced) {
           this.trumpRevealAnnounced = true;
           this.ui.showTrumpReveal(
@@ -698,6 +879,7 @@ export class GameState {
         // no turn broadcast follows the last trick, so the marker of the
         // hand's final player would keep pulsing through the result panel
         this.setActiveSeat(null);
+        this.resetArrangement();
         break;
 
       case "HandResult": {
@@ -741,7 +923,7 @@ export class GameState {
         // their name labels, and the match HUD
         this.hand.cancelPendingDeals();
         this.trumpRevealAnnounced = false;
-        this.dragControls.clearSelection();
+        this.resetArrangement();
         for (const card of [...this.hand.getCards()]) {
           this.hand.removeCard(card);
           this.sceneManager.scene.remove(card.mesh);
@@ -759,6 +941,7 @@ export class GameState {
         break;
 
       case "MatchOver": {
+        this.resetArrangement();
         this.sound.fanfare(action.winner === "us");
         this.ui.status("");
         // the match is decided — the panel's Back to home takes it from here
@@ -780,7 +963,7 @@ export class GameState {
         // brings its own panel back up
         this.hand.cancelPendingDeals();
         this.trumpRevealAnnounced = this.model.trumpExposed;
-        this.dragControls.clearSelection();
+        this.resetArrangement(false);
         for (const card of [...this.hand.getCards()]) {
           this.hand.removeCard(card);
           this.sceneManager.scene.remove(card.mesh);
@@ -804,6 +987,14 @@ export class GameState {
         this.renderScore();
         this.positionSeatLabels();
         this.ui.setLeaveMatchVisible(this.session !== null);
+        if (this.model.phase === "playing" && this.model.hand.length > 0) {
+          this.dealOrderIds = this.model.hand.map((card) => card.id);
+          this.arrangementAvailable = true;
+          this.restoreArrangement();
+          this.ui.setArrangeAvailable(true, this.model.trumpSuit !== null);
+          this.ui.setArranging(false);
+          this.saveArrangement();
+        }
         break;
       }
     }

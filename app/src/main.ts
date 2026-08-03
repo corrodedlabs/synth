@@ -74,6 +74,10 @@ document.addEventListener('visibilitychange', () => {
   roomName: () => gameState.getSession()?.roomName,
   sounds: () => gameState.soundState(),
   cardStates: () => gameState.handCardStates(),
+  arrangement: () => gameState.arrangementState(),
+  arrange: (mode: "suit" | "strength" | "trump" | "deal" | "custom") =>
+    gameState.arrangeCards(mode),
+  doneArranging: () => gameState.finishArranging(),
   emote: (id: string) => gameState.getSession()?.sendEmote(id),
   resolveAbandon: (choice: 'replace' | 'close') => gameState.getSession()?.resolveAbandon(choice),
   standings: (name: string) => gameState.showStandings(name ?? 'viewer'),

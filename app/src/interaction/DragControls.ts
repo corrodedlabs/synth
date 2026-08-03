@@ -3,12 +3,14 @@ import { Card } from '../game/Card';
 import { Hand } from '../game/Hand';
 
 export interface DragGate {
-  // Whether hand cards may be picked up right now.
-  canDrag(): boolean;
+  // Arrangement is explicit so its gestures can never become card plays.
+  mode(): "inactive" | "play" | "arrange";
   // Whether this specific card would be a legal play right now.
   canPlay(card: Card): boolean;
   // Attempt to play the dropped card; false means it returns to the hand.
   tryPlay(card: Card): boolean;
+  // The visual order changed and can now be persisted by GameState.
+  arrangementChanged(): void;
 }
 
 export class DragControls {
@@ -31,6 +33,7 @@ export class DragControls {
   private hoveredCard: Card | null = null;
   private downPoint = new THREE.Vector2();
   private dragMoved = false;
+  private selectedMode: "play" | "arrange" | null = null;
   // Touch plays are two-step: the first tap raises the card, a second tap
   // on the same card commits it. Mouse keeps direct click-to-play.
   private armedCard: Card | null = null;
@@ -82,26 +85,45 @@ export class DragControls {
     return this.raycaster.intersectObjects(objects, true);
   }
 
+  // Raycaster distance does not account for renderOrder. In an overlapped
+  // fan, choose the visually topmost intersected card (the highest hand
+  // index) so the card the player sees is the card they pick up.
+  private topmostCard(intersects: THREE.Intersection<THREE.Object3D>[]): Card | null {
+    const handCards = this.hand.getCards();
+    let topmost: Card | null = null;
+    let topmostIndex = -1;
+    for (const intersection of intersects) {
+      let object = intersection.object;
+      while (object.parent && object.parent.type !== "Scene" && !object.userData.card) {
+        object = object.parent;
+      }
+      const card = object.userData.card as Card | undefined;
+      const index = card ? handCards.indexOf(card) : -1;
+      if (card && index > topmostIndex) {
+        topmost = card;
+        topmostIndex = index;
+      }
+    }
+    return topmost;
+  }
+
   private onDown(event: MouseEvent | TouchEvent) {
     event.preventDefault();
 
-    if (!this.gate.canDrag()) return;
+    const mode = this.gate.mode();
+    if (mode === "inactive") return;
 
     // Get all card meshes from the hand
     const cardMeshes = this.hand.getCards().map(c => c.mesh);
     const intersects = this.getIntersects(event, cardMeshes);
 
     if (intersects.length > 0) {
-      // Find the root Group of the card
-      let obj = intersects[0].object;
-      while (obj.parent && obj.parent.type !== 'Scene' && !obj.userData.card) {
-        obj = obj.parent;
-      }
-
-      if (obj.userData.card) {
-        this.selectedObject = obj;
-        this.selectedCard = obj.userData.card as Card;
+      const card = this.topmostCard(intersects);
+      if (card) {
+        this.selectedObject = card.mesh;
+        this.selectedCard = card;
         this.isDragging = true;
+        this.selectedMode = mode;
         this.dragMoved = false;
         this.downPoint.copy(this.pointerPosition(event));
 
@@ -122,7 +144,8 @@ export class DragControls {
   }
 
   private onMove(event: MouseEvent | TouchEvent) {
-    this.updateHover(event);
+    if (this.gate.mode() === "play") this.updateHover(event);
+    else this.clearHover();
 
     if (!this.isDragging || !this.selectedCard) return;
     event.preventDefault();
@@ -131,6 +154,27 @@ export class DragControls {
     // otherwise releasing counts as a tap (click-to-play).
     if (!this.dragMoved && this.pointerPosition(event).distanceTo(this.downPoint) < 8) return;
     this.dragMoved = true;
+
+    if (this.selectedMode === "arrange") {
+      const pointer = this.pointerPosition(event);
+      const targetIndex = this.hand.closestSlotIndex(pointer.x, this.canvas);
+      this.hand.moveCard(this.selectedCard, targetIndex);
+
+      const layout = this.hand.layoutOf(this.selectedCard);
+      if (layout) {
+        const rect = this.canvas.getBoundingClientRect();
+        this.mouse.x = ((pointer.x - rect.left) / rect.width) * 2 - 1;
+        this.mouse.y = -((pointer.y - rect.top) / rect.height) * 2 + 1;
+        this.raycaster.setFromCamera(this.mouse, this.camera);
+        const dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -(layout.position.y + 0.15));
+        const target = new THREE.Vector3();
+        if (this.raycaster.ray.intersectPlane(dragPlane, target)) {
+          this.selectedCard.setPosition(target.x, layout.position.y + 0.15, layout.position.z - 0.18, true);
+          this.selectedCard.setRotation(layout.rotation.x, layout.rotation.y, layout.rotation.z, true);
+        }
+      }
+      return;
+    }
 
     // Raycast to a virtual plane at card height to drag it around
     const rect = this.canvas.getBoundingClientRect();
@@ -196,13 +240,7 @@ export class DragControls {
 
     let newHovered: Card | null = null;
     if (intersects.length > 0) {
-      let obj = intersects[0].object;
-      while (obj.parent && obj.parent.type !== 'Scene' && !obj.userData.card) {
-        obj = obj.parent;
-      }
-      if (obj.userData.card) {
-        newHovered = obj.userData.card as Card;
-      }
+      newHovered = this.topmostCard(intersects);
     }
 
     if (newHovered !== this.hoveredCard) {
@@ -255,6 +293,11 @@ export class DragControls {
   // The table moved on (request answered, new deal, room left): nothing
   // should stay raised or armed.
   public clearSelection() {
+    if (this.selectedMode === "arrange") this.hand.arrangeCards();
+    this.isDragging = false;
+    this.selectedCard = null;
+    this.selectedObject = null;
+    this.selectedMode = null;
     this.disarm();
     this.clearHover();
   }
@@ -265,8 +308,16 @@ export class DragControls {
 
     this.isDragging = false;
     const card = this.selectedCard;
+    const mode = this.selectedMode;
     this.selectedCard = null;
     this.selectedObject = null;
+    this.selectedMode = null;
+
+    if (mode === "arrange") {
+      this.hand.arrangeCards();
+      if (this.dragMoved) this.gate.arrangementChanged();
+      return;
+    }
 
     if (!this.dragMoved) {
       const isTouch = window.TouchEvent && event instanceof TouchEvent;

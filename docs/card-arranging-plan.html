@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Card Arranging Feature Plan</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #352b27;
+        --muted: #6f625b;
+        --paper: #fffdf8;
+        --canvas: #eee7da;
+        --line: #d9cec0;
+        --accent: #7d4937;
+        --accent-soft: #f2e3d8;
+        --good: #315e49;
+        --good-soft: #e4f0e9;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, rgba(255, 255, 255, 0.8), transparent 32rem),
+          var(--canvas);
+        font-family: Georgia, "Times New Roman", serif;
+        line-height: 1.6;
+      }
+
+      main {
+        width: min(940px, calc(100% - 32px));
+        margin: 32px auto;
+        padding: clamp(28px, 6vw, 64px);
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        box-shadow: 0 22px 60px rgba(53, 43, 39, 0.12);
+      }
+
+      h1,
+      h2,
+      h3 {
+        line-height: 1.2;
+      }
+
+      h1 {
+        max-width: 680px;
+        margin: 0 0 12px;
+        font-size: clamp(2.2rem, 7vw, 4.6rem);
+        font-weight: 500;
+        letter-spacing: -0.045em;
+      }
+
+      h2 {
+        margin: 48px 0 14px;
+        font-size: clamp(1.55rem, 4vw, 2.25rem);
+        font-weight: 500;
+      }
+
+      h3 {
+        margin: 0 0 6px;
+        font-size: 1.12rem;
+      }
+
+      p,
+      li {
+        font-size: 1.05rem;
+      }
+
+      .eyebrow {
+        margin: 0 0 14px;
+        color: var(--accent);
+        font-family: system-ui, sans-serif;
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+      }
+
+      .summary {
+        max-width: 720px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 1.25rem;
+      }
+
+      .callout {
+        margin: 28px 0 0;
+        padding: 18px 20px;
+        background: var(--good-soft);
+        border-left: 4px solid var(--good);
+        border-radius: 4px 14px 14px 4px;
+      }
+
+      .callout strong {
+        color: var(--good);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .card {
+        padding: 20px;
+        background: #fffaf2;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+      }
+
+      .card p {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      .steps {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        counter-reset: step;
+      }
+
+      .steps li {
+        position: relative;
+        margin: 0 0 16px;
+        padding: 16px 18px 16px 64px;
+        background: #fffaf2;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        counter-increment: step;
+      }
+
+      .steps li::before {
+        position: absolute;
+        top: 14px;
+        left: 18px;
+        width: 32px;
+        height: 32px;
+        color: white;
+        background: var(--accent);
+        border-radius: 50%;
+        content: counter(step);
+        font-family: system-ui, sans-serif;
+        font-size: 0.9rem;
+        font-weight: 700;
+        line-height: 32px;
+        text-align: center;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+      }
+
+      th,
+      td {
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        background: var(--accent-soft);
+        font-family: system-ui, sans-serif;
+        font-size: 0.83rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      tr:last-child td {
+        border-bottom: 0;
+      }
+
+      code {
+        padding: 0.12em 0.35em;
+        background: var(--accent-soft);
+        border-radius: 5px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.9em;
+        overflow-wrap: anywhere;
+      }
+
+      .file-list li,
+      .checklist li {
+        margin-bottom: 9px;
+      }
+
+      .checklist {
+        padding-left: 1.4rem;
+      }
+
+      .checklist li::marker {
+        color: var(--good);
+      }
+
+      footer {
+        margin-top: 52px;
+        padding-top: 20px;
+        color: var(--muted);
+        border-top: 1px solid var(--line);
+        font-family: system-ui, sans-serif;
+        font-size: 0.88rem;
+      }
+
+      @media (max-width: 680px) {
+        main {
+          width: min(100% - 16px, 940px);
+          margin: 8px auto;
+          padding: 26px 18px;
+          border-radius: 16px;
+        }
+
+        .grid {
+          grid-template-columns: 1fr;
+        }
+
+        table,
+        thead,
+        tbody,
+        tr,
+        th,
+        td {
+          display: block;
+        }
+
+        thead {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          overflow: hidden;
+          clip: rect(0 0 0 0);
+        }
+
+        tr {
+          padding: 12px 14px;
+          border-bottom: 1px solid var(--line);
+        }
+
+        tr:last-child {
+          border-bottom: 0;
+        }
+
+        td {
+          padding: 3px 0;
+          border: 0;
+        }
+
+        td:first-child {
+          font-weight: 700;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">Twenty-Eight · Feature plan</p>
+      <h1>Let players arrange their cards</h1>
+      <p class="summary">
+        Players will be able to change the left-to-right order of the cards in their own hand.
+        They can use a ready-made arrangement or place every card exactly where they want it.
+      </p>
+
+      <div class="callout">
+        <strong>This does not change the deal.</strong>
+        The player keeps the same cards. Only their private on-screen order changes, so no server
+        rule, score, or other player is affected.
+      </div>
+
+      <h2>What the player will see</h2>
+      <p>
+        The <strong>Arrange</strong> button stays hidden while the first four cards are used for
+        bidding and trump selection. It appears near the player's hand only after the eighth card
+        finishes its deal animation. From then on, it stays available until that hand ends—even
+        during the player's own turn.
+      </p>
+
+      <div class="grid">
+        <article class="card">
+          <h3>Suit groups</h3>
+          <p>Keep each suit together. Inside a suit, use the game's strength order: J, 9, A, 10, K, Q, 8, 7.</p>
+        </article>
+        <article class="card">
+          <h3>Strongest first</h3>
+          <p>Put all strong cards toward the left, regardless of suit.</p>
+        </article>
+        <article class="card">
+          <h3>Trump first</h3>
+          <p>Put the known trump suit first, then group the other suits. This is disabled while trump is unknown.</p>
+        </article>
+        <article class="card">
+          <h3>Deal order</h3>
+          <p>Return the cards to the order in which they were received.</p>
+        </article>
+        <article class="card">
+          <h3>Custom</h3>
+          <p>Drag cards sideways and place them in any left-to-right order.</p>
+        </article>
+      </div>
+
+      <h2>Exact player flow</h2>
+      <ol class="steps">
+        <li>The first four cards arrive. The <strong>Arrange</strong> button is not shown yet.</li>
+        <li>After trump selection, the final four cards arrive. The button appears when all eight cards have finished dealing.</li>
+        <li>The player can tap <strong>Arrange</strong> at any time during the rest of the hand.</li>
+        <li>Choosing a ready-made option rearranges the cards immediately and closes the menu.</li>
+        <li>Choosing <strong>Custom</strong> starts arrangement mode and shows a clear <strong>Done</strong> button.</li>
+        <li>The player drags a card sideways. Nearby cards slide apart to show where it will go.</li>
+        <li>Releasing the card places it in the nearest slot. It cannot be accidentally played while arrangement mode is active.</li>
+        <li>Tapping <strong>Done</strong> returns the hand to normal play controls without changing the chosen order.</li>
+      </ol>
+
+      <h2>Rules for important moments</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Moment</th>
+            <th>What happens</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>The final four cards arrive</td>
+            <td>The button remains hidden during the animation. It appears only when the eighth card has landed. The cards remain in deal order until the player chooses an arrangement.</td>
+          </tr>
+          <tr>
+            <td>A card is played</td>
+            <td>That card leaves the hand. Every remaining card keeps its relative position.</td>
+          </tr>
+          <tr>
+            <td>The player's turn begins during Custom mode</td>
+            <td>Custom mode stays open, and the normal turn indicator remains visible. The player can finish arranging, tap <strong>Done</strong>, and then play a card.</td>
+          </tr>
+          <tr>
+            <td>Trump is unknown</td>
+            <td><strong>Trump first</strong> is disabled and explains that it becomes available when the player knows trump.</td>
+          </tr>
+          <tr>
+            <td>A new hand begins</td>
+            <td>The previous order is cleared. The new cards stay in deal order, and Arrange remains hidden until all eight new cards have arrived.</td>
+          </tr>
+          <tr>
+            <td>The page reconnects</td>
+            <td>If all eight cards had already been dealt, Arrange returns and the current order is rebuilt from the card IDs still in the hand.</td>
+          </tr>
+          <tr>
+            <td>The hand or match ends</td>
+            <td>The arrangement menu closes and its button disappears.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>How we will build it</h2>
+      <ol class="steps">
+        <li>
+          Add small, testable ordering rules for suit groups, strongest first, trump first, and deal order.
+        </li>
+        <li>
+          Give the visual hand safe operations for moving one card or replacing the full visual order. The authoritative game hand will not be changed.
+        </li>
+        <li>
+          Add the Arrange menu, preset buttons, Custom mode message, and Done button to the existing overlay.
+        </li>
+        <li>
+          Separate card interaction into normal play mode and arrangement mode. In arrangement mode, a drag can only reorder cards.
+        </li>
+        <li>
+          Remember the current hand's selected preset or custom order in local browser storage for reconnects. Clear it when a new hand starts. Nothing is sent to the server.
+        </li>
+        <li>
+          Keep Arrange hidden during the first deal and final deal animation, then enable it after the eighth card lands. Connect it to card removal, new hands, reconnects, and match cleanup.
+        </li>
+        <li>
+          Add unit and browser tests, then inspect desktop and phone screenshots to confirm that the fan and controls still fit.
+        </li>
+      </ol>
+
+      <h2>Expected code areas</h2>
+      <ul class="file-list">
+        <li><code>app/src/game/CardArrangement.ts</code> — new pure card-ordering rules.</li>
+        <li><code>app/src/game/Hand.ts</code> — reorder cards and animate them into fan slots.</li>
+        <li><code>app/src/interaction/DragControls.ts</code> — separate play dragging from arrangement dragging.</li>
+        <li><code>app/src/game/GameState.ts</code> — remember the mode and respond to game events.</li>
+        <li><code>app/src/ui/UiOverlay.ts</code> and <code>app/index.html</code> — Arrange menu and responsive controls.</li>
+        <li>Frontend unit and Playwright tests — ordering, gestures, mobile layout, and play regressions.</li>
+      </ul>
+
+      <div class="callout">
+        <strong>No backend work is expected.</strong>
+        Card identity and legal-play checks already use card IDs, so the server can continue treating the hand exactly as it does today.
+      </div>
+
+      <h2>Definition of done</h2>
+      <ul class="checklist">
+        <li>Every preset produces the expected order.</li>
+        <li>The player can manually create any left-to-right order.</li>
+        <li>Arranging never sends a play command.</li>
+        <li>Playing a card still sends the correct card ID.</li>
+        <li>The remaining cards do not unexpectedly reorder after a play.</li>
+        <li>The Arrange button stays hidden until the eighth card finishes dealing.</li>
+        <li>After that point, arranging remains available throughout the hand, including during the player's turn.</li>
+        <li>The feature works with both mouse and touch.</li>
+        <li>The hand and buttons fit the 390 × 844 mobile layout.</li>
+        <li>Existing bidding, trump, legality, reconnect, and full-game tests still pass.</li>
+      </ul>
+
+      <h2>Not included</h2>
+      <p>
+        This feature will not exchange cards, deal new cards, randomize the deck, expose a player's
+        order to opponents, or change any Twenty-Eight rule. It is a private visual preference only.
+      </p>
+
+      <footer>
+        Planning document only · No game functionality is implemented by this document.
+      </footer>
+    </main>
+  </body>
+</html>
