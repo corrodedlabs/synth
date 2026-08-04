@@ -518,6 +518,8 @@
       .seat-name-label.speaking .player-avatar {
         animation: seat-avatar-speak 520ms cubic-bezier(0.18, 0.78, 0.26, 1.1) both;
       }
+      /* corner controls share one quiet chip style, so icon and text buttons
+         read as a single family along the bottom line */
       #help-button {
         position: absolute;
         bottom: 18px;
@@ -526,12 +528,13 @@
         pointer-events: auto;
         width: 36px;
         height: 36px;
-        padding: 6px;
+        padding: 7px;
         color: #3b2f2a;
-        background: transparent;
-        border: none;
+        background: rgba(253, 250, 243, 0.55);
+        border: 1px solid rgba(59, 47, 42, 0.3);
+        border-radius: 50%;
         cursor: pointer;
-        opacity: 0.6;
+        opacity: 0.65;
       }
       #help-button svg {
         display: block;
@@ -547,40 +550,43 @@
         left: 22px;
         z-index: 30; /* clickable above the full-screen start overlay */
         display: flex;
-        gap: 18px;
+        align-items: center;
+        gap: 10px;
         pointer-events: none;
       }
       #sound-button,
       #speed-button,
       #leave-match {
         pointer-events: auto;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        height: 36px;
+        padding: 0 14px;
         font-family: inherit;
-        font-size: 17px;
+        font-size: 16px;
         color: #3b2f2a;
-        background: transparent;
-        border: none;
-        border-bottom: 1px solid rgba(59, 47, 42, 0.35);
-        padding: 2px 2px;
+        background: rgba(253, 250, 243, 0.55);
+        border: 1px solid rgba(59, 47, 42, 0.3);
+        border-radius: 999px;
         cursor: pointer;
         letter-spacing: 0.8px;
-        opacity: 0.6;
+        opacity: 0.65;
       }
       #sound-button:hover,
       #speed-button:hover,
       #leave-match:hover {
         opacity: 1;
       }
-      /* the sound toggle is icon-based; the shared underline stays with the
-         text buttons */
+      /* the sound toggle is the chip family's circular icon member */
       #sound-button {
-        border-bottom: none;
-        padding: 4px;
-        line-height: 0;
+        width: 36px;
+        padding: 0;
       }
       #sound-button .sound-icon {
         display: block;
-        width: 21px;
-        height: 21px;
+        width: 20px;
+        height: 20px;
       }
       #sound-button .sound-off {
         display: none;
@@ -878,7 +884,7 @@
       /* armed = one more click abandons the match for everyone */
       #leave-match.armed {
         color: #a33c2e;
-        border-bottom-color: rgba(163, 60, 46, 0.6);
+        border-color: rgba(163, 60, 46, 0.6);
         opacity: 1;
       }
       #emote-strip {
@@ -1463,13 +1469,18 @@
         #corner-actions {
           bottom: calc(12px + env(safe-area-inset-bottom));
           left: calc(14px + env(safe-area-inset-left));
-          gap: 12px;
+          gap: 8px;
         }
         #sound-button,
         #speed-button,
         #leave-match {
+          height: 40px;
+          padding: 0 12px;
           font-size: 15px;
-          padding: 6px 2px;
+        }
+        #sound-button {
+          width: 40px;
+          padding: 0;
         }
         /* free space between the fan's edge and the corner row */
         #emote-button {
@@ -1589,8 +1600,12 @@
         #sound-button,
         #speed-button,
         #leave-match {
+          padding: 0 10px;
           font-size: 13px;
           letter-spacing: 0.35px;
+        }
+        #sound-button {
+          padding: 0;
         }
       }
       @media (max-height: 550px) and (orientation: landscape) {
