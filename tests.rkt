@@ -209,6 +209,20 @@
           (sleep 3))
 
    ;; test cases
+   ;; an installed app states its version; only an old one is turned away
+   (test-begin
+     (let ((connection (connect-to-ws)))
+       (send-msg connection '(client-hello "android" 1))
+       (check-equal? (recv-msg connection) '(protocol-ok 1))
+       (send-msg connection '(client-hello "android" 0))
+       (check-equal? (recv-msg connection) '(update-required 1))
+       (send-msg connection '(client-hello "android" "soon"))
+       (check-equal? (recv-msg connection) '(update-required 1))
+       ;; the socket still works afterwards
+       (send-msg connection '(ping))
+       (check-equal? (recv-msg connection) 'pong)
+       (ws-close! connection)))
+
    (test-begin
      (let ((connection (connect-to-ws))
            (watcher (connect-to-ws)))

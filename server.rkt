@@ -1163,6 +1163,18 @@
 ;; (get-leaderboard) => (leaderboard ((name played won) ...)) from the
 ;;   match history (humans only; an abandoned seat's bot earns nothing)
 ;;
+;; Installed apps go stale while this server auto-deploys, so an app states its protocol version when
+;; it connects, and anything older than this gets told to update. The web client always matches the
+;; server and doesn't take part. Raise this only when a change would break apps already installed.
+(define (min-client-protocol)
+  (let ([configured (getenv "MIN-CLIENT-PROTOCOL")])
+    (or (and configured (string->number configured)) 1)))
+
+(define (client-hello-reply version)
+  (if (and (exact-integer? version) (>= version (min-client-protocol)))
+      `(protocol-ok ,version)
+      `(update-required ,(min-client-protocol))))
+
 (define (dispatch connection message)
   (with-handlers ((exn:fail? (λ (e)
                                (displayln (format "dispatch error: ~a" (exn-message e)))
@@ -1172,6 +1184,9 @@
       (case (car message)
       ;; liveness probe (keeps proxies from culling idle sockets)
       ((ping) 'pong)
+
+      ;; an installed app says who it is; see client-hello-reply
+      ((client-hello) (client-hello-reply (caddr message)))
 
       ;; user messages
       ((connect-user) (connect-new-user connection (cadr message) (caddr message)))
