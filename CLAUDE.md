@@ -6,7 +6,7 @@ it that way.)
 
 ## Project Overview
 
-Real-time 28 card game with a Racket WebSocket server and a Vite + Three.js TypeScript frontend. Deployed: frontend on Netlify (`netlify deploy --build --prod` from repo root), backend on fly.io (`fly deploy --remote-only`) — see `docs/deployment.md`.
+Real-time 28 card game with a Racket WebSocket server and a Vite + Three.js TypeScript frontend. Deployed: frontend on Netlify, backend on fly.io. Pushes to `master` deploy both automatically once CI passes (`.github/workflows/deploy.yml`) — see `docs/deployment.md`.
 
 ## Vendored Repositories
 

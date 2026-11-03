@@ -1,12 +1,34 @@
 # Deployment — Netlify (frontend) + fly.io (backend)
 
-Last updated: 2026-06-10
+Last updated: 2026-11-03
 
-**Live now:** https://twenty-eight-game.netlify.app (frontend) ·
+**Live now:** https://respawnfi.com (frontend, Netlify site
+`twenty-eight-game`, also at https://twenty-eight-game.netlify.app) ·
 `wss://twenty-eight-game.fly.dev/test` (backend, fly app `twenty-eight-game`,
-region bom). Redeploy with `fly deploy --remote-only` (repo root) and
-`netlify deploy --build --prod` (repo root — path resolution breaks if run
-from `app/`).
+region sin).
+
+## Auto-deploy
+
+Every push to `master` that passes CI deploys itself
+(`.github/workflows/deploy.yml`): backend first, then a WebSocket check, then
+the frontend. If the backend or its check fails, the frontend is not deployed.
+Re-run a deploy of `master` from the Actions tab ("Deploy" → "Run workflow"),
+which skips the CI gate.
+
+It needs two repository secrets:
+
+```sh
+# Fly deploy token, limited to this app; expires after a year, then repeat this
+fly tokens create deploy -a twenty-eight-game -n github-actions-deploy -x 8760h \
+  | gh secret set FLY_API_TOKEN -R corrodedlabs/synth
+
+# Netlify personal access token, created in the Netlify dashboard (user settings)
+gh secret set NETLIFY_AUTH_TOKEN -R corrodedlabs/synth
+```
+
+To deploy by hand from the repo root: `fly deploy --remote-only --ha=false`
+and `netlify deploy --build --prod` (path resolution breaks if run from
+`app/`).
 
 ```
 Browser ── https ──▶ Netlify (static Vite build, app/dist)
@@ -33,7 +55,7 @@ Notes:
   `auto_stop_machines = "off"`; do not `fly scale count 2`.
 - **SQLite on a volume.** Running matches and match history persist to
   `GAME-DB` (`/data/game.db` in prod — `[env]` + `[mounts]` in `fly.toml`).
-  One-time setup: `fly volumes create data --size 1 --region bom`. On boot
+  One-time setup: `fly volumes create data --size 1 --region sin`. On boot
   the server restores every interrupted match: human seats wait inside the
   reconnect grace (their browsers auto-rejoin; the interrupted hand is
   re-dealt with the match score carried) and bot seats get fresh bots, so

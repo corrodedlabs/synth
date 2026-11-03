@@ -6,7 +6,7 @@
 # scale above 1 and never let the proxy stop it mid-game.
 
 app = "twenty-eight-game"
-primary_region = "bom"
+primary_region = "sin"
 
 [build]
   dockerfile = "Dockerfile"
