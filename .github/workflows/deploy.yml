@@ -1,0 +1,89 @@
+# Auto-deploy: when CI passes on a push to master, ship the backend to fly.io
+# and then the frontend to Netlify. Lives apart from ci.yml because CI cancels
+# in-progress runs on a new push, and a deploy must never be cancelled halfway.
+#
+# Required repository secrets: FLY_API_TOKEN, NETLIFY_AUTH_TOKEN.
+# See docs/deployment.md.
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
+  # Manual redeploy of master from the Actions tab.
+  workflow_dispatch:
+
+# One deploy at a time; a newer one waits rather than interrupting.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # workflow_run starts from the default branch's tip, so pin the commit CI tested.
+  DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+jobs:
+  backend:
+    name: Backend (fly.io)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Secrets are exposed here, so only pushes to this repo may deploy:
+    # never a pull request or a fork's branch that happens to be named master.
+    if: >-
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' ||
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
+      # --ha=false: this server must stay on exactly one machine (see fly.toml).
+      - name: Deploy
+        run: flyctl deploy --remote-only --ha=false
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      - name: Check the WebSocket endpoint answers
+        run: |
+          for i in $(seq 1 12); do
+            # The upgraded socket stays open, so curl exits on --max-time;
+            # the status code is what matters.
+            code=$(curl -s -o /dev/null -w '%{http_code}' --http1.1 --max-time 5 \
+              -H "Connection: Upgrade" -H "Upgrade: websocket" \
+              -H "Sec-WebSocket-Version: 13" \
+              -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+              https://twenty-eight-game.fly.dev/test || true)
+            if [ "$code" = "101" ]; then echo "WebSocket OK"; exit 0; fi
+            echo "attempt $i: got HTTP $code"
+            sleep 10
+          done
+          echo "WebSocket endpoint did not come back after deploy"
+          exit 1
+
+  frontend:
+    name: Frontend (Netlify)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+        working-directory: app
+      # From the repo root: netlify.toml's paths break if run from app/.
+      - name: Deploy
+        run: npx --yes netlify-cli@21.2.1 deploy --build --prod --message "$DEPLOY_SHA"
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: a1b2ecd4-8af3-437f-8fd2-49ef182d5033
