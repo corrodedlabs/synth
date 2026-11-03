@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "synth"
-include(":core")
+include(":core", ":app")

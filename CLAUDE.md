@@ -8,6 +8,12 @@ it that way.)
 
 Real-time 28 card game with a Racket WebSocket server and a Vite + Three.js TypeScript frontend. Deployed: frontend on Netlify, backend on fly.io. Pushes to `master` deploy both automatically once CI passes (`.github/workflows/deploy.yml`) — see `docs/deployment.md`.
 
+## Android
+
+The Android app is in `android/` (Kotlin) and `native/` (the table, C17, on the shared Apsis engine in the
+`apsis` submodule). Read `android/README.md` before changing them. It still follows the rule below: the
+server holds every rule, and the app only presents them.
+
 ## Vendored Repositories
 
 External repositories may be vendored under `repos/` for agent reference.
