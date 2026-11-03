@@ -3,8 +3,8 @@
 [build]
   base = "app"
   command = "npm run build"
-  # resolved from the repo root (where this file lives), not from base
-  publish = "app/dist"
+  # resolved from base, so this is app/dist from the repo root
+  publish = "dist"
 
 [build.environment]
   # WebSocket endpoint of the deployed game server (fly.io app).
