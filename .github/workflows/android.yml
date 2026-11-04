@@ -2,8 +2,8 @@
 # here can hold up a production deploy. See android/README.md.
 #
 # Optional repository secrets:
-#   APSIS_READ_TOKEN      read access to antash-mishra/apsis, a private submodule. Without it, only the
-#                         game core's tests run.
+#   APSIS_DEPLOY_KEY      a read-only deploy key for antash-mishra/apsis, a private submodule. Without it,
+#                         only the game core's tests run.
 #   SYNTH_KEYSTORE_BASE64, SYNTH_KEYSTORE_PASSWORD, SYNTH_KEY_ALIAS, SYNTH_KEY_PASSWORD
 #                         sign the release bundle.
 name: Android
@@ -54,16 +54,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      HAS_APSIS: ${{ secrets.APSIS_READ_TOKEN != '' }}
+      HAS_APSIS: ${{ secrets.APSIS_DEPLOY_KEY != '' }}
     steps:
       - name: Skip without access to Apsis
         if: env.HAS_APSIS != 'true'
-        run: echo "::notice::APSIS_READ_TOKEN isn't set, so the table and APK aren't built."
+        run: echo "::notice::APSIS_DEPLOY_KEY isn't set, so the table and APK aren't built."
       - uses: actions/checkout@v4
         if: env.HAS_APSIS == 'true'
         with:
           submodules: true
-          token: ${{ secrets.APSIS_READ_TOKEN }}
+          ssh-key: ${{ secrets.APSIS_DEPLOY_KEY }}
       - uses: actions/setup-java@v4
         if: env.HAS_APSIS == 'true'
         with:
