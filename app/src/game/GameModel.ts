@@ -43,6 +43,8 @@ export interface GameModel {
   // Lobby state. Members are in *server* order (newest joiner first, host last).
   readonly roomName: string | null;
   readonly members: readonly string[];
+  // Lobby seats in the match's seat order, null for an empty one. Absent until the server says.
+  readonly lobbySeats?: readonly (string | null)[];
   readonly isHost: boolean;
   // Public identities by view index (0 = us), fixed once the hand is dealt.
   // The raw member ids stay available so the renderer can resolve avatars
@@ -90,6 +92,7 @@ export type GameAction =
       readonly _tag: "MembersChanged";
       readonly members: readonly string[];
       readonly target?: number;
+      readonly seats?: readonly (string | null)[];
     }
   | { readonly _tag: "RoomLeft" }
   | {
@@ -123,6 +126,8 @@ export type GameAction =
       readonly us: number;
       readonly them: number;
       readonly target: number;
+      // what the hand did to the bidding side's score, as the server has it
+      readonly delta?: number;
     }
   | { readonly _tag: "HandReset" } // next hand is being dealt
   | {
@@ -195,6 +200,7 @@ export function gameReducer(state: GameModel, action: GameAction): GameModel {
         ...state,
         members: action.members,
         matchTarget: action.target ?? state.matchTarget,
+        lobbySeats: action.seats ?? state.lobbySeats,
       };
 
     case "RoomLeft":

@@ -6,8 +6,12 @@ import { Lighting } from "../scene/Lighting";
 import { Table } from "../scene/Table";
 import { SoundService } from "../utils/Sound";
 import { ZenCardTextures } from "../utils/ZenCardTextures";
-import { createPlayerIdentity, SEAT_NAMES, UiOverlay } from "../ui/UiOverlay";
+import { GameFeel } from "../ui/GameFeel";
+import { bidderDelta, handResultCopy, scoreText } from "../ui/HudModel";
 import { playerProfile } from "../ui/PlayerProfile";
+import { ScoreHud } from "../ui/ScoreHud";
+import type { HudTrump } from "../ui/ScoreHud";
+import { createPlayerIdentity, SEAT_NAMES, trumpRevealCaption, UiOverlay } from "../ui/UiOverlay";
 import { Card } from "./Card";
 import { arrangedCardIds } from "./CardArrangement";
 import type { ArrangementMode, ArrangementPreset } from "./CardArrangement";
@@ -16,6 +20,7 @@ import {
   GameModel,
   CardModel,
   PlayerIndex,
+  Suit,
   actingHostEmail,
   canExposeTrump,
   gameReducer,
@@ -26,9 +31,13 @@ import { forgetActiveMatch, GameSession, storedActiveMatch } from "./GameSession
 import { Hand } from "./Hand";
 import { mockGameProgram } from "./MockGameProgram";
 import { GamePacing } from "./GamePacing";
+import type { GamePacingProfile } from "./GamePacing";
 import { PlayArea } from "./PlayArea";
 import { responsiveTableLayout, screenPointOnPlane } from "./TableLayout";
 import type { ResponsiveTableLayout } from "./TableLayout";
+
+// How long Play with bots may take to reach a deal before it says something's wrong.
+const PLAY_NOW_LIMIT_MS = 15_000;
 
 export class GameState {
   private sceneManager: SceneManager;
@@ -43,6 +52,7 @@ export class GameState {
     window.innerWidth,
     window.innerHeight
   );
+  private turnLine = "";
   private ui: UiOverlay;
   private sound = new SoundService();
   private session: GameSession | null = null;
@@ -58,6 +68,19 @@ export class GameState {
   private scoreElement: HTMLElement | null = null;
   private tricksElement: HTMLElement | null = null;
   private matchElement: HTMLElement | null = null;
+  private feel: GameFeel;
+  private hud = new ScoreHud();
+  // What the HUD is showing, which can lag the model while something flies to it.
+  private shownPoints = { us: 0, them: 0 };
+  private shownMatch = { us: 0, them: 0 };
+  private heldMatch: { us: number; them: number } | null = null;
+  private heldTrump: HudTrump | null = null;
+  // Trump has been chosen this hand, whether or not we know what it is.
+  private trumpPlaced = false;
+  // How the deciding hand went, for the match-over panel.
+  private finalHandLine = "";
+  // Play with bots, in progress: the number of members we last added a bot for.
+  private playNow: { botAskedAt: number; watchdog: number } | null = null;
   private hudValues = { score: 0, theirScore: 0, tricks: 0, theirTricks: 0, matchUs: 0, matchThem: 0 };
   private scoreTween: TWEEN.Tween<typeof this.hudValues> | null = null;
 
@@ -69,7 +92,9 @@ export class GameState {
     this.hand = new Hand(this.sceneManager.scene, this.sceneManager.camera);
     this.playArea = new PlayArea(this.sceneManager.scene, this.sceneManager.camera);
     this.playArea.setPacing(this.pacing.profile());
+    this.playArea.setOnCardLand(() => this.sound.cardLand());
     this.zenTextures = new ZenCardTextures();
+    this.feel = new GameFeel(this.sound, () => this.pacing.profile());
 
     this.dragControls = new DragControls(
       this.sceneManager.camera,
@@ -91,19 +116,20 @@ export class GameState {
 
     this.ui = new UiOverlay({
       onCreate: (name, target) => this.createTable(name, target),
+      onPlayBots: (name, target) => this.startPlayNow(name, target),
       onBrowse: (name) => this.browseTables(name),
       onJoin: (roomName) => this.session?.join(roomName),
       onJoinLink: (name, roomName) => this.joinTable(name, roomName),
       onEmote: (emote) => this.session?.sendEmote(emote),
       onStandings: (name) => this.showStandings(name),
       onRefreshRooms: () => this.session?.refreshRooms(),
-      onAddBot: () => this.session?.addBot(),
+      onAddBot: (seat) => this.session?.addBot(seat),
       onStartGame: () => this.session?.startGame(),
       onLeave: () => this.session?.leaveRoom(),
       onKick: (member) => this.session?.kick(member),
       onBid: (bid) => this.session?.submitBid(bid),
       onPass: () => this.session?.submitBid("pass"),
-      onTrump: (suit) => this.session?.chooseTrump(suit),
+      onTrump: (suit, cards) => this.chooseTrump(suit, cards),
       onExpose: () => this.session?.exposeTrump(),
       onNextHand: () => this.session?.nextHand(),
       onLeaveMatch: () => this.leaveMatch(),
@@ -117,6 +143,11 @@ export class GameState {
         this.playArea.setPacing(pacing);
         return pacing;
       },
+      onToggleMotion: () => {
+        const pacing = this.pacing.toggleReduceMotion();
+        this.applyMotionPreference(pacing);
+        return pacing;
+      },
       onArrangePreset: (preset) => this.applyArrangementPreset(preset),
       onArrangeCustom: () => this.startCustomArrangement(),
       onArrangeDone: () => this.finishCustomArrangement(),
@@ -126,7 +157,12 @@ export class GameState {
     this.scoreElement = document.getElementById("score-value");
     this.tricksElement = document.getElementById("tricks-value");
     this.matchElement = document.getElementById("match-value");
-    this.ui.setPacing(this.pacing.profile());
+    this.applyMotionPreference(this.pacing.profile());
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").addEventListener?.("change", () => {
+      this.applyMotionPreference(this.pacing.profile());
+    });
+    this.ui.setHomeFan(this.homeFanCards());
+    this.syncHud();
     this.sound.bindToggle(document.getElementById("sound-button"));
     // every button answers the finger with a tick (pointerdown beats click
     // so the sound lands on the press, not the release)
@@ -141,6 +177,38 @@ export class GameState {
     });
   }
 
+  // Reduce motion is on by the player's choice or the device's: either way CSS,
+  // the table's tweens and the effects all hear it here. Turning it on also
+  // stops anything already running, which brings the HUD straight up to date.
+  private applyMotionPreference(pacing: GamePacingProfile) {
+    document.documentElement.classList.toggle("reduce-motion", pacing.reducedMotion);
+    this.playArea.setPacing(pacing);
+    this.ui.setPacing(pacing);
+    this.ui.setMotion(pacing.reducedMotion, this.pacing.motionForcedByDevice());
+    if (pacing.reducedMotion) this.feel.cancelAll();
+  }
+
+  // Four real cards for the home table: painted from the same art as the game
+  // once it has loaded, face down until then.
+  private homeFanCards(): HTMLCanvasElement[] {
+    const cards = [
+      { suit: "spades", rank: "J" },
+      { suit: "hearts", rank: "A" },
+      { suit: "diamonds", rank: "9" },
+      { suit: "clubs", rank: "10" },
+    ] as const;
+    const faces = cards.map(() => document.createElement("canvas"));
+    void this.zenTextures.waitForLoad().then(() => {
+      cards.forEach(({ suit, rank }, index) => {
+        const art = this.zenTextures.getCardTexture(suit, rank).image as HTMLCanvasElement;
+        faces[index].width = art.width;
+        faces[index].height = art.height;
+        faces[index].getContext("2d")?.drawImage(art, 0, 0);
+      });
+    }, () => undefined);
+    return faces;
+  }
+
   // Seats, played-card lanes, and the hand all consume one screen-space
   // composition. The Three.js pieces are projected back onto the table plane.
   private applyViewportLayout() {
@@ -151,6 +219,12 @@ export class GameState {
     this.playArea.setCardScale(this.tableLayout.tableCardScale);
     this.playArea.setViewportLayout(this.tableLayout);
     this.positionSeatAnchors();
+    // The middle of the trick's cross, where a message covers the least.
+    const { playedCards } = this.tableLayout;
+    document.documentElement.style.setProperty(
+      "--table-middle",
+      `${(playedCards[0].y + playedCards[2].y) / 2}px`
+    );
     // re-laying out the fan flattens a raised card — it must not stay armed
     this.dragControls.clearSelection();
   }
@@ -179,6 +253,10 @@ export class GameState {
     for (const card of this.hand.getCards()) {
       card.setDimmed(playing && !this.cardIsPlayable(card));
     }
+    this.hand.setLifted(
+      playing && !this.arranging ? this.legalCardIds() : [],
+      this.pacing.profile().reducedMotion
+    );
   }
 
   // "You" for ourselves, the real player name (set at deal time) otherwise.
@@ -221,9 +299,36 @@ export class GameState {
     this.setActiveSeat(this.model.activePlayer);
   }
 
+  // Whose turn it is should read at a glance: the seat lights up and says what it's doing,
+  // and the bottom line says it in words.
   private setActiveSeat(playerIndex: PlayerIndex | null) {
+    const doing = this.turnWord();
     for (const seat of [1, 2, 3] as const) {
-      document.getElementById(`seat-label-${seat}`)?.classList.toggle("active", seat === playerIndex);
+      const label = document.getElementById(`seat-label-${seat}`);
+      label?.classList.toggle("active", seat === playerIndex);
+      if (seat === playerIndex) {
+        label?.setAttribute("data-turn", doing);
+        // Their last call is stale now, and this is where the turn is shown.
+        document.getElementById(`seat-action-${seat}`)?.classList.remove("visible");
+      } else {
+        label?.removeAttribute("data-turn");
+      }
+    }
+    const line =
+      playerIndex !== null && playerIndex !== 0 ? `${this.seatName(playerIndex)} is ${doing}` : "";
+    if (this.turnLine) this.ui.clearStatus(this.turnLine);
+    this.turnLine = line;
+    if (line) this.ui.status(line);
+  }
+
+  private turnWord(): string {
+    switch (this.model.phase) {
+      case "bidding":
+        return "bidding";
+      case "choosing-trump":
+        return "choosing trump";
+      default:
+        return "playing";
     }
   }
 
@@ -256,6 +361,42 @@ export class GameState {
     this.startSession(playerName, "create-room", undefined, undefined, target);
   }
 
+  // Play with bots is ordinary lobby traffic run in sequence: create a table, ask for
+  // a bot each time the members change, start when it's full. Every step already
+  // has its answer from the server, so a failure stops short with a message and
+  // leaves the player somewhere they can carry on from.
+  private startPlayNow(playerName: string, target: number) {
+    if (this.playNow) return;
+    this.ui.setPlayBotsBusy(true);
+    this.ui.status("Setting the table…");
+    const watchdog = window.setTimeout(() => {
+      this.stopPlayNow();
+      this.ui.setPlayBotsBusy(false);
+      if (this.model.phase !== "bidding") {
+        this.ui.status("That took too long. Check your connection and try again.");
+      }
+    }, PLAY_NOW_LIMIT_MS);
+    this.playNow = { botAskedAt: 0, watchdog };
+    this.createTable(playerName, target);
+  }
+
+  private stopPlayNow() {
+    if (!this.playNow) return;
+    window.clearTimeout(this.playNow.watchdog);
+    this.playNow = null;
+  }
+
+  private advancePlayNow() {
+    if (!this.playNow || this.model.phase !== "lobby") return;
+    const seated = this.model.members.length;
+    if (seated >= 4) {
+      this.session?.startGame();
+    } else if (this.playNow.botAskedAt !== seated) {
+      this.playNow.botAskedAt = seated;
+      this.session?.addBot();
+    }
+  }
+
   public browseTables(playerName: string) {
     this.startSession(playerName, "browse-rooms");
   }
@@ -284,6 +425,16 @@ export class GameState {
     rejoinEmail?: string,
     tableTarget?: number
   ) {
+    // The name was fixed when this connection was made: one edited since then
+    // (after browsing, or after leaving a table) needs a connection of its own.
+    if (
+      this.session?.canRename() &&
+      (intent === "create-room" || intent === "join") &&
+      (playerName.trim() || "Player") !== this.session.displayName
+    ) {
+      this.session.destroy();
+      this.session = null;
+    }
     if (this.session) {
       // already connected (e.g. browsing) — just issue the new intent
       if (intent === "create-room") {
@@ -300,9 +451,15 @@ export class GameState {
         getModel: () => this.model,
         getPacing: () => this.pacing.profile(),
         status: (text) => this.ui.status(text),
-        rooms: (rooms) => this.ui.showRooms(rooms),
+        rooms: (rooms) => {
+          this.ui.clearStatus("Connecting…");
+          this.ui.showRooms(rooms);
+        },
         emote: (seat, emote) => this.showEmote(seat, emote),
-        leaderboard: (rows) => this.ui.showLeaderboard(rows),
+        leaderboard: (rows) => {
+          this.ui.clearStatus("Connecting…");
+          this.ui.showLeaderboard(rows);
+        },
         seatAbandoned: (name) => this.ui.showAbandonPanel(name),
         seatResolved: () => {
           this.ui.hideAbandonPanel();
@@ -399,7 +556,9 @@ export class GameState {
     if (!this.arrangementAvailable) return false;
     this.dragControls.clearSelection();
     // A preset may still be tweening. Custom hit-testing must immediately
-    // agree with the logical slot order before the first drag begins.
+    // agree with the logical slot order before the first drag begins, so
+    // nothing stays lifted out of the fan either.
+    this.hand.setLifted([], true);
     this.hand.arrangeCards(null, true, 0);
     this.arranging = true;
     this.arrangementMode = "custom";
@@ -414,6 +573,7 @@ export class GameState {
     this.hand.arrangeCards();
     this.arranging = false;
     this.ui.setArranging(false);
+    this.renderLegality(); // back to playing: the playable cards rise again
     this.saveArrangement();
   }
 
@@ -556,15 +716,19 @@ export class GameState {
   // Sweep every scrap of an in-progress game out of the scene and the
   // overlay; the model reset (RoomLeft / idle) happens in the reducer.
   private clearTableScene(clearArrangementStorage = true) {
+    this.feel.cancelAll();
     this.hand.cancelPendingDeals();
     this.resetArrangement(clearArrangementStorage);
     for (const card of [...this.hand.getCards()]) {
       this.hand.removeCard(card);
       this.sceneManager.scene.remove(card.mesh);
     }
+    this.hand.setLifted([], true);
     this.playArea.clearTable();
     this.setActiveSeat(null);
-    this.ui.setTrump(null, false);
+    this.ui.setInMatch(false);
+    this.trumpPlaced = false;
+    this.syncHud();
     this.ui.hideBidPanel();
     this.ui.hideTrumpPanel();
     this.ui.setExposeVisible(false);
@@ -576,6 +740,37 @@ export class GameState {
     this.renderScore();
     this.ui.hideLobby();
     this.positionSeatLabels(); // hides them (seatNames reset)
+  }
+
+  // The chosen suit card leaves for the HUD as the panel closes. The HUD's mini
+  // card stays empty until it lands.
+  private chooseTrump(suit: Suit, cards: ReadonlyArray<{ suit: Suit; box: DOMRect }>) {
+    if (!this.session || this.model.pendingRequest?.kind !== "trump") return;
+    if (this.feel.enabled) {
+      this.heldTrump = { placed: false, suit: null, exposed: false };
+      this.feel.pickTrump(cards, suit, this.hud.trumpCard(), () => this.releaseTrump());
+    }
+    this.session.chooseTrump(suit);
+  }
+
+  private releaseTrump() {
+    this.heldTrump = null;
+    this.syncHud();
+  }
+
+  // Trump comes up for the whole table. The HUD keeps its face-down card until
+  // the big one has flown over; with effects off it just says so and turns over.
+  private announceTrump(suit: Suit, revealer: string | null, immediateDuration: number) {
+    if (this.feel.enabled) {
+      this.heldTrump = { placed: true, suit: null, exposed: false };
+      this.syncHud();
+      this.feel.revealTrump(suit, trumpRevealCaption(revealer), this.hud.trumpCard(), () =>
+        this.releaseTrump()
+      );
+    } else {
+      this.syncHud();
+      this.ui.showTrumpReveal(suit, revealer, immediateDuration);
+    }
   }
 
   // Plays a card from our hand by model id; used by the debug bridge.
@@ -675,6 +870,7 @@ export class GameState {
     this.playArea.setPacing(this.pacing.profile());
     switch (action._tag) {
       case "PhaseChanged":
+        this.syncHud();
         if (action.phase === "connecting") this.ui.status("Connecting…");
         if (action.phase === "idle") {
           // only dead sessions dispatch idle (connect failure, server gone):
@@ -685,6 +881,7 @@ export class GameState {
             this.session.destroy();
             this.session = null;
           }
+          this.stopPlayNow();
           const reconnecting = storedActiveMatch() !== null;
           this.clearTableScene(!reconnecting);
           this.ui.resetRoomBrowser();
@@ -702,18 +899,21 @@ export class GameState {
 
       case "RoomEntered":
         this.ui.updateLobby(this.model, this.session?.email ?? "");
+        this.advancePlayNow();
         break;
 
       case "MembersChanged":
         // mid-match this is a seat replacement, not a lobby change
         if (this.model.phase === "lobby") {
           this.ui.updateLobby(this.model, this.session?.email ?? "");
+          this.advancePlayNow();
         }
         break;
 
       case "RoomLeft":
         // tear down any in-progress game (aborted games land here mid-hand
         // or while the between-hands result panel is up)
+        this.stopPlayNow();
         this.clearTableScene();
         this.ui.showStartScreen();
         break;
@@ -723,7 +923,10 @@ export class GameState {
         break;
 
       case "HandDealt":
+        this.stopPlayNow();
         this.ui.hideLobby();
+        this.ui.setInMatch(true);
+        this.ui.clearStatus("Dealing…", "Starting…");
         // a live table always offers a way out (not in ?mock=1 — no server)
         this.ui.setLeaveMatchVisible(this.session !== null);
         // The server deals exactly two packets of four. The model already
@@ -749,10 +952,10 @@ export class GameState {
           arrangementDelay
         );
         this.ui.showTableMoment(
-          "✦",
+          "",
           firstPacket ? "First four cards" : "Final four cards",
-          firstPacket ? "Take a moment to read your opening hand" : "Your full hand is ready",
-          this.pacing.profile().reducedMotion ? 1_200 : 3_000,
+          firstPacket ? "Read your opening hand" : "Your full hand is ready",
+          this.pacing.profile().reducedMotion || !firstPacket ? 1_200 : 3_000,
           true
         );
         this.renderLegality();
@@ -774,17 +977,21 @@ export class GameState {
 
       case "BidPlaced": {
         this.sound.bidTick();
-        this.ui.showBidEvent(action.playerIndex, action.bid, this.pacing.profile().bidPauseMs);
+        const seal = this.ui.showBidEvent(action.playerIndex, action.bid);
+        if (seal) this.feel.stampSeal(seal);
         break;
       }
 
       case "BidWon":
         this.ui.clearBidHistory();
         this.ui.status(`${this.seatName(action.playerIndex)} won the bid at ${action.bid}`, true);
+        this.syncHud();
+        this.feel.stampHud(this.hud.bidSeal());
         break;
 
       case "TrumpSet":
-        this.ui.setTrump(this.model.trumpSuit, this.model.trumpExposed);
+        this.trumpPlaced = true;
+        this.syncHud();
         this.ui.setArrangeAvailable(this.arrangementAvailable, this.model.trumpSuit !== null);
         // Rejoin snapshots and older servers may establish an already
         // exposed trump without a live TrumpRevealed event.
@@ -794,7 +1001,7 @@ export class GameState {
           !this.trumpRevealAnnounced
         ) {
           this.trumpRevealAnnounced = true;
-          this.ui.showTrumpReveal(
+          this.announceTrump(
             this.model.trumpSuit,
             null,
             this.pacing.profile().reducedMotion ? 1_200 : 3_000
@@ -803,16 +1010,18 @@ export class GameState {
         break;
 
       case "TrumpRevealed":
+        this.trumpPlaced = true;
         this.sound.trumpReveal();
-        this.ui.setTrump(this.model.trumpSuit, this.model.trumpExposed);
         this.ui.setArrangeAvailable(this.arrangementAvailable, this.model.trumpSuit !== null);
         if (!this.trumpRevealAnnounced) {
           this.trumpRevealAnnounced = true;
-          this.ui.showTrumpReveal(
+          this.announceTrump(
             action.suit,
             this.seatName(action.playerIndex),
             this.pacing.profile().reducedMotion ? 1_200 : 3_000
           );
+        } else {
+          this.syncHud();
         }
         break;
 
@@ -823,11 +1032,12 @@ export class GameState {
             this.ui.showBidPanel(action.request.minBid, this.model.bidsPlaced === 0);
             break;
           case "trump":
+            this.ui.clearBidHistory(); // the auction is over: its calls leave the table
             this.ui.showTrumpPanel();
-            this.ui.status("You won the bid — choose trump");
+            this.ui.status("You won the bid. Choose trump.");
             break;
           case "play":
-            this.ui.status("Your turn");
+            this.ui.yourTurn();
             this.ui.setExposeVisible(canExposeTrump(this.model));
             break;
         }
@@ -835,6 +1045,8 @@ export class GameState {
         break;
 
       case "RequestCleared":
+        // whatever we were being asked for has been answered
+        this.ui.clearStatus("You won the bid. Choose trump.", "Your turn");
         this.ui.hideBidPanel();
         this.ui.hideTrumpPanel();
         this.ui.setExposeVisible(false);
@@ -856,6 +1068,9 @@ export class GameState {
           const taker = action.winner === 0 ? "You take" : `${seat} takes`;
           const ours = action.winner === 0 || action.winner === 2;
           this.ui.showTrickOutcome(taker, action.points, ours);
+          this.feel.avatarReact(
+            document.querySelector<HTMLElement>(`#seat-label-${action.winner} .player-avatar`)
+          );
         }
         this.playArea.resolveTrick(action.winner, {
           onCollect: () => {
@@ -883,44 +1098,60 @@ export class GameState {
         break;
 
       case "HandResult": {
-        this.renderScore(this.pacing.profile().scoreLandingMs); // match HUD segment just changed
         // when a team has reached the target, match-over is already in
         // flight — its panel and fanfare replace the between-hands ones
-        if (
+        const decided =
           this.model.matchUs >= this.model.matchTarget ||
-          this.model.matchThem >= this.model.matchTarget
-        ) {
-          break;
-        }
-        const bidderOurs = action.bidder === 0 || action.bidder === 2;
-        const bidderPoints = bidderOurs ? this.model.score : this.model.theirScore;
-        const bidderName = action.bidder === 0 ? "Your" : `${this.seatName(action.bidder)}'s`;
+          this.model.matchThem >= this.model.matchTarget;
         const results = this.model.handResults;
         const matchSwing = results.length === 0 ? 0 : results[results.length - 1];
-        const swingDetail =
-          matchSwing > 0
-            ? `Your team gains ${matchSwing} match point${matchSwing === 1 ? "" : "s"}.`
-            : matchSwing < 0
-              ? `Their team gains ${-matchSwing} match point${matchSwing === -1 ? "" : "s"}.`
-              : "The match score is unchanged.";
-        const detail =
-          `${bidderName} team bid ${action.bid} and took ${bidderPoints} — ${action.made ? "made it" : "set"}\n` +
-          `${swingDetail}\nMatch: ${this.model.matchUs} — ${this.model.matchThem} (first to ${this.model.matchTarget})`;
+        const moved =
+          this.shownMatch.us !== this.model.matchUs || this.shownMatch.them !== this.model.matchThem;
+        // The pips wait for the flying points; the numbers in the menu do not.
+        if (!decided && moved && this.feel.enabled) this.heldMatch = { ...this.shownMatch };
+        this.renderScore(this.pacing.profile().scoreLandingMs); // match HUD segment just changed
+        const bidderOurs = action.bidder === 0 || action.bidder === 2;
+        const copy = handResultCopy({
+          bidderName: this.seatName(action.bidder),
+          bid: action.bid,
+          took: bidderOurs ? this.model.score : this.model.theirScore,
+          made: action.made,
+          delta: action.delta ?? bidderDelta(matchSwing, bidderOurs),
+          bidderIsOurs: bidderOurs,
+        });
+        if (decided) {
+          this.finalHandLine = `${copy.seal === "MADE" ? "Made" : "Set"}: ${copy.detail}`;
+          break;
+        }
+        const note =
+          `This hand ${this.model.score} – ${this.model.theirScore} · ` +
+          `match ${scoreText(this.model.matchUs)} – ${scoreText(this.model.matchThem)}, ` +
+          `first to ${this.model.matchTarget}`;
         this.sound.result(bidderOurs ? action.made : !action.made);
         this.ui.status("");
-        this.ui.showHandResult(
-          this.model.score,
-          this.model.theirScore,
-          detail,
-          actingHostEmail(this.model.members) === (this.session?.email ?? ""),
-          matchSwing
+        const parts = this.ui.showHandResult(
+          copy,
+          note,
+          actingHostEmail(this.model.members) === (this.session?.email ?? "")
         );
+        const team = bidderOurs ? "us" : "them";
+        const land = () => {
+          this.heldMatch = null;
+          this.syncHud();
+          if (moved) this.feel.popPip(this.hud.pipFor(team));
+        };
+        if (this.feel.enabled) {
+          this.feel.handResult(parts, () => this.hud.pipFor(team), land);
+        } else {
+          land();
+        }
         break;
       }
 
       case "HandReset":
         // the next deal is landing: clear the table but keep the seats,
         // their name labels, and the match HUD
+        this.feel.cancelAll();
         this.hand.cancelPendingDeals();
         this.trumpRevealAnnounced = false;
         this.resetArrangement();
@@ -932,7 +1163,9 @@ export class GameState {
         this.setActiveSeat(null);
         this.ui.hideTrickOutcome();
         this.ui.clearBidHistory();
-        this.ui.setTrump(null, false);
+        this.hand.setLifted([], true);
+        this.trumpPlaced = false;
+        this.syncHud();
         this.ui.hideBidPanel();
         this.ui.hideTrumpPanel();
         this.ui.setExposeVisible(false);
@@ -941,18 +1174,31 @@ export class GameState {
         break;
 
       case "MatchOver": {
+        this.feel.cancelAll();
+        this.renderScore();
         this.resetArrangement();
         this.sound.fanfare(action.winner === "us");
         this.ui.status("");
         // the match is decided — the panel's Back to home takes it from here
         this.ui.setLeaveMatchVisible(false);
-        this.ui.showMatchOver(
-          action.us,
-          action.them,
+        const members = this.model.seatMembers;
+        const team = members
+          ? [members[0], members[2]]
+              .filter((member) => member)
+              .map((member) => playerProfile(member, members))
+          : [];
+        this.feel.matchOver(
           action.winner === "us",
-          action.hands,
-          this.model.matchTarget,
-          this.model.handResults
+          this.ui.showMatchOver(
+            action.us,
+            action.them,
+            action.winner === "us",
+            action.hands,
+            this.model.matchTarget,
+            this.model.handResults,
+            team,
+            this.finalHandLine
+          )
         );
         break;
       }
@@ -961,6 +1207,10 @@ export class GameState {
         // a reconnect: rebuild the whole scene from the restored model;
         // any pending request/result is re-dispatched right after and
         // brings its own panel back up
+        this.feel.cancelAll();
+        this.stopPlayNow();
+        this.ui.setInMatch(true);
+        this.hand.setLifted([], true);
         this.hand.cancelPendingDeals();
         this.trumpRevealAnnounced = this.model.trumpExposed;
         this.resetArrangement(false);
@@ -983,7 +1233,6 @@ export class GameState {
         for (const played of this.model.playedCards) {
           this.playCard(played.card, played.playerIndex);
         }
-        this.ui.setTrump(this.model.trumpSuit, this.model.trumpExposed);
         this.renderScore();
         this.positionSeatLabels();
         this.ui.setLeaveMatchVisible(this.session !== null);
@@ -1053,6 +1302,8 @@ export class GameState {
     };
     this.scoreTween?.stop();
     this.scoreTween = null;
+    this.shownPoints = { us: target.score, them: target.theirScore };
+    this.syncHud();
 
     if (duration === 0) {
       Object.assign(this.hudValues, target);
@@ -1070,6 +1321,34 @@ export class GameState {
         this.writeScore();
       })
       .start();
+  }
+
+  // The top bar, from the model, except for whatever is still on its way there.
+  private syncHud() {
+    const model = this.model;
+    const match = this.heldMatch ?? { us: model.matchUs, them: model.matchThem };
+    this.shownMatch = match;
+    const bid = model.finalBid;
+    this.hud.render({
+      matchUs: match.us,
+      matchThem: match.them,
+      target: model.matchTarget,
+      ourPoints: this.shownPoints.us,
+      theirPoints: this.shownPoints.them,
+      bid,
+      bidder: model.bidWinner,
+      bidderName: model.bidWinner === null ? null : this.seatName(model.bidWinner),
+      trump: this.heldTrump ?? {
+        placed:
+          bid !== null &&
+          (this.trumpPlaced ||
+            model.phase === "playing" ||
+            model.phase === "hand-finished" ||
+            model.phase === "finished"),
+        suit: model.trumpSuit,
+        exposed: model.trumpExposed,
+      },
+    });
   }
 
   private writeScore() {

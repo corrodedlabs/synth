@@ -35,8 +35,8 @@ const check = (label, ok, detail = null) => {
 await page.goto(URL);
 await page.waitForSelector("#create-button", { state: "visible", timeout: 15000 });
 await page.fill("#player-name", `Responsive-${Date.now().toString(36).slice(-5)}`);
+await page.click('.mode-card[data-target="6"]');
 await page.click("#create-button");
-await page.click('#create-panel .table-choice[data-target="6"]');
 await page.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });
 for (let count = 2; count <= 4; count++) {
   await page.click("#add-bot");

@@ -5,6 +5,9 @@ import { GamePacingProfile, gamePacing } from './GamePacing';
 import { objectScreenBounds, screenPointOnPlane } from './TableLayout';
 import type { ResponsiveTableLayout } from './TableLayout';
 
+// How far a thrown card rises off the table at the top of its flight.
+const ARC_HEIGHT = 0.7;
+
 export class PlayArea {
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
@@ -15,6 +18,8 @@ export class PlayArea {
   private resolutionTween: TWEEN.Tween<{ progress: number }> | null = null;
   private resolutionId = 0;
   private pacing: GamePacingProfile = gamePacing();
+  // Called as each thrown card touches down, for its sound.
+  private onCardLand: (() => void) | null = null;
   private positions: THREE.Vector3[] = [
     new THREE.Vector3(),
     new THREE.Vector3(),
@@ -45,7 +50,14 @@ export class PlayArea {
 
   // Keep anything already on the table in step when the viewport changes.
   public setCardScale(scale: number) {
-    [...this.playedCards, ...this.resolvingCards].forEach((card) => card.mesh.scale.setScalar(scale));
+    [...this.playedCards, ...this.resolvingCards].forEach((card) => {
+      card.stopBounce();
+      card.mesh.scale.setScalar(scale);
+    });
+  }
+
+  public setOnCardLand(onCardLand: () => void) {
+    this.onCardLand = onCardLand;
   }
 
   // Exact screen rectangles for cards currently in the trick. Browser tests
@@ -94,7 +106,16 @@ export class PlayArea {
     stackIndex: number
   ) {
     const pos = this.positions[playerIndex];
-    card.setPosition(pos.x, pos.y + ((stackIndex + 1) * 0.005), pos.z, immediate, duration);
+    const y = pos.y + ((stackIndex + 1) * 0.005);
+    if (immediate) {
+      card.stopBounce();
+      card.setPosition(pos.x, y, pos.z, true);
+    } else {
+      card.arcTo(pos.x, y, pos.z, duration, ARC_HEIGHT, () => {
+        card.landingBounce(this.pacing.cardLandMs);
+        this.onCardLand?.();
+      });
+    }
 
     // Face the camera head-on so ranks stay readable, with a slight
     // per-seat tilt so the trick reads like cards tossed onto a table.

@@ -98,8 +98,8 @@ check("leave button hidden on the start screen", !(await visible(host, "leave-ma
 
 // --- lobby: host creates, guest joins, two bots fill the table ---
 await host.fill("#player-name", "Host");
+await host.click('.mode-card[data-target="6"]');
 await host.click("#create-button");
-await host.click('#create-panel .table-choice[data-target="6"]');
 await host.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });
 check("leave button hidden in the lobby", !(await visible(host, "leave-match")));
 const roomName = await host.evaluate(() => window.__game.roomName());
@@ -193,6 +193,7 @@ check(
 
 // --- the guest walks out with the corner button (two-step confirm) ---
 check("guest sees the leave button between hands", await visible(guest, "leave-match"));
+await guest.click("#menu-button"); // leaving lives in the menu now
 await guest.click("#leave-match");
 const armedText = await guest.evaluate(() => document.getElementById("leave-match").textContent);
 check(`first click only arms the button ("${armedText}")`, armedText.includes("abandon"));
@@ -258,8 +259,8 @@ await host.waitForFunction(() => window.__game.state().phase === "idle", undefin
 check("the last human lands back on the start screen", await visible(host, "start-screen"));
 
 // --- the leaver's page is still alive: a fresh table without a reload ---
+await guest.click('.mode-card[data-target="6"]');
 await guest.click("#create-button");
-await guest.click('#create-panel .table-choice[data-target="6"]');
 await guest.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });
 const fresh = await state(guest);
 check("leaver can host a new table on the same page", fresh.phase === "lobby" && fresh.isHost);

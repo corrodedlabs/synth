@@ -224,16 +224,35 @@
                      (append (list (car data) (user-id user))
                              (cdr data)))))
 
+;; A bot only speaks on its turn, and a person may think for longer than the server's idle
+;; timeout allows. Without this the bot's socket closes and the match ends for everyone.
+(define bot-ping-seconds 30)
+
+(define (keep-alive connection)
+  (thread
+   (λ ()
+     (with-handlers ((exn:fail? void)) ; the socket is gone, so the job is too
+       (let loop ()
+         (sleep bot-ping-seconds)
+         (unless (ws-conn-closed? connection)
+           (ws-send! connection (write-data-to-string '(ping)))
+           (loop)))))))
+
 (define client-lambda
   (λ (user)
     (define connection (user-connection user))
+    (define pinger (keep-alive connection))
 
     (let loop ((client-state (default-state user))
                (server-msg (receive-data connection)))
       (cond
         ;; server hung up (kicked, room closed, game over) — stop the bot
         ((eq? server-msg 'connection-closed)
+         (kill-thread pinger)
          (displayln (format "bot ~a: connection closed, stopping" (user-id user))))
+        ;; the answer to our keep-alive
+        ((eq? server-msg 'pong)
+         (loop client-state (receive-data connection)))
         (server-msg
           (case (car server-msg)
             ((hand)

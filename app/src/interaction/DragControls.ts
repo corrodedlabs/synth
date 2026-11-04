@@ -98,6 +98,8 @@ export class DragControls {
         object = object.parent;
       }
       const card = object.userData.card as Card | undefined;
+      // an armed card is drawn in front of the whole fan, whatever its index
+      if (card && card === this.armedCard) return card;
       const index = card ? handCards.indexOf(card) : -1;
       if (card && index > topmostIndex) {
         topmost = card;

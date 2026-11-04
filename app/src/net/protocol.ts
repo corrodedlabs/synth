@@ -117,6 +117,8 @@ export type ServerEvent =
       readonly _tag: "RoomMembers";
       readonly members: readonly string[];
       readonly target?: number; // what the table plays to, when broadcast
+      // who sits where, in the seat order the match will use: null is an empty seat
+      readonly seats?: readonly (string | null)[];
     }
   | { readonly _tag: "GameStarted" }
   | { readonly _tag: "GameAborted" }
@@ -215,10 +217,14 @@ export function decodeServerExpr(expr: SExpr, trimmed = writeSExpr(expr)): Serve
       const members = rest[1];
       if (!Array.isArray(members)) return { _tag: "Ignored", raw: trimmed };
       const target = rest[2];
+      const seats = rest[3];
       return {
         _tag: "RoomMembers",
         members: members.map(memberName),
         ...(typeof target === "number" ? { target } : {}),
+        ...(Array.isArray(seats)
+          ? { seats: seats.map((seat) => (seat === "" ? null : memberName(seat))) }
+          : {}),
       };
     }
 
@@ -579,7 +585,7 @@ export type ClientCommand =
     }
   | { readonly _tag: "GetActiveRooms" }
   | { readonly _tag: "Ping" }
-  | { readonly _tag: "AddBot"; readonly roomName: string }
+  | { readonly _tag: "AddBot"; readonly roomName: string; readonly seat?: number }
   | { readonly _tag: "StartGame"; readonly roomName: string }
   | { readonly _tag: "PutBid"; readonly email: string; readonly bid: BidValue }
   | { readonly _tag: "SelectTrump"; readonly email: string; readonly suit: Suit }
@@ -615,7 +621,11 @@ export function encodeCommand(command: ClientCommand): string {
     case "Ping":
       return writeSExpr([sym("ping")]);
     case "AddBot":
-      return writeSExpr([sym("add-bot-to-room"), command.roomName]);
+      return writeSExpr(
+        command.seat === undefined
+          ? [sym("add-bot-to-room"), command.roomName]
+          : [sym("add-bot-to-room"), command.roomName, command.seat]
+      );
     case "StartGame":
       return writeSExpr([sym("start-game"), command.roomName]);
     case "PutBid":
