@@ -7,6 +7,7 @@
         android:name=".SynthApp"
         android:label="28"
         android:icon="@mipmap/ic_launcher"
+        android:enableOnBackInvokedCallback="true"
         android:hardwareAccelerated="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:allowBackup="false">

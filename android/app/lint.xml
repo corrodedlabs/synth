@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- These Java files are copied unchanged from Apsis's pinned SDL release. Synth initializes
+         VIDEO and AUDIO, not joystick/HID support. Bluetooth initialization additionally checks
+         permissions in HIDDeviceManager before it creates any BLE controller. Revisit this if
+         gamepad support or Bluetooth permissions are added. Keep this check on for our own code. -->
+    <issue id="MissingPermission">
+        <ignore path="src/main/java/org/libsdl/app/HIDDeviceBLESteamController.java" />
+        <ignore path="src/main/java/org/libsdl/app/HIDDeviceManager.java" />
+        <ignore path="src/main/java/org/libsdl/app/SDLControllerManager.java" />
+    </issue>
+    <!-- GameActivity registers the API 33+ Back callback and handles older devices itself. -->
+    <issue id="GestureBackNavigation">
+        <ignore path="src/main/java/org/libsdl/app/SDLActivity.java" />
+    </issue>
+    <!-- SDL supplies RECEIVER_EXPORTED on API 33+; the flagged overload is in the older-API branch. -->
+    <issue id="UnspecifiedRegisterReceiverFlag">
+        <ignore path="src/main/java/org/libsdl/app/HIDDeviceManager.java" />
+    </issue>
+</lint>

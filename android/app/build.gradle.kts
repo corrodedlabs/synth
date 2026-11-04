@@ -9,13 +9,13 @@ val keystore: String? = System.getenv("SYNTH_KEYSTORE")
 
 android {
     namespace = "dev.synth.app"
-    compileSdk = 35
+    compileSdk = 36
     ndkVersion = "27.1.12297006"
 
     defaultConfig {
         applicationId = "dev.synth.app"
         minSdk = 29
-        targetSdk = 35
+        targetSdk = 36
         versionCode = (System.getenv("SYNTH_VERSION_CODE") ?: "1").toInt()
         versionName = "0.1"
         // Phones are arm64. Add x86_64 with -Psynth.abis=x86_64 to test on an emulator.

@@ -12,7 +12,7 @@ the Apsis engine (the `apsis` submodule, a private repo). The server still holds
 
 ## Building
 
-You need the Android SDK with NDK 27.1.12297006 and CMake 3.22.1, Java 21, and read access to Apsis.
+You need Android SDK platform 36, NDK 27.1.12297006 and CMake 3.22.1, Java 21, and read access to Apsis.
 
 ```sh
 git submodule update --init apsis
@@ -54,13 +54,33 @@ once an updated app has been out long enough.
 
 ## Releasing
 
-Nothing here has been released yet, and these steps need the owner:
+The upload key and all four GitHub Actions signing secrets were configured on 2026-11-05. The key
+backup and credentials are kept outside this repository. Keep that backup: future uploads must use
+the same upload key unless it is reset in Play Console. Never put the key in a build sandbox.
+
+The app is `dev.synth.app`, targets Android 16 (API 36), and builds for arm64 phones by default.
+Version `0.1` starts at version code `1`; every later upload needs a higher version code.
+
+To release through GitHub Actions:
 
 1. Create the app in Play Console as `dev.synth.app`.
-2. Create an upload key, and keep it out of this repo and out of sandboxes.
-3. Add the secrets listed at the top of `.github/workflows/android.yml`.
-4. Run the Android workflow by hand with a version code. It produces a signed bundle as an artifact.
-5. Upload the bundle to the internal testing track. Play needs the first upload done by hand.
+2. Enable Play App Signing, letting Google create the app signing key. The configured key is the
+   separate upload key, used to authenticate bundles sent to Play.
+3. Run the Android workflow by hand with a version code. It produces a signed bundle as an artifact.
+4. Upload the bundle to the internal testing track. Play needs the first upload done by hand.
+
+For a cloud build, leave the `SYNTH_KEYSTORE*` variables unset and run `./gradlew :app:bundleRelease`.
+Copy `app/build/outputs/bundle/release/app-release.aab` back to the trusted local machine, load the
+signing environment there, and sign it with `jarsigner` (not `apksigner`):
+
+```sh
+jarsigner -keystore "$SYNTH_KEYSTORE" -storepass:env SYNTH_KEYSTORE_PASSWORD \
+  -keypass:env SYNTH_KEY_PASSWORD -sigalg SHA256withRSA -digestalg SHA-256 \
+  -signedjar synth-release.aab app-release.aab "$SYNTH_KEY_ALIAS"
+```
+
+Validate the signed AAB with Google's `bundletool validate` and check its signature with
+`jarsigner -verify` before uploading. The release must not contain Vulkan validation layers.
 
 For invite links to open the app without asking, publish `/.well-known/assetlinks.json` on
 `respawnfi.com` with the app's signing certificate. Until then Android asks which app to use.
