@@ -193,6 +193,9 @@
            find-room-by-name
            add-user-to-game-room
            add-bot-to-game-room
+           room-seat-emails
+           seat-order
+           forget-seats!
            room-update-members!
            close-room!
            rooms-with-member
@@ -274,14 +277,73 @@
                                          (game-room-target current)))
                    members))))))])))
 
-  ;; #f when the table is full: the bot is released, not left dangling
-  (define add-bot-to-game-room
-    (lambda (room-name)
-      (let ((room (find-room-by-name room-name)))
-        (and room
-             (let ((bot (create-bot-user)))
-               (or (add-user-to-game-room room bot)
-                   (begin (release-user bot) #f)))))))
+;; where each member of a room sits: room name -> (email -> seat). A member keeps
+  ;; the seat they took, and anyone who didn't pick one gets the next free seat going
+  ;; round from the host, who sits at 0: 3, then 2, then 1. Started with no choices,
+  ;; that's the order the table has always been seated in.
+  (define *seat-plans* (make-hash))
+
+  (define (plan-for name) (hash-ref! *seat-plans* name make-hash))
+  (define (seat-key member) (format "~a" (user-email member)))
+
+  ;; a vector of +table-seats+: each entry a member, or #f for an empty seat
+  (define (room-seats name members)
+    (define plan (plan-for name))
+    (define seats (make-vector +table-seats+ #f))
+    (define arrivals (reverse members)) ; members are kept newest first
+    (define unseated
+      (filter (λ (member)
+                (let ((seat (hash-ref plan (seat-key member) #f)))
+                  (cond
+                    ((and seat (not (vector-ref seats seat)))
+                     (vector-set! seats seat member)
+                     #f)
+                    (else #t))))
+              arrivals))
+    (for ((member unseated))
+      (let ((free (for/first ((seat '(0 3 2 1))
+                              #:unless (vector-ref seats seat))
+                    seat)))
+        (when free
+          (vector-set! seats free member)
+          (hash-set! plan (seat-key member) free))))
+    seats)
+
+  ;; for the room-members broadcast: "" marks an empty seat
+  (define (room-seat-emails name members)
+    (for/list ((member (in-vector (room-seats name members))))
+      (if member (user-email member) "")))
+
+  ;; the members in seat order, for the start of the match. It's turned round so the
+  ;; host comes last, as clients expect of a member list; going round the table in
+  ;; the same direction, everyone keeps their neighbours and their partner.
+  (define (seat-order name members host)
+    (let* ((seated (filter values (vector->list (room-seats name members))))
+           (at (or (index-of seated host eq?) (sub1 (length seated)))))
+      (append (drop seated (add1 at)) (take seated (add1 at)))))
+
+  (define (forget-seats! name) (hash-remove! *seat-plans* name))
+
+  ;; #f when the table is full: the bot is released, not left dangling.
+  ;; 'seat-taken when the seat asked for has someone in it, so a second tap on
+  ;; a seat that has just filled doesn't seat another bot somewhere else.
+  (define (add-bot-to-game-room room-name (seat #f))
+    (let ((room (find-room-by-name room-name)))
+      (cond
+        ((not room) #f)
+        ((and seat
+              (or (not (exact-nonnegative-integer? seat))
+                  (>= seat +table-seats+)
+                  (vector-ref (room-seats room-name (game-room-members room)) seat)))
+         'seat-taken)
+        (else
+         (let* ((bot (create-bot-user))
+                (members (add-user-to-game-room room bot)))
+           (cond
+             ((not members) (release-user bot) #f)
+             (else
+              (when seat (hash-set! (plan-for room-name) (seat-key bot) seat))
+              members)))))))
 
   (define (room-update-members! room new-members)
     (match room
@@ -796,11 +858,16 @@
                              members)))
             ;; the table is in play now: delist it so it stops showing as
             ;; joinable, and remember who is seated for rejoins
-            (hash-set! *running-games* name members)
-            (close-room! room)
-            (broadcast-room-list!)
-            (run-match name host members
-                       #:target (match-target room-target))]
+            (let ((seated (seat-order name members host)))
+              (forget-seats! name)
+              (hash-set! *running-games* name seated)
+              ;; clients number the seats from this list, so they need the final order
+              (send-datum-to-all seated
+                                 `(room-members ,name ,(map user-email seated) ,room-target))
+              (close-room! room)
+              (broadcast-room-list!)
+              (run-match name host seated
+                         #:target (match-target room-target)))]
 
            [else 'room-not-ready])])))
 
@@ -1022,7 +1089,8 @@
                (send-datum-to-all new-members
                                   `(room-members ,name
                                                  ,(map user-email new-members)
-                                                 ,(game-room-target room)))
+                                                 ,(game-room-target room)
+                                                 ,(room-seat-emails name new-members)))
                'room-left)))
        (else '(error not-a-member))))))
 
@@ -1096,22 +1164,24 @@
                (send-datum-to-all members
                                   `(room-members ,room-name
                                                  ,(map user-email members)
-                                                 ,(game-room-target room)))
+                                                 ,(game-room-target room)
+                                                 ,(room-seat-emails room-name members)))
                'room-joined)))))))
     (_ '(error invalid-message))))
 
-(define add-bot-to-room
-  (lambda (room-name)
-    (let ((members (add-bot-to-game-room room-name)))
-      (cond
-        ((not members) '(error room-full))
-        (else
-         (send-datum-to-all members
-                            `(room-members ,room-name
-                                           ,(map user-email members)
-                                           ,(game-room-target
-                                             (find-room-by-name room-name))))
-         'bot-added)))))
+(define (add-bot-to-room room-name (seat #f))
+  (let ((members (add-bot-to-game-room room-name seat)))
+    (cond
+      ((not members) '(error room-full))
+      ((eq? members 'seat-taken) '(seat-taken))
+      (else
+       (send-datum-to-all members
+                          `(room-members ,room-name
+                                         ,(map user-email members)
+                                         ,(game-room-target
+                                           (find-room-by-name room-name))
+                                         ,(room-seat-emails room-name members)))
+       'bot-added))))
 
 ;; accepted messages:
 ;;
@@ -1225,7 +1295,9 @@
       ((get-active-rooms) `(active-rooms ,(get-active-rooms)))
       ((get-room-details) (get-room-details (cadr message)))
       ((add-bot-to-room)
-       (let ((result (add-bot-to-room (cadr message))))
+       ;; an optional seat: the table seat the host tapped
+       (let ((result (add-bot-to-room (cadr message)
+                                      (and (pair? (cddr message)) (caddr message)))))
          (broadcast-room-list!)
          result))
 
