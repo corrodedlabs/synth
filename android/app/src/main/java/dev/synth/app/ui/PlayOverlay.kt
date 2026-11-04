@@ -2,10 +2,17 @@ package dev.synth.app.ui
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -17,6 +24,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.absoluteOffset
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -39,6 +47,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -48,6 +57,7 @@ import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
@@ -55,17 +65,21 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.synth.app.GameController
+import dev.synth.app.R
 import dev.synth.core.AbandonChoice
 import dev.synth.core.ArrangementPreset
 import dev.synth.core.GameModel
 import dev.synth.core.GamePhase
 import dev.synth.core.MatchSide
 import dev.synth.core.PendingRequest
+import dev.synth.core.PlayerProfile
 import dev.synth.core.SUITS
 import dev.synth.core.Suit
+import dev.synth.core.playerProfile
 import kotlinx.coroutines.delay
 
 // ids must match the server's whitelist (UiOverlay.ts EMOTES)
@@ -80,6 +94,9 @@ private val EMOTES = listOf(
 private const val MAX_BID = 28
 private const val LEAVE_ARM_MS = 4_000L
 private const val RESULT_HOLD_MS = 700L
+private const val FAN_TOP_FROM_BOTTOM = 0.3f  // of the screen's height, in portrait
+private val PORTRAIT_RING = 66.dp
+private val LANDSCAPE_RING = 52.dp
 
 // A text presentation selector keeps the suits in ink rather than emoji colours.
 private val Suit.glyph: String
@@ -123,9 +140,13 @@ private fun seatSpots(width: Float, height: Float): List<Spot> {
     }
 }
 
+private enum class Popover { NONE, MENU, SORT, EMOTE }
+
 /**
- * Over the live table. Nothing here fills the screen with anything that takes touches: the boxes are
- * layout only, and each real control or panel takes its own.
+ * Over the live table, in three bands: scores at the top, the table in the middle, and the turn and the
+ * hand's tools at the bottom. Sound, sorting and reactions stay folded away until asked for. Nothing here
+ * fills the screen with anything that takes touches, except the catcher behind an open popover: the boxes
+ * are layout only, and each real control or panel takes its own.
  */
 @Composable
 internal fun PlayOverlay(controller: GameController) {
@@ -136,53 +157,77 @@ internal fun PlayOverlay(controller: GameController) {
         val model = controller.uiModel
         val pending = model.pendingRequest
         val spots = seatSpots(width.value, height.value)
+        val showingResult = model.phase == GamePhase.HAND_FINISHED || model.phase == GamePhase.FINISHED
+        var popover by remember { mutableStateOf(Popover.NONE) }
+        val toggle = { which: Popover -> popover = if (popover == which) Popover.NONE else which }
 
         // Only the cutout: the app is immersive, and the default theme's hidden action bar reports hidden
         // bars as 158px/68px through the safe-drawing insets, which would push the HUD into the seats.
-        Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.displayCutout)) {
-            Hud(controller, landscape)
+        val inset = WindowInsets.displayCutout.asPaddingValues()
+        val insetLeft = inset.calculateLeftPadding(LayoutDirection.Ltr)
+        val insetRight = inset.calculateRightPadding(LayoutDirection.Ltr)
+        val safe = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.displayCutout)
+
+        // A result card covers the middle of the table, so the names would only peek out around it.
+        if (!showingResult) {
+            for (seat in 1..3) {
+                SeatMarker(controller, seat, spots[seat], landscape, width, insetLeft, insetRight)
+            }
+        }
+        Box(safe) {
+            TopBar(model, Modifier.align(Alignment.TopCenter), onMenu = { toggle(Popover.MENU) })
+            BottomBar(controller, landscape, Modifier.align(Alignment.BottomCenter), onSort = { toggle(Popover.SORT) }, onEmote = { toggle(Popover.EMOTE) })
         }
 
+        // In portrait the prompts sit just above the fan, where the player is already looking. A landscape
+        // fan leaves no room there, so they hang from the top.
+        val promptPlace = if (landscape) {
+            Modifier.align(Alignment.TopCenter).padding(top = 130.dp)
+        } else {
+            Modifier.align(Alignment.BottomCenter).padding(bottom = height * FAN_TOP_FROM_BOTTOM)
+        }
         if (controller.canExpose) {
-            // Above the fan: it is our turn and the cards must stay clear.
             PaperButton(
                 "Reveal trump",
                 { controller.exposeTrump() },
-                Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = height * 0.6f - 52.dp)
-                    .testTag("expose-button"),
+                // In landscape the prompts' place is over the trick, so this one waits beside the fan.
+                (if (landscape) Modifier.align(Alignment.BottomEnd).padding(end = 72.dp + insetRight, bottom = 14.dp) else promptPlace).testTag("expose-button"),
                 fill = PaperLight.copy(alpha = 0.92f),
                 spacing = 0.6f,
                 horizontal = 22.dp,
             )
         }
-
-        val panelTop = if (landscape) 104.dp else height * 0.193f
         when (pending) {
             is PendingRequest.Bid -> BidPanel(
                 minBid = pending.minBid,
                 opening = model.bidsPlaced == 0,
                 landscape = landscape,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = panelTop),
+                modifier = promptPlace,
                 maxWidth = width,
                 onBid = controller::bid,
                 onPass = controller::pass,
             )
-            PendingRequest.Trump -> TrumpPanel(Modifier.align(Alignment.TopCenter).padding(top = panelTop), onSuit = controller::chooseTrump)
+            PendingRequest.Trump -> TrumpPanel(promptPlace, onSuit = controller::chooseTrump)
             else -> Unit
         }
 
         if (model.phase == GamePhase.HAND_FINISHED) HandResultPanel(controller, width, height)
         if (model.phase == GamePhase.FINISHED) MatchOverPanel(controller, width, height)
 
-        // Announcements never take touches, so they can sit above the panels.
+        // Announcements never take touches. They keep to whichever part of the table a prompt leaves free.
         controller.moment?.let { moment ->
-            val top = if (landscape) height * 0.24f else height * 0.17f
+            val top = when {
+                landscape -> height * 0.24f
+                pending != null -> height * 0.30f
+                else -> height * 0.62f
+            }
             MomentBanner(moment.title, moment.detail, Modifier.align(Alignment.TopCenter).padding(top = top))
         }
         if (model.phase == GamePhase.BIDDING || model.phase == GamePhase.CHOOSING_TRUMP) {
-            controller.bidNotes.forEach { note -> BidNoteAt(note.text, spots[note.seat], note.seat, width) }
+            controller.bidNotes.forEach { note ->
+                // Our own note would land on the prompt, which already says where the bid stands.
+                if (note.seat != 0 || pending == null) BidNoteAt(note.text, spots[note.seat], note.seat, landscape, width, height, insetLeft, insetRight)
+            }
         }
         controller.emotes.forEach { note ->
             key(note.key) { EmoteBubble(note.glyph, spots[note.seat], note.seat) }
@@ -191,130 +236,281 @@ internal fun PlayOverlay(controller: GameController) {
         controller.abandonedName?.let { name ->
             AbandonPanel(name, controller, Modifier.align(Alignment.TopCenter).padding(top = height * 0.06f).width(minOf(width * 0.86f, 420.dp)))
         }
+
+        if (popover != Popover.NONE) {
+            val source = remember { MutableInteractionSource() }
+            Box(Modifier.fillMaxSize().clickable(source, indication = null) { popover = Popover.NONE })
+            Box(safe) {
+                val close = { popover = Popover.NONE }
+                val belowTop = Modifier.align(Alignment.TopStart).padding(start = 12.dp, top = 58.dp)
+                val aboveBottom = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 66.dp)
+                when (popover) {
+                    Popover.MENU -> MenuPanel(controller, belowTop)
+                    Popover.SORT -> Popped(aboveBottom.align(Alignment.BottomStart)) { ArrangeTiles(controller, close) }
+                    Popover.EMOTE -> Popped(aboveBottom.align(Alignment.BottomEnd)) { EmoteStrip(controller, close) }
+                    Popover.NONE -> Unit
+                }
+            }
+        }
     }
 }
 
 // --- the HUD ---
 
 @Composable
-private fun BoxScope.Hud(controller: GameController, landscape: Boolean) {
-    val model = controller.uiModel
-    val inMatch = model.phase != GamePhase.FINISHED
-    Column(Modifier.align(Alignment.TopStart).fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
-        if (!landscape) {
-            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) { ScoreStrip(model) }
+private fun TopBar(model: GameModel, modifier: Modifier, onMenu: () -> Unit) {
+    Row(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+            RoundButton(onMenu, "Menu", "menu") { MenuIcon() }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            // Left: what's going on, then the quiet controls.
-            Column(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Box(Modifier.heightIn(min = 20.dp), contentAlignment = Alignment.CenterStart) {
-                    if (controller.statusText.isNotEmpty()) {
-                        Txt(
-                            controller.statusText,
-                            Modifier.testTag("status").widthIn(max = if (landscape) 330.dp else 230.dp),
-                            size = 16,
-                            opacity = 0.85f,
-                            align = TextAlign.Start,
-                            maxLines = 2,
-                        )
-                    }
-                }
-                if (landscape) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        MuteChip(controller)
-                        if (inMatch) LeaveMatchChip(controller)
-                        if (controller.canArrange) ArrangeTiles(controller, vertical = false)
-                    }
-                } else {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        MuteChip(controller)
-                        if (inMatch) LeaveMatchChip(controller)
-                    }
-                    if (controller.canArrange) ArrangeTiles(controller, vertical = true)
-                }
-            }
-            // Right: the score, the bid, trump, then the emotes.
-            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (landscape) ScoreStrip(model)
-                if (landscape) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) { TrumpLine(model) }
-                } else {
-                    TrumpLine(model)
-                }
-                if (inMatch) {
-                    Spacer(Modifier.size(2.dp))
-                    EmoteStrip(controller, vertical = !landscape)
-                }
-            }
+        Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            Stat("${model.matchUs} – ${model.matchThem}", "match")
+            Stat("${model.score} – ${model.theirScore}", "this hand")
         }
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { Contract(model) }
     }
 }
 
 @Composable
-private fun ScoreStrip(model: GameModel) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        ScorePart("You — Them:", "${model.score} — ${model.theirScore}")
-        ScoreDivider()
-        ScorePart("Tricks:", "${model.tricks} — ${model.theirTricks}")
-        ScoreDivider()
-        ScorePart("Match:", "${model.matchUs} — ${model.matchThem}")
+private fun Stat(value: String, caption: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Txt(value, size = 19, weight = FontWeight.W600, spacing = 0f, maxLines = 1)
+        Txt(caption, size = 12, opacity = 0.62f, maxLines = 1)
     }
 }
 
+/** The bid and trump, once there's a bid: "16 ♥" over whose it is. A hidden trump is pale, or a "?" if we can't know it. */
 @Composable
-private fun ScorePart(label: String, value: String) {
-    Txt(label, size = 15, opacity = 0.72f, maxLines = 1)
-    Spacer(Modifier.width(3.dp))
-    Txt(value, size = 15, weight = FontWeight.W600, maxLines = 1)
-}
-
-@Composable
-private fun ScoreDivider() {
-    Txt("|", Modifier.padding(horizontal = 5.dp), size = 15, opacity = 0.4f)
-}
-
-@Composable
-private fun TrumpLine(model: GameModel) {
-    val bid = model.finalBid
-    val winner = model.bidWinner
-    if (bid != null) {
-        val who = when (winner) {
-            null -> ""
-            0 -> " · you"
-            else -> " · " + (model.seatNames?.getOrNull(winner) ?: "")
-        }
-        Txt("Bid $bid$who", size = 16, opacity = 0.85f, maxLines = 1)
-    }
+private fun Contract(model: GameModel) {
+    val bid = model.finalBid ?: return
     val suit = model.trumpSuit
-    val known = suit != null || model.trumpExposed
-    if (known || model.phase == GamePhase.PLAYING) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    val whose = when (val winner = model.bidWinner) {
+        null -> "bid"
+        0 -> "your bid"
+        else -> (model.seatNames?.getOrNull(winner) ?: "their") + "'s bid"
+    }
+    val trumpWords = when {
+        suit == null -> "Trump hidden"
+        model.trumpExposed -> "Trump ${suit.id}"
+        else -> "Trump ${suit.id}, still hidden"
+    }
+    Column(Modifier.testTag("contract").semantics { contentDescription = "Bid $bid, $whose. $trumpWords" }, horizontalAlignment = Alignment.End) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            Txt("$bid", size = 19, weight = FontWeight.W600, spacing = 0f, maxLines = 1)
             when {
-                suit == null -> Txt("Trump: hidden", size = 16, opacity = 0.85f, maxLines = 1)
-                model.trumpExposed -> Txt("Trump:", size = 16, opacity = 0.85f, maxLines = 1)
-                else -> Txt("Trump (hidden):", size = 16, opacity = 0.85f, maxLines = 1)
+                suit == null -> Txt("?", size = 19, opacity = 0.55f, spacing = 0f)
+                else -> Box(Modifier.alpha(if (model.trumpExposed) 1f else 0.5f)) { SuitGlyph(suit, 19) }
             }
-            if (suit != null) SuitGlyph(suit, 18)
         }
+        Txt(whose, Modifier.widthIn(max = 104.dp), size = 12, opacity = 0.62f, maxLines = 1)
+    }
+}
+
+/** The tools for the hand either side of whose turn it is. The result cards speak for themselves, so the turn is quiet then. */
+@Composable
+private fun BottomBar(controller: GameController, landscape: Boolean, modifier: Modifier, onSort: () -> Unit, onEmote: () -> Unit) {
+    val model = controller.uiModel
+    val pending = model.pendingRequest
+    val yourTurn = pending is PendingRequest.Play
+    val status = when {
+        yourTurn -> "Your turn"
+        pending != null -> ""
+        controller.statusText == "Your turn" -> ""
+        controller.statusText == "Dealing…" && model.hand.isNotEmpty() -> ""
+        else -> controller.statusText
+    }
+    Row(modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(44.dp)) {
+            if (controller.canArrange) {
+                RoundButton(onSort, "Sort your hand", "sort") { SortIcon() }
+            }
+        }
+        // In landscape the fan comes down to here, so the words keep beside it.
+        Box(Modifier.weight(1f).padding(horizontal = 8.dp), contentAlignment = if (landscape) Alignment.CenterStart else Alignment.Center) {
+            if (status.isNotEmpty()) {
+                Txt(
+                    status,
+                    Modifier.testTag("status").widthIn(max = if (landscape) 150.dp else 280.dp),
+                    size = if (yourTurn) 20 else 15,
+                    weight = if (yourTurn) FontWeight.W600 else FontWeight.W400,
+                    color = if (yourTurn) Green else Ink,
+                    opacity = if (yourTurn) 1f else 0.75f,
+                    maxLines = 2,
+                )
+            }
+        }
+        Box(Modifier.size(44.dp)) {
+            if (model.phase != GamePhase.FINISHED) {
+                RoundButton(onEmote, "Send a reaction", "emote") { BasicText("🙂", style = TextStyle(fontSize = 20.sp, color = Color.Black)) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RoundButton(onClick: () -> Unit, description: String, tag: String, content: @Composable BoxScope.() -> Unit) {
+    Pressable(
+        onClick,
+        Modifier.size(44.dp).testTag(tag).semantics { contentDescription = description },
+        shape = RoundedCornerShape(999.dp),
+        fill = PaperLight.copy(alpha = 0.72f),
+        border = Ink.copy(alpha = 0.3f),
+        content = content,
+    )
+}
+
+/** Three bars. Drawn rather than typed: a font's symbols sit off centre in a round button. */
+@Composable
+private fun MenuIcon() {
+    Canvas(Modifier.size(18.dp)) {
+        val line = 1.6.dp.toPx()
+        val ink = Ink.copy(alpha = 0.8f)
+        for (y in listOf(0.22f, 0.5f, 0.78f)) {
+            drawLine(ink, Offset(size.width * 0.08f, size.height * y), Offset(size.width * 0.92f, size.height * y), line, StrokeCap.Round)
+        }
+    }
+}
+
+/** An arrow up beside an arrow down, balanced about the button's centre. */
+@Composable
+private fun SortIcon() {
+    Canvas(Modifier.size(20.dp)) {
+        val line = 1.6.dp.toPx()
+        val ink = Ink.copy(alpha = 0.8f)
+        val w = size.width
+        val h = size.height
+        val head = w * 0.16f
+        fun arrow(x: Float, tip: Float, tail: Float) {
+            val back = if (tip < tail) head else -head
+            drawLine(ink, Offset(x, tip), Offset(x, tail), line, StrokeCap.Round)
+            drawLine(ink, Offset(x, tip), Offset(x - head, tip + back), line, StrokeCap.Round)
+            drawLine(ink, Offset(x, tip), Offset(x + head, tip + back), line, StrokeCap.Round)
+        }
+        arrow(w * 0.3f, h * 0.12f, h * 0.88f)
+        arrow(w * 0.7f, h * 0.88f, h * 0.12f)
+    }
+}
+
+/** A folded-away row of tools, opened from one of the bars. */
+@Composable
+private fun Popped(modifier: Modifier, content: @Composable () -> Unit) {
+    Panel(modifier, fill = PaperLight, padding = 6.dp, entering = true) { content() }
+}
+
+@Composable
+private fun MenuPanel(controller: GameController, modifier: Modifier) {
+    val model = controller.uiModel
+    Panel(modifier.width(210.dp), fill = PaperLight, padding = 10.dp, entering = true) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            Txt("Tricks", size = 16, opacity = 0.72f, maxLines = 1)
+            Txt("${model.tricks} – ${model.theirTricks}", size = 16, weight = FontWeight.W600, spacing = 0f, maxLines = 1)
+        }
+        Spacer(Modifier.size(4.dp))
+        Pressable(
+            { controller.toggleMute() },
+            Modifier.fillMaxWidth().heightIn(min = 44.dp).testTag("mute"),
+            border = Ink.copy(alpha = 0.3f),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                SoundIcon(controller.muted)
+                Txt(if (controller.muted) "Sound off" else "Sound on", size = 16, maxLines = 1)
+            }
+        }
+        if (model.phase != GamePhase.FINISHED) {
+            Spacer(Modifier.size(6.dp))
+            LeaveMatchChip(controller)
+        }
+    }
+}
+
+/**
+ * `.seat-name-label`: the ensō with the player's face in it and their name below. Drawn here rather than by
+ * the table so it keeps clear of a cutout and of the result cards. The ring breathes on their turn and the
+ * face pops when they make a call.
+ */
+@Composable
+private fun SeatMarker(controller: GameController, seat: Int, spot: Spot, landscape: Boolean, screenWidth: Dp, insetLeft: Dp, insetRight: Dp) {
+    val model = controller.uiModel
+    val member = model.seatMembers?.getOrNull(seat) ?: return
+    val profile = playerProfile(member, model.members)
+    val active = model.activePlayer == seat
+    val ring = if (landscape) LANDSCAPE_RING else PORTRAIT_RING
+    val cx = seatCentre(spot, ring, screenWidth, insetLeft, insetRight)
+    val top = spot.y.dp - ring / 2
+
+    Box(Modifier.absoluteOffset(cx - ring / 2, top).size(ring).testTag("seat-marker-$seat"), contentAlignment = Alignment.Center) {
+        EnsoRing(active)
+        SeatFace(profile, controller.bidNotes.firstOrNull { it.seat == seat }?.text, landscape)
+    }
+    // A landscape table has no line to spare between the partner and the prompts.
+    val partnerInline = landscape && seat == 2
+    val nameWidth = if (partnerInline) 150.dp else if (landscape) 72.dp else 96.dp
+    val nameX = cx.coerceIn(insetLeft + nameWidth / 2, screenWidth - insetRight - nameWidth / 2) - nameWidth / 2
+    Txt(
+        if (partnerInline) "${profile.displayName} · partner" else profile.displayName,
+        Modifier.absoluteOffset(nameX, top + ring + 4.dp).width(nameWidth),
+        size = 15,
+        weight = if (active) FontWeight.W600 else FontWeight.W400,
+        color = if (active) Red else Ink,
+        opacity = if (active) 1f else 0.78f,
+        maxLines = 1,
+    )
+    if (seat == 2 && !landscape) {
+        Txt(
+            "partner",
+            Modifier.absoluteOffset(nameX, top + ring + 23.dp).width(nameWidth),
+            size = 12,
+            opacity = 0.55f,
+            maxLines = 1,
+        )
+    }
+}
+
+private fun seatCentre(spot: Spot, ring: Dp, screenWidth: Dp, insetLeft: Dp, insetRight: Dp): Dp =
+    spot.x.dp.coerceIn(insetLeft + ring / 2 + 2.dp, screenWidth - insetRight - ring / 2 - 2.dp)
+
+@Composable
+private fun EnsoRing(active: Boolean) {
+    val modifier = if (active) {
+        // `seat-marker-turn`
+        val transition = rememberInfiniteTransition(label = "turn")
+        val pulse by transition.animateFloat(0.97f, 1.04f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "turn")
+        Modifier.graphicsLayer {
+            scaleX = pulse
+            scaleY = pulse
+            alpha = 0.96f
+        }
+    } else {
+        Modifier.alpha(0.72f)
+    }
+    Image(painterResource(R.drawable.enso), contentDescription = null, modifier.fillMaxSize())
+}
+
+@Composable
+private fun SeatFace(profile: PlayerProfile, call: String?, landscape: Boolean) {
+    // `seat-avatar-speak`
+    val scale = remember { Animatable(1f) }
+    LaunchedEffect(call) {
+        if (call != null) {
+            scale.snapTo(0.9f)
+            scale.animateTo(1.09f, tween(286))
+            scale.animateTo(1f, tween(234))
+        }
+    }
+    val modifier = Modifier.graphicsLayer {
+        scaleX = scale.value
+        scaleY = scale.value
+    }
+    if (profile.isBot) {
+        BasicText(profile.avatar, modifier, style = TextStyle(fontSize = (if (landscape) 19 else 23).sp, color = Color.Black))
+    } else {
+        Txt(profile.avatar, modifier, size = if (landscape) 18 else 21, weight = FontWeight.W600, color = accentColor(profile.accent), spacing = 0f)
     }
 }
 
 @Composable
 private fun SuitGlyph(suit: Suit, size: Int) {
     BasicText(suit.glyph, style = TextStyle(color = suit.ink, fontSize = size.sp))
-}
-
-@Composable
-private fun MuteChip(controller: GameController) {
-    Pressable(
-        { controller.toggleMute() },
-        Modifier.size(40.dp).testTag("mute").semantics { contentDescription = if (controller.muted) "Turn sound on" else "Turn sound off" },
-        shape = RoundedCornerShape(999.dp),
-        fill = PaperLight.copy(alpha = 0.72f),
-        border = Ink.copy(alpha = 0.3f),
-    ) {
-        SoundIcon(controller.muted)
-    }
 }
 
 private val SPEAKER = PathParser().parsePathString("M4 9.4v5.2h3.1l3.9 3.4V6L7.1 9.4H4Z").toPath()
@@ -352,51 +548,39 @@ private fun LeaveMatchChip(controller: GameController) {
 }
 
 @Composable
-private fun EmoteStrip(controller: GameController, vertical: Boolean) {
-    val shape = RoundedCornerShape(30.dp)
-    val strip = Modifier
-        .background(PaperLight.copy(alpha = 0.85f), shape)
-        .border(1.dp, Ink.copy(alpha = 0.22f), shape)
-        .padding(2.dp)
-    val buttons: @Composable () -> Unit = {
+private fun EmoteStrip(controller: GameController, close: () -> Unit) {
+    Row {
         EMOTES.forEach { (id, glyph) ->
             Pressable(
-                { controller.sendEmote(id) },
-                Modifier.size(38.dp).testTag("emote-$id"),
+                { controller.sendEmote(id); close() },
+                Modifier.size(40.dp).testTag("emote-$id"),
                 shape = RoundedCornerShape(50),
                 border = Color.Transparent,
             ) {
-                BasicText(glyph, style = TextStyle(fontSize = 20.sp, color = Color.Black))
+                BasicText(glyph, style = TextStyle(fontSize = 21.sp, color = Color.Black))
             }
         }
     }
-    if (vertical) Column(strip) { buttons() } else Row(strip) { buttons() }
 }
 
 @Composable
-private fun ArrangeTiles(controller: GameController, vertical: Boolean) {
+private fun ArrangeTiles(controller: GameController, close: () -> Unit) {
     val trump = controller.uiModel.trumpSuit
     val selected = controller.arrangement
-    // A row has to clear the partner's name at the top centre, even beside a cutout.
-    val tileWidth = if (vertical) 48.dp else 42.dp
-    val tiles: @Composable () -> Unit = {
-        ArrangeTile("♠\uFE0E♥\uFE0E", "suit", selected == ArrangementPreset.SUIT, true, "arrange-suit", tileWidth) { controller.arrange(ArrangementPreset.SUIT) }
-        ArrangeTile("J→7", "strength", selected == ArrangementPreset.STRENGTH, true, "arrange-strength", tileWidth) { controller.arrange(ArrangementPreset.STRENGTH) }
-        ArrangeTile(trump?.glyph ?: "✦", "trump", selected == ArrangementPreset.TRUMP, trump != null, "arrange-trump", tileWidth) { controller.arrange(ArrangementPreset.TRUMP) }
-        ArrangeTile("↺", "deal", selected == ArrangementPreset.DEAL, true, "arrange-deal", tileWidth) { controller.arrange(ArrangementPreset.DEAL) }
-    }
-    if (vertical) {
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) { tiles() }
-    } else {
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { tiles() }
+    val choose = { preset: ArrangementPreset -> controller.arrange(preset); close() }
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        ArrangeTile("♠\uFE0E♥\uFE0E", "suit", selected == ArrangementPreset.SUIT, true, "arrange-suit") { choose(ArrangementPreset.SUIT) }
+        ArrangeTile("J→7", "strength", selected == ArrangementPreset.STRENGTH, true, "arrange-strength") { choose(ArrangementPreset.STRENGTH) }
+        ArrangeTile(trump?.glyph ?: "✦", "trump", selected == ArrangementPreset.TRUMP, trump != null, "arrange-trump") { choose(ArrangementPreset.TRUMP) }
+        ArrangeTile("↺", "deal", selected == ArrangementPreset.DEAL, true, "arrange-deal") { choose(ArrangementPreset.DEAL) }
     }
 }
 
 @Composable
-private fun ArrangeTile(glyph: String, label: String, selected: Boolean, enabled: Boolean, tag: String, tileWidth: Dp, onClick: () -> Unit) {
+private fun ArrangeTile(glyph: String, label: String, selected: Boolean, enabled: Boolean, tag: String, onClick: () -> Unit) {
     Pressable(
         onClick,
-        Modifier.size(width = tileWidth, height = 42.dp).testTag(tag).semantics { this.selected = selected },
+        Modifier.size(width = 56.dp, height = 46.dp).testTag(tag).semantics { this.selected = selected },
         enabled = enabled,
         shape = RoundedCornerShape(9.dp),
         fill = if (selected) Color(0xFFE7CEA9).copy(alpha = 0.8f) else PaperLight.copy(alpha = 0.72f),
@@ -423,10 +607,10 @@ private fun BidPanel(
     onPass: () -> Unit,
 ) {
     val values = (minBid..MAX_BID).toList()
-    val label = if (opening) "Open the bidding" else "Bid stands at ${minBid - 1}"
-    val panelWidth = if (landscape) minOf(maxWidth - 208.dp, 660.dp) else minOf(maxWidth - 128.dp, 300.dp)
-    val columns = if (landscape) 13 else 5
-    Panel(modifier.width(panelWidth).entrance(), padding = 10.dp) {
+    val label = if (opening) "Your bid" else "Beat ${minBid - 1}"
+    val panelWidth = if (landscape) minOf(maxWidth - 240.dp, 660.dp) else minOf(maxWidth - 24.dp, 420.dp)
+    val columns = if (landscape) 13 else 7
+    Panel(modifier.width(panelWidth), padding = 8.dp, entering = true) {
         if (landscape) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
                 Txt(label, size = 18, opacity = 0.8f)
@@ -438,12 +622,12 @@ private fun BidPanel(
         } else {
             Txt(label, size = 18, opacity = 0.8f)
         }
-        Spacer(Modifier.size(6.dp))
+        Spacer(Modifier.size(3.dp))
         val rows = values.chunked(columns)
         rows.forEachIndexed { index, row ->
-            // Pass shares the last row when it has room, which keeps the panel clear of the side seats.
+            // Pass shares the last row when it has room, which keeps the panel low.
             val passHere = !landscape && !opening && index == rows.lastIndex && row.size < columns
-            Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(Modifier.fillMaxWidth().padding(vertical = 1.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 row.forEach { value ->
                     Pressable({ onBid(value) }, Modifier.weight(1f).heightIn(min = 42.dp).testTag("bid-$value")) {
                         Txt("$value", size = 20, spacing = 0f, maxLines = 1)
@@ -468,8 +652,8 @@ private fun PassButton(onPass: () -> Unit, modifier: Modifier) {
 
 @Composable
 private fun TrumpPanel(modifier: Modifier, onSuit: (Suit) -> Unit) {
-    Panel(modifier.entrance(), padding = 14.dp) {
-        Txt("Choose the trump suit", size = 18, opacity = 0.8f)
+    Panel(modifier, padding = 14.dp, entering = true) {
+        Txt("Choose trump", size = 18, opacity = 0.8f)
         Spacer(Modifier.size(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             SUITS.forEach { suit ->
@@ -488,14 +672,12 @@ private fun BoxScope.ResultCard(width: Dp, height: Dp, tag: String?, content: @C
     Panel(
         Modifier
             .align(Alignment.Center)
-            // In portrait the emote strip runs down the right edge: settle below it.
-            .then(if (height > width && tag == null) Modifier.padding(top = 130.dp) else Modifier)
             .width(minOf(width * 0.84f, 460.dp))
             .heightIn(max = height * 0.92f)
-            .then(if (tag != null) Modifier.testTag(tag) else Modifier)
-            .entrance(),
+            .then(if (tag != null) Modifier.testTag(tag) else Modifier),
         fill = PaperLight,
         padding = 18.dp,
+        entering = true,
     ) {
         Column(Modifier.verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) { content() }
     }
@@ -521,36 +703,28 @@ private fun BoxScope.HandResultPanel(controller: GameController, width: Dp, heig
 
     ResultCard(width, height, tag = null) {
         if (result != null) {
-            Txt(if (swing > 0) "✦" else "◆", size = 46, color = tone)
-        }
-        Txt("${model.score} — ${model.theirScore}", size = 40, weight = FontWeight.W500)
-        Spacer(Modifier.size(6.dp))
-        if (result != null) {
             val ours = result.bidder == 0 || result.bidder == 2
-            val bidder = if (result.bidder == 0) "Your" else "${model.seatNames?.getOrNull(result.bidder) ?: "Their"}'s"
+            val bidder = if (result.bidder == 0) "You" else model.seatNames?.getOrNull(result.bidder) ?: "They"
             val took = if (ours) model.score else model.theirScore
-            val swingLine = when {
-                swing > 0 -> "Your team gains $swing match point${if (swing == 1) "" else "s"}."
-                swing < 0 -> "Their team gains ${-swing} match point${if (swing == -1) "" else "s"}."
-                else -> "The match score is unchanged."
-            }
-            Txt(
-                "$bidder team bid ${result.bid} and took $took — ${if (result.made) "made it" else "set"}\n" +
-                    "$swingLine\nMatch: ${model.matchUs} — ${model.matchThem} (first to ${model.matchTarget})",
-                size = 17,
-                opacity = 0.8f,
-            )
+            Txt(if (result.made) "Bid made" else "Bid set", size = 32, weight = FontWeight.W500, color = tone)
+            Spacer(Modifier.size(4.dp))
+            Txt("$bidder bid ${result.bid}, took $took", size = 17, opacity = 0.8f)
             Spacer(Modifier.size(10.dp))
+            // The points go to the bidding side, so a made bid by them is +1 to them, and a set one takes points from them.
+            val size = kotlin.math.abs(swing)
             val delta = when {
-                swing > 0 -> "+$swing match point${if (swing == 1) "" else "s"}"
-                swing < 0 -> "−${-swing} match point${if (swing == -1) "" else "s"}"
-                else -> "match score unchanged"
+                size == 0 -> "no change"
+                else -> (if (result.made) "+$size" else "−$size") + if (ours) "" else " to them"
             }
             Box(Modifier.border(1.dp, tone, RoundedCornerShape(999.dp)).padding(horizontal = 11.dp, vertical = 3.dp)) {
                 Txt(delta, size = 15, weight = FontWeight.W600, color = tone)
             }
-            Spacer(Modifier.size(12.dp))
+            Spacer(Modifier.size(10.dp))
+            Txt("Match ${model.matchUs} – ${model.matchThem} · first to ${model.matchTarget}", size = 16, opacity = 0.72f)
+        } else {
+            Txt("${model.score} – ${model.theirScore}", size = 32, weight = FontWeight.W500)
         }
+        Spacer(Modifier.size(14.dp))
         when {
             dealing -> WaitingNote("dealing…")
             controller.isActingHost -> PaperButton(
@@ -580,8 +754,7 @@ private fun BoxScope.MatchOverPanel(controller: GameController, width: Dp, heigh
         Txt(if (won) "You win the match!" else "Match lost", size = 36, weight = FontWeight.W500)
         Spacer(Modifier.size(6.dp))
         Txt(
-            "${model.matchUs} — ${model.matchThem} in game points\n" +
-                "first to ${model.matchTarget} · $hands hand${if (hands == 1) "" else "s"} played",
+            "${model.matchUs} – ${model.matchThem} · first to ${model.matchTarget}",
             size = 17,
             opacity = 0.8f,
         )
@@ -607,7 +780,7 @@ private fun HandChip(swing: Int) {
 
 @Composable
 private fun AbandonPanel(name: String, controller: GameController, modifier: Modifier) {
-    Panel(modifier.entrance(), fill = PaperLight, padding = 14.dp) {
+    Panel(modifier, fill = PaperLight, padding = 14.dp, entering = true) {
         Txt("$name abandoned the match.", size = 19, opacity = 0.85f)
         Spacer(Modifier.size(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -652,17 +825,26 @@ private fun MomentBanner(title: String, detail: String, modifier: Modifier) {
     }
 }
 
-private val NOTE_WIDTH = 120.dp
+private val NOTE_WIDTH = 88.dp
 
 @Composable
-private fun BidNoteAt(text: String, spot: Spot, seat: Int, screenWidth: Dp) {
+private fun BidNoteAt(text: String, spot: Spot, seat: Int, landscape: Boolean, screenWidth: Dp, screenHeight: Dp, insetLeft: Dp, insetRight: Dp) {
     val pass = text == "Pass"
     val half = NOTE_WIDTH / 2
-    val x = spot.x.dp.coerceIn(half, screenWidth - half) - half
-    val y = spot.y.dp + if (seat == 0) 0.dp else 3.dp
+    val ring = if (landscape) LANDSCAPE_RING else PORTRAIT_RING
+    val centre = seatCentre(spot, ring, screenWidth, insetLeft, insetRight)
+    // Below the name, past the partner tag; a landscape partner has no room below, so it goes beside the ring.
+    val (x, y) = when {
+        seat == 0 && landscape -> spot.x.dp to spot.y.dp
+        // Just above the fan, where our own bid panel was.
+        seat == 0 -> spot.x.dp to screenHeight * (1 - FAN_TOP_FROM_BOTTOM) - 20.dp
+        landscape && seat == 2 -> centre + ring / 2 + half + 6.dp to spot.y.dp - 12.dp
+        seat == 2 -> centre to spot.y.dp + ring / 2 + 42.dp
+        else -> centre to spot.y.dp + ring / 2 + 25.dp
+    }
     Txt(
         if (pass) "— Pass" else "✦ Bid $text",
-        Modifier.absoluteOffset(x, y).width(NOTE_WIDTH),
+        Modifier.absoluteOffset(x.coerceIn(insetLeft + half, screenWidth - insetRight - half) - half, y).width(NOTE_WIDTH),
         size = 16,
         weight = FontWeight.W600,
         color = if (pass) PassBrown else Green,

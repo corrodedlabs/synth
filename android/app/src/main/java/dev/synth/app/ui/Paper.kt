@@ -25,10 +25,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -124,11 +126,13 @@ internal fun Modifier.paperBackground(): Modifier = drawBehind {
     )
 }
 
-/** Panels and results settle in gently; a modifier only, so it never affects touches. */
+private val ENTRANCE = tween<Float>(320, easing = FastOutSlowInEasing)
+
+/** Banners settle in gently; a modifier only, so it never affects touches. A Panel has its own. */
 @Composable
 internal fun Modifier.entrance(): Modifier {
     val progress = remember { Animatable(0f) }
-    LaunchedEffect(Unit) { progress.animateTo(1f, tween(320, easing = FastOutSlowInEasing)) }
+    LaunchedEffect(Unit) { progress.animateTo(1f, ENTRANCE) }
     return graphicsLayer {
         alpha = progress.value
         val scale = 0.94f + 0.06f * progress.value
@@ -137,20 +141,44 @@ internal fun Modifier.entrance(): Modifier {
     }
 }
 
-private val PanelShape = RoundedCornerShape(6.dp)
+private val PANEL_CORNER = 6.dp
+private val PanelShape = RoundedCornerShape(PANEL_CORNER)
+private val PANEL_SHADOW_BLUR = 26.dp  // a CSS blur of 30px, in Android's measure
+private val PANEL_SHADOW_DROP = 10.dp
+private val PANEL_SHADOW = Color(0xFF3B2F2A).copy(alpha = 0.12f)
 
-/** `.panel`: translucent paper, a hairline border, a soft shadow. */
+/**
+ * `.panel`: translucent paper, a hairline border, a soft shadow. The shadow is painted with the paper rather
+ * than left to an elevation, which Android drops from a layer while its alpha animates. Alpha is applied to
+ * each draw instead of through an offscreen buffer, which would clip the shadow to the panel while it fades.
+ */
 @Composable
 internal fun Panel(
     modifier: Modifier = Modifier,
     fill: Color = PaperLight.copy(alpha = 0.96f),
     padding: Dp = 16.dp,
+    entering: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    val progress = remember { Animatable(if (entering) 0f else 1f) }
+    LaunchedEffect(Unit) { progress.animateTo(1f, ENTRANCE) }
     Column(
         modifier
-            .shadow(10.dp, PanelShape, clip = false, ambientColor = Ink, spotColor = Ink.copy(alpha = 0.5f))
-            .background(fill, PanelShape)
+            .graphicsLayer {
+                alpha = progress.value
+                val scale = 0.94f + 0.06f * progress.value
+                scaleX = scale
+                scaleY = scale
+                compositingStrategy = CompositingStrategy.ModulateAlpha
+            }
+            .drawBehind {
+                val corner = PANEL_CORNER.toPx()
+                val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                    color = fill.toArgb()
+                    setShadowLayer(PANEL_SHADOW_BLUR.toPx(), 0f, PANEL_SHADOW_DROP.toPx(), PANEL_SHADOW.toArgb())
+                }
+                drawContext.canvas.nativeCanvas.drawRoundRect(0f, 0f, size.width, size.height, corner, corner, paint)
+            }
             .border(1.dp, Ink.copy(alpha = 0.18f), PanelShape)
             .takesTouches()
             .padding(padding),

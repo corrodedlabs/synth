@@ -226,8 +226,79 @@ static void test_order_and_snapshot(void)
     CHECK(t.trick_count == 0);
 }
 
+/* The clip matrix of a shadow, back to where its centre lands on screen. */
+static TablePoint shadow_centre(const Table *t, const TableShadow *shadow)
+{
+    const float *m = shadow->clip.m;
+    return (TablePoint){(m[12] / m[15] * 0.5f + 0.5f) * t->view_w, (m[13] / m[15] * 0.5f + 0.5f) * t->view_h};
+}
+
+/* The shadows hug the cards like the web's, and a fan's lie side by side instead of stacking up. */
+static void test_shadow(void)
+{
+    static Table t;
+    table_init(&t);
+    table_resize(&t, 1080, 2340, 2.81f);
+    table_command(&t, "deal hearts-J spades-9 clubs-A diamonds-10");
+    table_update(&t, 10);
+
+    TablePose first, second, last;
+    CHECK(table_pose(&t, t.hand[0], &first));
+    CHECK(table_pose(&t, t.hand[1], &second));
+    CHECK(table_pose(&t, t.hand[3], &last));
+    TableShadow whole = table_card_shadow(&t, &last, NULL, true, 0.02f);
+    TableShadow trimmed = table_card_shadow(&t, &first, &second, true, 0.02f);
+    CHECK(fabsf(whole.half_w * 2 - 0.6f * last.scale) < 0.02f);
+    CHECK(trimmed.half_w < whole.half_w * 0.8f);
+    CHECK(trimmed.half_w > 0.05f);
+
+    /* The trimmed shadow keeps to its card's left, and a card's shadow falls just below it on screen. */
+    TableShadow untrimmed = table_card_shadow(&t, &first, NULL, true, 0.02f);
+    CHECK(shadow_centre(&t, &trimmed).x < shadow_centre(&t, &untrimmed).x);
+    TablePoint corners[4];
+    table_card_corners(&t, &first, corners);
+    float bottom = 0, top = 1e9f;
+    for (int i = 0; i < 4; i++) {
+        bottom = corners[i].y > bottom ? corners[i].y : bottom;
+        top = corners[i].y < top ? corners[i].y : top;
+    }
+    float shadow_y = shadow_centre(&t, &untrimmed).y;
+    CHECK(shadow_y > top + (bottom - top) * 0.5f);
+    CHECK(shadow_y < bottom);
+
+    /* A card still flying far from the one it lies over keeps its whole shadow. */
+    TablePose far = second;
+    far.position.x += 5;
+    CHECK(fabsf(table_card_shadow(&t, &first, &far, true, 0.02f).half_w - untrimmed.half_w) < 0.001f);
+}
+
+/* An idle table draws nothing, so busy has to cover every move and end when the moves do. */
+static void test_busy(void)
+{
+    static Table t;
+    table_init(&t);
+    table_update(&t, 1);
+    CHECK(!table_busy(&t, 1));
+    table_command(&t, "deal hearts-J spades-9");
+    CHECK(table_busy(&t, 1));
+    table_update(&t, 10);
+    CHECK(!table_busy(&t, 10));
+    table_command(&t, "play 1 clubs-A");
+    CHECK(table_busy(&t, 10));
+    table_update(&t, 20);
+    CHECK(!table_busy(&t, 20));
+    table_command(&t, "trick 1");
+    CHECK(table_busy(&t, 20));
+    table_update(&t, 30);  /* the reveal ends and the sweep begins */
+    CHECK(table_busy(&t, 30));
+    table_update(&t, 40);
+    CHECK(!table_busy(&t, 40));
+}
+
 int main(void)
 {
+    test_busy();
+    test_shadow();
     test_layout();
     test_names();
     test_projection();

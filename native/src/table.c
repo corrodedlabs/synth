@@ -517,6 +517,24 @@ void table_update(Table *t, double now)
             t->cards[i].state = CARD_NONE;
 }
 
+bool table_busy(const Table *t, double now)
+{
+    if (t->pending_winner >= 0)
+        return true;
+    for (int i = 0; i < TABLE_DECK; i++) {
+        const TableCard *c = &t->cards[i];
+        if (c->state == CARD_NONE)
+            continue;
+        if (c->state == CARD_DEALING || c->state == CARD_COLLECT)
+            return true;
+        const AnimTween *tweens[] = {&c->x, &c->y, &c->z, &c->rx, &c->rz, &c->scale, &c->glow};
+        for (size_t j = 0; j < sizeof tweens / sizeof *tweens; j++)
+            if (!anim_done(tweens[j], now))
+                return true;
+    }
+    return false;
+}
+
 bool table_pose(const Table *t, int card, TablePose *pose)
 {
     const TableCard *c = &t->cards[card];
@@ -550,6 +568,64 @@ mat4 table_card_matrix(const Table *t, const TablePose *pose, float width, float
     mat4 world;
     card_world(pose, width, height, world.m);
     return m4_mul(t->view_proj, world);
+}
+
+/* Lighting.ts's light sits at (0, 15, 2.5) and Table.ts's shadow plane at y = -0.4. */
+#define SHADOW_PLANE_Y -0.4f
+#define LIGHT_SLOPE (2.5f / 15.0f)
+
+static vec3 cast_point(vec3 p)
+{
+    return v3(p.x, SHADOW_PLANE_Y, p.z - (p.y - SHADOW_PLANE_Y) * LIGHT_SLOPE);
+}
+
+/* A direction has no height of its own to lose, only the slant the light gives it. */
+static vec3 cast_vector(vec3 v)
+{
+    return v3(v.x, 0, v.z - v.y * LIGHT_SLOPE);
+}
+
+/* A shadow's corner, measured where it shows: the part further up lies hidden under its card. */
+static vec3 shadow_corner(const TablePose *pose, vec3 *x, vec3 *y)
+{
+    float m[16];
+    card_world(pose, CARD_W, CARD_H, m);
+    *x = cast_vector(v3(m[0], m[1], m[2]));
+    *y = cast_vector(v3(m[4], m[5], m[6]));
+    return v3_sub(cast_point(pose->position), v3_add(v3_scale(*x, 0.5f), v3_scale(*y, 0.5f)));
+}
+
+TableShadow table_card_shadow(const Table *t, const TablePose *pose, const TablePose *covering, bool in_fan, float softness)
+{
+    vec3 x, y;
+    vec3 corner = shadow_corner(pose, &x, &y);
+    /* The cards of a fan turn apart, which would open a wedge between their shadows. Upright sides meet exactly. */
+    if (in_fan) {
+        float h = CARD_H * pose->scale;
+        y = cast_vector(v3(0, cosf(pose->rx) * h, sinf(pose->rx) * h));
+    }
+    float full_w = v3_len(x), height = v3_len(y), width = full_w;
+    vec3 across = v3_scale(x, 1 / full_w), along = v3_scale(y, 1 / height);
+
+    if (covering) {
+        vec3 nx, ny;
+        vec3 gap = v3_sub(shadow_corner(covering, &nx, &ny), corner);
+        /* How far along the bottom edge the next card's upright side comes. */
+        float reach = (gap.x * along.z - gap.z * along.x) / (across.x * along.z - across.z * along.x);
+        /* A card flying in can be anywhere, and then it isn't covering this one. The little extra closes the
+         * seam: two soft edges overlapped by this much add up to about one solid shadow. */
+        if (reach > 0 && reach < full_w) {
+            width = reach + softness * 0.56f;
+            if (width > full_w)
+                width = full_w;
+        }
+    }
+
+    vec3 centre = v3_add(corner, v3_add(v3_scale(across, width * 0.5f), v3_scale(along, height * 0.5f)));
+    float w = width + softness * 2, h = height + softness * 2;
+    mat4 world = {{across.x * w, 0, across.z * w, 0, along.x * h, 0, along.z * h, 0, 0, 1, 0, 0,
+                   centre.x, centre.y, centre.z, 1}};
+    return (TableShadow){m4_mul(t->view_proj, world), width * 0.5f, height * 0.5f};
 }
 
 TablePoint table_project(const Table *t, vec3 p)

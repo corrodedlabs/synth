@@ -124,7 +124,6 @@ class GameController(context: Context) : SessionCallbacks {
         command("mute ${if (muted) 1 else 0}")
         sendPacing()
         command("reset")
-        current.seatNames?.let { command("seats " + seatLine(it)) }
         if (current.hand.isNotEmpty()) command("hand " + current.hand.joinToString(" ", transform = ::token))
         current.playedCards.forEach { command("place ${it.playerIndex} ${token(it.card)}") }
         current.activePlayer?.let { command("active $it") }
@@ -226,12 +225,10 @@ class GameController(context: Context) : SessionCallbacks {
                 matchHands = null
             }
             is GameAction.RoomEntered -> showingRooms = false
-            is GameAction.SeatNamesSet -> command("seats " + seatLine(action.names))
             is GameAction.HandDealt -> {
                 val first = current.hand.size == action.cards.size
                 if (first) {
                     command("reset")
-                    current.seatNames?.let { command("seats " + seatLine(it)) }
                     bidNotes.clear()
                     arrangement = null
                 }
@@ -261,7 +258,7 @@ class GameController(context: Context) : SessionCallbacks {
             is GameAction.RequestReceived -> {
                 command("sound turn")
                 statusText = when (action.request) {
-                    is PendingRequest.Trump -> "You won the bid: choose trump"
+                    is PendingRequest.Trump -> ""
                     is PendingRequest.Play -> "Your turn"
                     else -> statusText
                 }
@@ -289,7 +286,6 @@ class GameController(context: Context) : SessionCallbacks {
             is GameAction.HandReset -> {
                 handResult = null
                 command("reset")
-                current.seatNames?.let { command("seats " + seatLine(it)) }
                 bidNotes.clear()
                 arrangement = null
             }
@@ -321,7 +317,6 @@ class GameController(context: Context) : SessionCallbacks {
     }
 
     private fun seatName(seat: Int): String = current.seatNames?.getOrNull(seat) ?: "Seat $seat"
-    private fun seatLine(names: List<String>): String = names.joinToString("|") { it.replace('|', ' ').take(24) }
     private fun token(card: CardModel): String = "${card.suit.id}-${card.rank.id}"
     private fun command(line: String) = TableBridge.command(line)
 

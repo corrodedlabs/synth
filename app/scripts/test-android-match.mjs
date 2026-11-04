@@ -15,7 +15,18 @@ const SHOTS = "/tmp/game-shots-android";
 mkdirSync(SHOTS, { recursive: true });
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const adb = (...args) => execFileSync("adb", ["-s", SERIAL, ...args], { encoding: "utf8", maxBuffer: 1 << 26 });
+const run = (...args) => execFileSync("adb", ["-s", SERIAL, ...args], { encoding: "utf8", maxBuffer: 1 << 26 });
+// Real input goes to whatever is on screen, so it stops the test rather than touch another app.
+const adb = (...args) => {
+  if (args[0] === "shell" && args[1] === "input") {
+    const top = run("shell", "dumpsys activity activities | grep topResumedActivity");
+    if (!top.includes("dev.synth.app")) {
+      console.error("FAIL: another app is on screen, so the test stopped");
+      process.exit(3);
+    }
+  }
+  return run(...args);
+};
 const shot = (name) => {
   const png = spawnSync("adb", ["-s", SERIAL, "exec-out", "screencap", "-p"], { maxBuffer: 1 << 27 });
   writeFileSync(`${SHOTS}/${name}.png`, png.stdout);
@@ -65,7 +76,9 @@ const tapTag = async (tag, timeout = 20000) => {
   const end = Date.now() + timeout;
   while (Date.now() < end) {
     const nodes = uiNodes();
-    const notice = nodes.find((n) => n.text === "Got it");
+    // Android 16 shows a system compatibility dialog over debuggable apps that carry a 4 KB library.
+    const notice = nodes.find((n) => n.text === "Got it") ??
+      (nodes.some((n) => n.text === "Don't show again") ? nodes.find((n) => n.text === "OK") : undefined);
     if (notice) {
       adb("shell", "input", "tap", `${notice.x}`, `${notice.y}`);
       await sleep(500);

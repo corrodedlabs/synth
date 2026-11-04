@@ -502,7 +502,7 @@ private fun BotTag(accent: Color) {
 }
 
 /** PlayerProfile's accents are CSS colours: `#rrggbb` for bots, `hsl(h s% l%)` for people. */
-private fun accentColor(css: String): Color {
+internal fun accentColor(css: String): Color {
     if (css.startsWith("#")) return Color(android.graphics.Color.parseColor(css))
     val parts = css.removePrefix("hsl(").removeSuffix(")").split(' ').map { it.removeSuffix("%").toFloatOrNull() }
     val hue = parts.getOrNull(0) ?: return Ink

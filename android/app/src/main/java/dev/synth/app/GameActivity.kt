@@ -1,6 +1,7 @@
 package dev.synth.app
 
 import android.content.Intent
+import android.view.KeyEvent
 import android.os.Bundle
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -93,10 +94,14 @@ class GameActivity : SDLActivity(), LifecycleOwner, SavedStateRegistryOwner {
         savedState.performSave(outState)
     }
 
-    /** Back leaves the app running, like Home: closing the activity would tear down the table. */
-    @Deprecated("SDLActivity still uses it")
-    override fun onBackPressed() {
-        moveTaskToBack(true)
+    /**
+     * Back leaves the app running, like Home: closing the activity would tear down the table. It's caught here
+     * because SDL's key handling otherwise takes it as a game key, and it never reaches onBackPressed.
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.keyCode != KeyEvent.KEYCODE_BACK) return super.dispatchKeyEvent(event)
+        if (event.action == KeyEvent.ACTION_UP && !event.isCanceled) moveTaskToBack(true)
+        return true
     }
 
     private fun handleJoin(intent: Intent?) {

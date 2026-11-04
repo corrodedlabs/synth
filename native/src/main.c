@@ -1,5 +1,6 @@
 /* The native half of the Android app, and a desktop runner for the same table. On desktop, --demo plays a
  * scripted hand so the table can be seen and tested without a server. */
+#include <SDL3/SDL_events.h>
 #include <SDL3/SDL_main.h>
 #include <SDL3/SDL_timer.h>
 #include <stb_image.h>
@@ -22,6 +23,8 @@ void bridge_card_played(const char *card);  /* jni.c */
 
 #define CARD_W 0.6f
 #define CARD_H 0.9f
+#define IDLE_NAP_MS 8        /* about one frame, so a touch on a still table feels no later */
+#define IDLE_REDRAW_MS 1000
 
 typedef struct {
     Table table;
@@ -81,24 +84,14 @@ static void run_command(App *app, const char *line)
     }
 }
 
-/* Each card's shadow lies flat on the table below it, as the directional light from above would cast it,
- * and spreads as the card rises. */
-static void draw_shadow(App *app, const TablePose *pose)
+/* A pale, nearly sharp band, as the web's shadow material gives. The tint is linear: the swapchain is sRGB. */
+#define SHADOW_SOFTNESS 0.012f
+
+static void draw_shadow(App *app, const TablePose *pose, const TablePose *covering, bool in_fan)
 {
-    Table *t = &app->table;
-    const float plane = -0.4f;
-    float width = CARD_W * pose->scale, depth = CARD_H * pose->scale * fabsf(sinf(pose->rx));
-    if (depth < 0.1f)
-        depth = 0.1f;
-    float soft = 0.1f + 0.08f * (pose->position.y - plane);
-    float w = width + soft * 2, d = depth + soft * 2;
-    float cz = cosf(pose->rz), sz = sinf(pose->rz);
-    /* A flat quad on the plane: x across, y along the table towards the far side. */
-    mat4 world = {{w * cz, 0, -w * sz, 0, -d * sz, 0, -d * cz, 0, 0, 1, 0, 0,
-                   pose->position.x, plane, pose->position.z + 0.08f, 1}};
-    mat4 clip = m4_mul(t->view_proj, world);
-    simple_shadow(&app->simple, &clip, width * 0.5f, depth * 0.5f, 0.03f, soft,
-                  (SimpleColour){0.545f * 0.25f, 0.451f * 0.25f, 0.333f * 0.25f, 0.2f});
+    TableShadow shadow = table_card_shadow(&app->table, pose, covering, in_fan, SHADOW_SOFTNESS);
+    simple_shadow(&app->simple, &shadow.clip, shadow.half_w, shadow.half_h, 0.012f, SHADOW_SOFTNESS,
+                  (SimpleColour){0.26f, 0.15f, 0.03f, 0.2f});
 }
 
 static void draw_card(App *app, int card, const TablePose *pose, bool dimmed)
@@ -147,10 +140,15 @@ static void draw_table(App *app)
     for (int i = 0; i < t->hand_count; i++)
         order[n++] = t->hand[i];
 
+    /* A fan's shadows are trimmed where the next card covers them, so they lay down one even band. */
+    int fan_start = n - t->hand_count;
     for (int i = 0; i < n; i++) {
-        TablePose pose;
-        if (table_pose(t, order[i], &pose))
-            draw_shadow(app, &pose);
+        TablePose pose, next;
+        if (!table_pose(t, order[i], &pose))
+            continue;
+        bool in_fan = i >= fan_start;
+        bool covered = in_fan && i + 1 < n && table_pose(t, order[i + 1], &next);
+        draw_shadow(app, &pose, covered ? &next : NULL, in_fan);
     }
     draw_names(app);
     bool any_legal = false;
@@ -259,6 +257,10 @@ int main(int argc, char **argv)
     Uint64 report_start = start;
     int report_frames = 0;
     double report_gpu = 0;
+    /* A still table draws nothing. Scripted and headless runs step by frames, so they always draw. */
+    bool always_draw = demo || headless || max_frames;
+    bool dirty = true, was_busy = false;
+    int idle_ms = 0;
     while (platform_poll(&platform)) {
         double now = (SDL_GetTicksNS() - start) / 1e9;
         if (demo) {
@@ -268,9 +270,21 @@ int main(int argc, char **argv)
                 run_command(&app, DEMO[demo_step++].command);
             now = t;
         }
-        for (char *line; (line = commands_pop()); SDL_free(line))
+        for (char *line; (line = commands_pop()); SDL_free(line)) {
             run_command(&app, line);
+            dirty = true;
+        }
         table_update(&app.table, now);
+        bool busy = table_busy(&app.table, now);
+        if (!always_draw && !dirty && !busy && !was_busy) {
+            /* Nap until a touch, a command or a window change. SDL_WaitEventTimeout would spin a whole
+             * core on Android. The slow redraw repairs anything that changed the surface unannounced. */
+            SDL_Delay(IDLE_NAP_MS);
+            idle_ms += IDLE_NAP_MS;
+            SDL_PumpEvents();
+            dirty = SDL_HasEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST) || idle_ms >= IDLE_REDRAW_MS;
+            continue;
+        }
 
         if (screenshot && frames == max_frames - 1) {
             gpu.capture_path = screenshot;
@@ -284,6 +298,9 @@ int main(int argc, char **argv)
             report_gpu = 0;
             continue;
         }
+        dirty = false;
+        was_busy = busy;
+        idle_ms = 0;
         uint32_t view_w, view_h;
         gpu_view_size(&gpu, &view_w, &view_h);
         if (view_w != last_w || view_h != last_h) {

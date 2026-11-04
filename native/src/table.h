@@ -93,6 +93,8 @@ TableLayout table_layout(float width, float height);
 void table_resize(Table *t, float view_w, float view_h, float density);
 void table_command(Table *t, const char *line);
 void table_update(Table *t, double now);
+/* Something on the table is still moving, so the next frame would differ from the last. */
+bool table_busy(const Table *t, double now);
 /* touch: a finger asks for two steps, raising the card first, so a stray tap can't play it. */
 void table_tap(Table *t, float x, float y, bool touch);
 
@@ -107,6 +109,17 @@ typedef struct {
 } TablePose;
 bool table_pose(const Table *t, int card, TablePose *pose);
 mat4 table_card_matrix(const Table *t, const TablePose *pose, float width, float height);
+
+/* A card's shadow on the table, for simple_shadow. */
+typedef struct {
+    mat4 clip;
+    float half_w, half_h;
+} TableShadow;
+
+/* Cast along the web's directional light. `covering` is the card lying over this one's right side, or NULL;
+ * the shadow stops where that card's begins. A card `in_fan` keeps upright sides so its neighbours' shadows
+ * meet. `softness` is the blur simple_shadow will be given. */
+TableShadow table_card_shadow(const Table *t, const TablePose *pose, const TablePose *covering, bool in_fan, float softness);
 /* Where a card's corners are on screen, in view pixels, in order around it. */
 void table_card_corners(const Table *t, const TablePose *pose, TablePoint out[4]);
 TablePoint table_project(const Table *t, vec3 world);
