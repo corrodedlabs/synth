@@ -166,6 +166,12 @@ export class GameSession {
     this.socket = null;
   }
 
+  // The name this session plays under is fixed when it connects. Sitting down
+  // under a new one takes a new connection, which is only safe away from a table.
+  canRename(): boolean {
+    return !this.inRoom;
+  }
+
   // --- lobby input (called from the UI) ---
 
   createRoom() {
@@ -208,10 +214,10 @@ export class GameSession {
     });
   }
 
-  addBot() {
+  addBot(seat?: number) {
     const model = this.callbacks.getModel();
     if (!this.socket || !model.isHost || model.members.length >= MAX_PLAYERS) return;
-    this.socket.send({ _tag: "AddBot", roomName: this.roomName });
+    this.socket.send({ _tag: "AddBot", roomName: this.roomName, seat });
   }
 
   startGame() {
@@ -445,7 +451,7 @@ export class GameSession {
             isHost: true,
             target: this.tableTarget,
           });
-          this.callbacks.status("Your table is ready — fill the seats, then start.");
+          this.callbacks.status(""); // the lobby's own hint says what to do next
           return false;
 
         case "ActiveRooms":
@@ -455,7 +461,7 @@ export class GameSession {
         case "RoomMembers": {
           this.myServerIndex = event.members.indexOf(this.email);
           if (this.inRoom) {
-            dispatch({ _tag: "MembersChanged", members: event.members, target: event.target });
+            dispatch({ _tag: "MembersChanged", members: event.members, target: event.target, seats: event.seats });
           } else if (this.myServerIndex >= 0) {
             // our join went through — this broadcast is our welcome
             this.inRoom = true;
@@ -466,6 +472,7 @@ export class GameSession {
               isHost: false,
               target: event.target,
             });
+            if (event.seats) dispatch({ _tag: "MembersChanged", members: event.members, seats: event.seats });
           }
           return false;
         }
@@ -618,6 +625,7 @@ export class GameSession {
             us: usEvens ? event.evens : event.odds,
             them: usEvens ? event.odds : event.evens,
             target: event.target,
+            delta: event.delta,
           });
           return false;
         }

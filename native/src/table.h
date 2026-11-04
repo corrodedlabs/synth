@@ -41,6 +41,7 @@ typedef struct {
     AnimTween x, y, z, rx, rz, scale, glow;
     double show_at;        /* a dealt card appears then */
     double gone_at;        /* a collected card disappears then */
+    double flight_start, flight_end;  /* a played card's arc, and its small bounce after flight_end */
 } TableCard;
 
 typedef struct {

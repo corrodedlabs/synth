@@ -226,6 +226,58 @@ static void test_order_and_snapshot(void)
     CHECK(t.trick_count == 0);
 }
 
+/* A played card arcs and bounces, and busy lasts until it has settled. */
+static void test_flight(void)
+{
+    static Table t;
+    table_init(&t);
+    table_resize(&t, 1080, 2340, 2.81f);
+    table_command(&t, "pacing 400 700 600 100");
+    table_command(&t, "play 1 hearts-J");
+    table_update(&t, 10);
+    table_command(&t, "play 2 hearts-9");
+    int card = t.trick[1];
+    double start = t.cards[card].flight_start, end = t.cards[card].flight_end;
+    CHECK(end > start);
+    float settled_y = t.cards[card].y.to, settled_scale = t.cards[card].scale.to;
+
+    TablePose mid;
+    table_update(&t, start + (end - start) * 0.5);
+    CHECK(table_pose(&t, card, &mid));
+    /* Halfway it's higher than a straight line could put it, with the tween still short of its target. */
+    CHECK(mid.position.y > anim_value(&t.cards[card].y, t.now) + 0.2f);
+
+    TablePose landing;
+    table_update(&t, end + 0.08);
+    CHECK(table_pose(&t, card, &landing));
+    CHECK(landing.scale < settled_scale);
+    CHECK(fabsf(landing.position.y - settled_y) < 0.001f);
+    CHECK(table_busy(&t, t.now));
+
+    TablePose rest;
+    table_update(&t, end + 1);
+    CHECK(table_pose(&t, card, &rest));
+    CHECK(fabsf(rest.scale - settled_scale) < 0.001f);
+    CHECK(!table_busy(&t, t.now));
+}
+
+/* Only the cards you can play stand proud of the fan. */
+static void test_legal_lift(void)
+{
+    static Table t;
+    table_init(&t);
+    table_resize(&t, 1080, 2340, 2.81f);
+    table_command(&t, "deal hearts-J spades-9");
+    table_update(&t, 10);
+    int legal = t.hand[0], other = t.hand[1];
+    float before = t.cards[legal].y.to, other_before = t.cards[other].y.to;
+    table_command(&t, "legal hearts-J");
+    CHECK(t.cards[legal].y.to > before + 0.05f);
+    CHECK(fabsf(t.cards[other].y.to - other_before) < 0.001f);
+    table_command(&t, "legal");
+    CHECK(fabsf(t.cards[legal].y.to - before) < 0.001f);
+}
+
 /* The clip matrix of a shadow, back to where its centre lands on screen. */
 static TablePoint shadow_centre(const Table *t, const TableShadow *shadow)
 {
@@ -299,6 +351,8 @@ int main(void)
 {
     test_busy();
     test_shadow();
+    test_flight();
+    test_legal_lift();
     test_layout();
     test_names();
     test_projection();

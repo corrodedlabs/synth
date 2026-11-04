@@ -72,8 +72,8 @@ await page.waitForSelector("#create-button", { state: "visible", timeout: 15000 
 
 // --- lobby: solo human + three bots ---
 await page.fill("#player-name", "Returner");
+await page.click('.mode-card[data-target="6"]');
 await page.click("#create-button");
-await page.click('#create-panel .table-choice[data-target="6"]');
 await page.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });
 for (let bots = 1; bots <= 3; bots++) {
   await page.click("#add-bot");

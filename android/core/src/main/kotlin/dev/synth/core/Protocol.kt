@@ -136,6 +136,8 @@ sealed interface ServerEvent {
     data class RoomMembers(
         val members: List<String>,
         val target: Int? = null, // what the table plays to, when broadcast
+        // who sits where, in the seat order the match will use: null is an empty seat
+        val seats: List<String?>? = null,
     ) : ServerEvent
     data object GameStarted : ServerEvent
     data object GameAborted : ServerEvent
@@ -239,7 +241,8 @@ fun decodeServerExpr(expr: SExpr, trimmed: String = writeSExpr(expr)): ServerEve
     when (head.name) {
         "room-members" -> {
             val members = rest.getOrNull(1) as? SList ?: return ignored
-            return ServerEvent.RoomMembers(members.items.map(::memberName), asInt(rest.getOrNull(2)))
+            val seats = (rest.getOrNull(3) as? SList)?.items?.map { seat -> if ((seat as? SStr)?.value == "") null else memberName(seat) }
+            return ServerEvent.RoomMembers(members.items.map(::memberName), asInt(rest.getOrNull(2)), seats)
         }
 
         "game-started" -> return ServerEvent.GameStarted
@@ -508,7 +511,7 @@ sealed interface ClientCommand {
     data class KickFromRoom(val roomName: String, val hostEmail: String, val targetEmail: String) : ClientCommand
     data object GetActiveRooms : ClientCommand
     data object Ping : ClientCommand
-    data class AddBot(val roomName: String) : ClientCommand
+    data class AddBot(val roomName: String, val seat: Int? = null) : ClientCommand
     data class StartGame(val roomName: String) : ClientCommand
     data class PutBid(val email: String, val bid: BidValue) : ClientCommand
     data class SelectTrump(val email: String, val suit: Suit) : ClientCommand
@@ -537,7 +540,11 @@ fun encodeCommand(command: ClientCommand): String = when (command) {
         message("kick-from-room", SStr(command.roomName), SStr(command.hostEmail), SStr(command.targetEmail))
     ClientCommand.GetActiveRooms -> message("get-active-rooms")
     ClientCommand.Ping -> message("ping")
-    is ClientCommand.AddBot -> message("add-bot-to-room", SStr(command.roomName))
+    is ClientCommand.AddBot -> if (command.seat == null) {
+        message("add-bot-to-room", SStr(command.roomName))
+    } else {
+        message("add-bot-to-room", SStr(command.roomName), SNum(command.seat.toDouble()))
+    }
     is ClientCommand.StartGame -> message("start-game", SStr(command.roomName))
     is ClientCommand.PutBid -> message(
         "put-bid",

@@ -3,6 +3,9 @@ import { Card } from './Card';
 import { objectScreenBounds, screenPointOnPlane } from './TableLayout';
 import type { ScreenPoint } from './TableLayout';
 
+// World units a playable card rises by, at card scale 1 (a card is 0.9 tall).
+const LIFT = 0.12;
+
 export class Hand {
   private cards: Card[] = [];
   private scene: THREE.Scene;
@@ -13,6 +16,8 @@ export class Hand {
   // Phones blow the cards up a little so ranks stay thumb-readable.
   private cardScale = 1;
   private dealTimers = new Set<number>();
+  // Cards standing proud of the fan: the ones that can be played right now.
+  private liftedIds: ReadonlySet<string> = new Set();
 
   public setWidthScale(scale: number) {
     if (scale === this.widthScale) return;
@@ -105,6 +110,15 @@ export class Hand {
     this.dealTimers.clear();
   }
 
+  // Lift is part of a card's fan slot, so hovering, arming and dropping a card
+  // all come back to the same place. Purely visual: the rules live elsewhere.
+  public setLifted(ids: readonly string[], immediate = false) {
+    const next = new Set(ids);
+    if (next.size === this.liftedIds.size && ids.every((id) => this.liftedIds.has(id))) return;
+    this.liftedIds = next;
+    this.arrangeCards(null, immediate, 220);
+  }
+
   public removeCard(card: Card) {
     const index = this.cards.indexOf(card);
     if (index > -1) {
@@ -173,6 +187,20 @@ export class Hand {
   // Fan with near-full card visibility: spacing adapts to hand size so
   // every rank stays readable (cards are 0.6 wide; leave ~0.07 overlap).
   private computeLayout(index: number, count: number): { position: THREE.Vector3; rotation: THREE.Euler } {
+    const layout = this.fanSlot(index, count);
+    const id = this.cards[index]?.mesh.userData.modelId as string | undefined;
+    if (id !== undefined && this.liftedIds.has(id)) {
+      // Straight up the screen: a tilted card rising along its own axis would
+      // slide under its neighbour, right where the player is about to tap it.
+      layout.position.addScaledVector(
+        new THREE.Vector3(0, 1, 0).applyEuler(new THREE.Euler(layout.rotation.x, 0, 0)),
+        LIFT * this.cardScale
+      );
+    }
+    return layout;
+  }
+
+  private fanSlot(index: number, count: number): { position: THREE.Vector3; rotation: THREE.Euler } {
     const step = 0.53 * this.widthScale;
     const spreadX = Math.min((step * (count - 1)) / 2, 2.4 * this.widthScale);
     const curveHeight = 0.4; // gentle arc

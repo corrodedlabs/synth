@@ -16,6 +16,11 @@ export interface GamePacingProfile {
   readonly winnerRevealMs: number;
   readonly cardCollectMs: number;
   readonly scoreLandingMs: number;
+  // How long the landing bounce runs, once a card has arrived.
+  readonly cardLandMs: number;
+  // Multiplies the game-feel effects, so they follow the speed setting. Zero
+  // means effects are off: show the outcome and skip the movement.
+  readonly effectScale: number;
 }
 
 const multipliers: Record<GameSpeed, number> = {
@@ -25,6 +30,7 @@ const multipliers: Record<GameSpeed, number> = {
 };
 
 const SPEED_KEY = "game28-animation-speed";
+const REDUCE_MOTION_KEY = "game28-reduce-motion";
 const speeds: readonly GameSpeed[] = ["relaxed", "standard", "quick"];
 
 const round = (value: number) => Math.round(value);
@@ -48,6 +54,8 @@ export function gamePacing(speed: GameSpeed = "standard", reducedMotion = false)
       winnerRevealMs: 900,
       cardCollectMs: 0,
       scoreLandingMs: 0,
+      cardLandMs: 0,
+      effectScale: 0,
     };
   }
 
@@ -76,6 +84,8 @@ export function gamePacing(speed: GameSpeed = "standard", reducedMotion = false)
     winnerRevealMs,
     cardCollectMs,
     scoreLandingMs,
+    cardLandMs: round(170 * scale),
+    effectScale: scale,
   };
 }
 
@@ -91,13 +101,42 @@ const storedSpeed = (): GameSpeed => {
   }
 };
 
+const storedReduceMotion = (): boolean => {
+  try {
+    return localStorage.getItem(REDUCE_MOTION_KEY) === "1";
+  } catch {
+    return false;
+  }
+};
+
 // This controller is presentation-only: changing speed cannot alter an
 // authoritative card, score, or server turn.
 export class GamePacing {
   private speed: GameSpeed = storedSpeed();
+  private reduceMotionChosen = storedReduceMotion();
 
   profile(): GamePacingProfile {
-    return gamePacing(this.speed, prefersReducedMotion());
+    return gamePacing(this.speed, this.reducedMotion());
+  }
+
+  // Either the player's own choice or the device's setting turns motion down.
+  reducedMotion(): boolean {
+    return this.reduceMotionChosen || prefersReducedMotion();
+  }
+
+  // The device's setting can't be overruled from here, only added to.
+  motionForcedByDevice(): boolean {
+    return prefersReducedMotion();
+  }
+
+  toggleReduceMotion(): GamePacingProfile {
+    this.reduceMotionChosen = !this.reduceMotionChosen;
+    try {
+      localStorage.setItem(REDUCE_MOTION_KEY, this.reduceMotionChosen ? "1" : "0");
+    } catch {
+      // Private browsing can still use the setting until the page closes.
+    }
+    return this.profile();
   }
 
   setSpeed(speed: GameSpeed) {

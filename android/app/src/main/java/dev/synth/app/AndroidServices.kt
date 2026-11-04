@@ -32,6 +32,10 @@ class PrefsStore(context: Context) : SessionStore {
         get() = prefs.getString("active-match", null)
         set(value) = prefs.edit().putString("active-match", value).apply()
 
+    var reduceMotion: Boolean
+        get() = prefs.getBoolean("reduce_motion", false)
+        set(value) = prefs.edit().putBoolean("reduce_motion", value).apply()
+
     var muted: Boolean
         get() = prefs.getBoolean("muted", false)
         set(value) = prefs.edit().putBoolean("muted", value).apply()

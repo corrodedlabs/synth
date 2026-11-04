@@ -36,9 +36,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 
 /** A short table message, such as "You take 4". */
+const val TRUMP_REVEAL_MS = 2_300L
+
 data class TableMoment(val title: String, val detail: String = "")
 data class BidNote(val seat: Int, val text: String)
 data class EmoteNote(val seat: Int, val glyph: String, val key: Long)
+data class TrumpReveal(val suit: Suit, val shownBy: String)
+data class TrickWin(val seat: Int, val key: Long)
 
 /**
  * Owns the session and the model, as GameState.ts does on the web: every action updates the model, then
@@ -89,7 +93,20 @@ class GameController(context: Context) : SessionCallbacks {
     // How many hands the finished match took, as the server counted them.
     var matchHands by mutableStateOf<Int?>(null)
         private set
+    var reduceMotion by mutableStateOf(store.reduceMotion)
+        private set
+    // A short vibration each time this ticks.
+    var thumps by mutableStateOf(0)
+        private set
+    var trumpReveal by mutableStateOf<TrumpReveal?>(null)
+        private set
+    var trickWin by mutableStateOf<TrickWin?>(null)
+        private set
     private var dealOrder: List<String> = emptyList()
+    private var trickKey = 0L
+    // Play with bots: seats the bots and starts by itself once the table exists.
+    private var quickStart = false
+    private var botsAskedAt = -1
     private var emoteKey = 0L
 
     val playerName: String get() = store.playerName ?: ""
@@ -133,7 +150,13 @@ class GameController(context: Context) : SessionCallbacks {
     fun foreground() = session.nudge()
 
     // What the screens can ask for.
-    fun createTable(name: String, target: Int) { click(); session.createTable(name, target) }
+    fun createTable(name: String, target: Int) { click(); quickStart = false; session.createTable(name, target) }
+    fun playWithBots(name: String, target: Int) {
+        click()
+        session.createTable(name, target)
+        quickStart = true
+        botsAskedAt = -1
+    }
     fun browse(name: String) { click(); showingRooms = true; session.browseTables(name) }
     fun closeRooms() { click(); showingRooms = false; session.goHome() }
     fun refreshRooms() = session.refreshRooms()
@@ -141,7 +164,7 @@ class GameController(context: Context) : SessionCallbacks {
     fun joinByLink(name: String, room: String) { click(); joinTarget = null; session.joinByLink(name, room) }
     fun showStandings(name: String) { click(); session.showStandings(name) }
     fun closeStandings() { click(); standings = null; session.goHome() }
-    fun addBot() { click(); session.addBot() }
+    fun addBot(seat: Int? = null) { click(); session.addBot(seat) }
     fun startGame() { click(); session.startGame() }
     fun leaveTable() { click(); session.leaveRoom() }
     fun leaveMatch() { click(); session.leaveMatch() }
@@ -156,6 +179,13 @@ class GameController(context: Context) : SessionCallbacks {
     fun sendEmote(id: String) { session.sendEmote(id) }
     fun goHome() { click(); statusText = ""; session.goHome() }
     fun displayName(member: String): String = memberDisplayName(member)
+
+    fun thump() { thumps++ }
+
+    fun toggleReduceMotion() {
+        reduceMotion = !reduceMotion
+        store.reduceMotion = reduceMotion
+    }
 
     fun toggleMute() {
         muted = !muted
@@ -201,6 +231,25 @@ class GameController(context: Context) : SessionCallbacks {
         current = gameReducer(current, action)
         uiModel = current
         present(action, before)
+        continueQuickStart()
+    }
+
+    private fun continueQuickStart() {
+        if (!quickStart || current.phase != GamePhase.LOBBY || !current.isHost) return
+        val seated = current.members.size
+        if (seated >= 4) {
+            quickStart = false
+            session.startGame()
+        } else if (seated != botsAskedAt) {
+            botsAskedAt = seated
+            session.addBot()
+        }
+    }
+
+    private fun clearMoments() {
+        moment = null
+        trumpReveal = null
+        trickWin = null
     }
 
     private fun present(action: GameAction, before: GameModel) {
@@ -211,9 +260,10 @@ class GameController(context: Context) : SessionCallbacks {
                     abandonedName = null
                     bidNotes.clear()
                     arrangement = null
-                    moment = null
+                    clearMoments()
                     handResult = null
                     matchHands = null
+                    quickStart = false
                 }
             }
             is GameAction.RoomLeft -> {
@@ -221,8 +271,10 @@ class GameController(context: Context) : SessionCallbacks {
                 abandonedName = null
                 bidNotes.clear()
                 arrangement = null
+                clearMoments()
                 handResult = null
                 matchHands = null
+                quickStart = false
             }
             is GameAction.RoomEntered -> showingRooms = false
             is GameAction.HandDealt -> {
@@ -238,10 +290,20 @@ class GameController(context: Context) : SessionCallbacks {
                 if (current.hand.size == 8) dealOrder = current.hand.map { it.id }
             }
             is GameAction.CardPlayed -> {
-                command("sound card")
+                // The auction is over once cards are down, and its seals would lie on top of them.
+                bidNotes.clear()
                 command("play ${action.playerIndex} ${token(action.card)}")
+                // The sound and the vibration belong to the landing.
+                handler.postDelayed({
+                    command("sound card")
+                    if (action.playerIndex == 0) thump()
+                }, getPacing().cardTravelMs.toLong())
             }
-            is GameAction.ActivePlayerChanged -> command("active ${action.playerIndex ?: -1}")
+            is GameAction.ActivePlayerChanged -> {
+                command("active ${action.playerIndex ?: -1}")
+                // Their last call is stale now, and that place shows that it's their turn.
+                bidNotes.removeAll { it.seat == action.playerIndex && it.seat != 0 }
+            }
             is GameAction.BidPlaced -> {
                 command("sound bid")
                 bidNotes.removeAll { it.seat == action.playerIndex }
@@ -253,7 +315,9 @@ class GameController(context: Context) : SessionCallbacks {
             )
             is GameAction.TrumpRevealed -> {
                 command("sound trump")
-                showMoment(TableMoment("Trump is ${action.suit.id}", if (action.playerIndex == 0) "Shown by you" else "Shown by ${seatName(action.playerIndex)}"), 2_500)
+                val reveal = TrumpReveal(action.suit, if (action.playerIndex == 0) "Shown by you" else "Shown by ${seatName(action.playerIndex)}")
+                trumpReveal = reveal
+                handler.postDelayed({ if (trumpReveal === reveal) trumpReveal = null }, TRUMP_REVEAL_MS)
             }
             is GameAction.RequestReceived -> {
                 command("sound turn")
@@ -275,6 +339,7 @@ class GameController(context: Context) : SessionCallbacks {
                 if (winner != null) {
                     val taker = if (winner == 0) "You take" else "${seatName(winner)} takes"
                     showMoment(TableMoment("$taker ${action.points}"), getPacing().trickResolveMs.toLong())
+                    trickWin = TrickWin(winner, trickKey++)
                     handler.postDelayed({ command("sound sweep") }, getPacing().winnerRevealMs.toLong())
                 }
                 command("trick ${winner ?: -1}")
@@ -285,6 +350,7 @@ class GameController(context: Context) : SessionCallbacks {
             }
             is GameAction.HandReset -> {
                 handResult = null
+                clearMoments()
                 command("reset")
                 bidNotes.clear()
                 arrangement = null
@@ -295,6 +361,7 @@ class GameController(context: Context) : SessionCallbacks {
             }
             is GameAction.SnapshotRestored -> {
                 handResult = null
+                clearMoments()
                 resync()
             }
             else -> Unit

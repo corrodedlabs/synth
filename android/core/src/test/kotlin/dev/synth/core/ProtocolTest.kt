@@ -320,4 +320,18 @@ class ProtocolTest {
             assertEquals(ServerEvent.Ignored(frame), decodeServerEvent(frame))
         }
     }
+
+    @Test
+    fun `a bot can be asked for by seat`() {
+        assertEquals("(add-bot-to-room \"r1\" 2)", encodeCommand(ClientCommand.AddBot("r1", 2)))
+        assertEquals("(add-bot-to-room \"r1\")", encodeCommand(ClientCommand.AddBot("r1")))
+    }
+
+    @Test
+    fun `room members carries the seats`() {
+        assertEquals(
+            ServerEvent.RoomMembers(listOf("a", "host"), 6, listOf("host", null, null, "a")),
+            decodeServerEvent("(room-members \"r1\" (\"a\" \"host\") 6 (\"host\" \"\" \"\" \"a\"))"),
+        )
+    }
 }

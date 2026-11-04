@@ -13,6 +13,10 @@ static const char *const RANKS[8] = {"J", "9", "A", "10", "K", "Q", "8", "7"};
 #define CARD_H 0.9f
 #define PLANE_Y 0.2f       /* the trick's height */
 #define HAND_Y 0.3f
+#define LEGAL_LIFT 0.07f   /* the cards you can play stand a little proud of the fan */
+#define FLIGHT_ARC 0.32f   /* how high a played card rises on its way to the table */
+#define LAND_SECONDS 0.16f
+#define LAND_SQUASH 0.05f
 
 static float clampf(float v, float lo, float hi)
 {
@@ -183,6 +187,8 @@ static void arrange_hand(Table *t, float seconds)
         TableCard *c = &t->cards[t->hand[i]];
         if (c->armed)
             p.y += 0.22f;
+        else if (t->legal[t->hand[i]])
+            p.y += LEGAL_LIFT;
         if (c->state == CARD_DEALING) {
             /* It holds below the fan until its moment, then slides in. */
             float delay = (float)(c->show_at - t->now);
@@ -200,7 +206,10 @@ static void place_trick_card(Table *t, int card, int stack, bool immediate)
     vec3 p = t->played[c->seat];
     float rx = face_camera_rx(t, p);
     p.y += (stack + 1) * 0.005f;
-    move_card(c, p, rx, tilts[c->seat], t->layout.table_card_scale, t->now, 0, immediate ? 0 : t->travel_ms / 1000.0f);
+    float seconds = immediate ? 0 : t->travel_ms / 1000.0f;
+    move_card(c, p, rx, tilts[c->seat], t->layout.table_card_scale, t->now, 0, seconds);
+    c->flight_start = t->now;
+    c->flight_end = t->now + seconds;
 }
 
 static void relayout(Table *t)
@@ -435,16 +444,13 @@ void table_command(Table *t, const char *text)
             if (card >= 0)
                 t->legal[card] = true;
         }
-        bool moved = false;
         for (int i = 0; i < t->hand_count; i++) {
             TableCard *c = &t->cards[t->hand[i]];
-            if (c->armed && !t->legal[t->hand[i]]) {
+            if (c->armed && !t->legal[t->hand[i]])
                 c->armed = false;
-                moved = true;
-            }
         }
-        if (moved)
-            arrange_hand(t, 0.15f);
+        /* Always: the lift follows what's legal. */
+        arrange_hand(t, 0.18f);
     } else if (!strcmp(word, "play") || !strcmp(word, "place")) {
         bool immediate = word[1] == 'l' && word[2] == 'a' && word[3] == 'c';
         char *seat_word = strtok_r(NULL, " ", &save);
@@ -527,6 +533,8 @@ bool table_busy(const Table *t, double now)
             continue;
         if (c->state == CARD_DEALING || c->state == CARD_COLLECT)
             return true;
+        if (c->state == CARD_TRICK && c->flight_end > c->flight_start && now < c->flight_end + LAND_SECONDS)
+            return true;
         const AnimTween *tweens[] = {&c->x, &c->y, &c->z, &c->rx, &c->rz, &c->scale, &c->glow};
         for (size_t j = 0; j < sizeof tweens / sizeof *tweens; j++)
             if (!anim_done(tweens[j], now))
@@ -545,6 +553,16 @@ bool table_pose(const Table *t, int card, TablePose *pose)
     pose->rz = anim_value(&c->rz, t->now);
     pose->scale = anim_value(&c->scale, t->now);
     pose->glow = anim_value(&c->glow, t->now);
+    /* A played card arcs up over the table and gives a little as it lands. */
+    if (c->state == CARD_TRICK && c->flight_end > c->flight_start) {
+        if (t->now < c->flight_end) {
+            float along = (float)((t->now - c->flight_start) / (c->flight_end - c->flight_start));
+            pose->position.y += sinf(along * NM_PI) * FLIGHT_ARC;
+        } else if (t->now < c->flight_end + LAND_SECONDS) {
+            float landed = (float)((t->now - c->flight_end) / LAND_SECONDS);
+            pose->scale *= 1 - LAND_SQUASH * sinf(landed * NM_PI);
+        }
+    }
     return true;
 }
 

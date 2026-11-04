@@ -50,6 +50,8 @@ data class GameModel(
     // Lobby state. Members are in *server* order (newest joiner first, host last).
     val roomName: String? = null,
     val members: List<String> = emptyList(),
+    // Lobby seats in the match's seat order, null for an empty one. Null until the server says.
+    val lobbySeats: List<String?>? = null,
     val isHost: Boolean = false,
     // Public identities by view index (0 = us), fixed once the hand is dealt.
     // The raw member ids stay available so the renderer can resolve avatars
@@ -91,7 +93,7 @@ sealed interface GameAction {
         val isHost: Boolean,
         val target: Int? = null, // what this table plays to, when known
     ) : GameAction
-    data class MembersChanged(val members: List<String>, val target: Int? = null) : GameAction
+    data class MembersChanged(val members: List<String>, val target: Int? = null, val seats: List<String?>? = null) : GameAction
     data object RoomLeft : GameAction
     data class SeatNamesSet(val members: List<String>, val names: List<String>) : GameAction
     data class HandDealt(val cards: List<CardModel>) : GameAction
@@ -150,6 +152,7 @@ fun gameReducer(state: GameModel, action: GameAction): GameModel = when (action)
     is GameAction.MembersChanged -> state.copy(
         members = action.members,
         matchTarget = action.target ?: state.matchTarget,
+        lobbySeats = action.seats ?: state.lobbySeats,
     )
 
     // back to the start screen — also wipes any in-progress game state

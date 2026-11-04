@@ -295,10 +295,10 @@ class GameSession(
         send(ClientCommand.KickFromRoom(room, email, targetEmail))
     }
 
-    fun addBot() {
+    fun addBot(seat: Int? = null) {
         val model = callbacks.getModel()
         if (socket == null || !model.isHost || model.members.size >= MAX_PLAYERS) return
-        send(ClientCommand.AddBot(roomName))
+        send(ClientCommand.AddBot(roomName, seat))
     }
 
     fun startGame() {
@@ -641,13 +641,14 @@ class GameSession(
             is ServerEvent.RoomMembers -> {
                 myServerIndex = event.members.indexOf(email)
                 if (inRoom) {
-                    dispatch(GameAction.MembersChanged(event.members, event.target))
+                    dispatch(GameAction.MembersChanged(event.members, event.target, event.seats))
                 } else if (myServerIndex >= 0) {
                     // our join went through — this broadcast is our welcome
                     inRoom = true
                     dispatch(
                         GameAction.RoomEntered(joinedRoomName ?: "table", event.members, isHost = false, target = event.target)
                     )
+                    if (event.seats != null) dispatch(GameAction.MembersChanged(event.members, seats = event.seats))
                 }
             }
 

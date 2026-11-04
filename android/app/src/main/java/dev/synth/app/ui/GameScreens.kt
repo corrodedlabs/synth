@@ -4,6 +4,7 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -12,6 +13,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -19,6 +23,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.absoluteOffset
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.union
@@ -53,9 +60,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
@@ -93,6 +106,7 @@ fun GameScreens(controller: GameController, shareInvite: (String) -> Unit) {
     val phase = controller.uiModel.phase
     val standings = controller.standings
 
+    CompositionLocalProvider(LocalReduceMotion provides controller.reduceMotion) {
     Box(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
         when {
             controller.updateRequiredVersion != null -> UpdateRequiredScreen()
@@ -115,6 +129,7 @@ fun GameScreens(controller: GameController, shareInvite: (String) -> Unit) {
             phase == GamePhase.LOBBY -> LobbyScreen(controller, shareInvite)
             else -> PlayOverlay(controller)
         }
+    }
     }
 }
 
@@ -143,21 +158,25 @@ private fun StatusNote(text: String, modifier: Modifier = Modifier) {
 
 // --- start ---
 
+/**
+ * The way in is a table with your seat waiting at it. Two big buttons say plainly who you'll play with, and the
+ * match types are cards to pick up first. Joining someone else's table stays a tap away.
+ */
 @Composable
 private fun StartScreen(controller: GameController, name: String, onName: (String) -> Unit, onStandings: () -> Unit) {
-    var target by rememberSaveable { mutableStateOf(6) }
+    var target by rememberSaveable { mutableStateOf(2) }
     val focus = LocalFocusManager.current
     val invite = controller.joinTarget
     PaperScreen {
         Column(
-            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(vertical = 18.dp),
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(vertical = 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Txt("28", size = 64, weight = FontWeight.W500, spacing = 4f)
-            Txt("a trick-taking game", size = 18, opacity = 0.75f)
-            Spacer(Modifier.size(20.dp))
+            Txt("28", size = 76, weight = FontWeight.W500, spacing = 6f)
+            HomeTable(name)
+            Spacer(Modifier.size(10.dp))
             NameField(name, onName, onDone = { focus.clearFocus() })
-            Spacer(Modifier.size(18.dp))
+            Spacer(Modifier.size(12.dp))
 
             if (invite != null) {
                 PaperButton(
@@ -172,61 +191,136 @@ private fun StartScreen(controller: GameController, name: String, onName: (Strin
                 Spacer(Modifier.size(10.dp))
             }
 
-            Txt("What kind of match?", size = 18, opacity = 0.75f)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                TargetChoice("Quick", "first to 2", target == 2, -2f, Modifier.testTag("target-quick")) { target = 2 }
+                TargetChoice("Classic", "first to 6", target == 6, 2f, Modifier.testTag("target-classic")) { target = 6 }
+            }
+            Spacer(Modifier.size(16.dp))
+            // Friends is the headline; bots is just as easy to reach, in ink rather than red.
+            BigSealButton("Play with friends", Modifier.testTag("create-button").padding(horizontal = 44.dp).fillMaxWidth().widthIn(max = 330.dp).height(62.dp), fontSize = 28) {
+                focus.clearFocus()
+                controller.createTable(name, target)
+            }
+            Spacer(Modifier.size(12.dp))
+            BigSealButton(
+                "Play with bots",
+                Modifier.testTag("play-bots").padding(horizontal = 44.dp).fillMaxWidth().widthIn(max = 330.dp).height(62.dp),
+                fontSize = 28,
+                fill = Ink,
+                edge = Color(0xFF241C18),
+                tilt = 1.1f,
+            ) {
+                focus.clearFocus()
+                controller.playWithBots(name, target)
+            }
+            Spacer(Modifier.size(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                LinkButton("Join a table", { focus.clearFocus(); controller.browse(name) }, Modifier.testTag("browse-button"), size = 18)
+                LinkButton("Standings", { focus.clearFocus(); onStandings() }, Modifier.testTag("standings-button"), size = 18)
+            }
             Spacer(Modifier.size(6.dp))
-            Row(Modifier.widthIn(max = 330.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TargetChoice("Quick", "first to 2", target == 2, Modifier.weight(1f).testTag("target-quick")) { target = 2 }
-                TargetChoice("Classic", "first to 6", target == 6, Modifier.weight(1f).testTag("target-classic")) { target = 6 }
-            }
-            Spacer(Modifier.size(14.dp))
-            Stack(gap = 10.dp) {
-                MenuButton("Create a table", Modifier.testTag("create-button")) {
-                    focus.clearFocus()
-                    controller.createTable(name, target)
-                }
-                MenuButton("Join a table", Modifier.testTag("browse-button")) {
-                    focus.clearFocus()
-                    controller.browse(name)
-                }
-            }
-            Spacer(Modifier.size(10.dp))
-            LinkButton("standings", { focus.clearFocus(); onStandings() }, Modifier.testTag("standings-button"), size = 17)
-            Spacer(Modifier.size(8.dp))
             // goHome leaves the last status behind: an abandoned connection attempt says nothing true here.
             StatusNote(controller.statusText.takeUnless { it == "Connecting…" || it == "Rejoining your match…" }.orEmpty())
         }
     }
 }
 
+/** Four seats around a small fan of real cards. Yours has your initial in it, and the others are waiting. */
+@Composable
+private fun HomeTable(name: String) {
+    val atlas = rememberCardAtlas()
+    Box(Modifier.size(width = 300.dp, height = 190.dp)) {
+        fun place(x: Int, y: Int) = Modifier.absoluteOffset((x - 24).dp, (y - 24).dp).size(48.dp)
+        Box(place(150, 22), contentAlignment = Alignment.Center) { BrushedEnso(false, Modifier.alpha(0.55f)) }
+        Box(place(36, 92), contentAlignment = Alignment.Center) { BrushedEnso(false, Modifier.alpha(0.55f)) }
+        Box(place(264, 92), contentAlignment = Alignment.Center) { BrushedEnso(false, Modifier.alpha(0.55f)) }
+        Box(place(150, 164), contentAlignment = Alignment.Center) {
+            BrushedEnso(false)
+            Txt(name.trim().take(1).uppercase().ifEmpty { "?" }, size = 19, weight = FontWeight.W600, color = Red, spacing = 0f)
+        }
+        if (atlas != null) {
+            // Jack of spades, ace of hearts, nine of diamonds, ten of clubs: the cards that carry the points.
+            listOf(3 to 0, 0 to 2, 1 to 1, 2 to 3).forEachIndexed { i, (suit, rank) ->
+                val spread = i - 1.5f
+                AtlasCard(
+                    atlas,
+                    suit,
+                    rank,
+                    Modifier
+                        .absoluteOffset((121 + spread * 27).dp, (48 + kotlin.math.abs(spread) * 4).dp)
+                        .size(width = 58.dp, height = 86.dp)
+                        .graphicsLayer { rotationZ = spread * 9f },
+                )
+            }
+        }
+    }
+}
+
+/** The loudest button in the game: a red seal that presses into the paper. */
+@Composable
+private fun BigSealButton(
+    text: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    fontSize: Int = 32,
+    fill: Color = Red,
+    edge: Color = Color(0xFF7C2C21),
+    tilt: Float = -1.2f,
+    onClick: () -> Unit,
+) {
+    val source = remember { MutableInteractionSource() }
+    val pressed by source.collectIsPressedAsState()
+    Box(
+        modifier
+            .graphicsLayer {
+                rotationZ = tilt
+                translationY = if (pressed) 3.dp.toPx() else 0f
+            }
+            .drawBehind {
+                val outline = sealOutline(size, text.hashCode(), 9.dp.toPx(), 2.dp.toPx())
+                if (!pressed) translate(top = 4.dp.toPx()) { drawPath(outline, edge) }
+                drawPath(outline, fill)
+            }
+            .clickable(source, indication = null, enabled = enabled, role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Txt(text, size = fontSize, weight = FontWeight.W600, color = PaperLight, spacing = 0f, maxLines = 1)
+    }
+}
+
+/** Text on a brushed line rather than in a form box. A first-time player sees only "Your name". */
 @Composable
 private fun NameField(name: String, onName: (String) -> Unit, onDone: () -> Unit) {
-    val shape = RoundedCornerShape(4.dp)
     val style = TextStyle(
         fontFamily = Cormorant,
-        fontSize = 19.sp,
+        fontSize = 23.sp,
         color = Ink,
-        letterSpacing = 0.6.sp,
         textAlign = TextAlign.Center,
     )
+    val source = remember { MutableInteractionSource() }
+    val focused by source.collectIsFocusedAsState()
     CompositionLocalProvider(LocalTextSelectionColors provides TextSelectionColors(Ink, Ink.copy(alpha = 0.2f))) {
       BasicTextField(
         value = name,
         onValueChange = onName,
-        modifier = Modifier.testTag("name-input").widthIn(min = 210.dp, max = 240.dp),
+        modifier = Modifier.testTag("name-input").width(230.dp),
         singleLine = true,
         textStyle = style,
         cursorBrush = SolidColor(Ink),
+        interactionSource = source,
         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Done),
         keyboardActions = KeyboardActions(onDone = { onDone() }),
         decorationBox = { field ->
             Box(
                 Modifier
-                    .background(PaperLight.copy(alpha = 0.9f), shape)
-                    .border(1.dp, Ink.copy(alpha = 0.35f), shape)
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                    .drawBehind {
+                        val y = size.height - 1.dp.toPx()
+                        drawLine(if (focused) Red else Ink.copy(alpha = 0.35f), Offset(0f, y), Offset(size.width, y), 1.dp.toPx())
+                    }
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                if (name.isEmpty()) BasicText("your name", style = style.copy(color = Ink.copy(alpha = 0.45f)))
+                if (name.isEmpty()) BasicText("Your name", style = style.copy(color = Ink.copy(alpha = 0.5f)))
                 field()
             }
         },
@@ -234,24 +328,27 @@ private fun NameField(name: String, onName: (String) -> Unit, onDone: () -> Unit
     }
 }
 
+/** A match type, as a card lying on the table. The one you pick lifts and straightens. */
 @Composable
-private fun TargetChoice(title: String, caption: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+private fun TargetChoice(title: String, caption: String, selected: Boolean, tilt: Float, modifier: Modifier, onClick: () -> Unit) {
     Pressable(
         onClick,
-        modifier.semantics { this.selected = selected },
-        fill = if (selected) PressTint else Color.Transparent,
-        border = Ink.copy(alpha = if (selected) 0.7f else 0.3f),
+        modifier
+            .size(width = 132.dp, height = 84.dp)
+            .graphicsLayer {
+                rotationZ = if (selected) 0f else tilt
+                translationY = if (selected) -4.dp.toPx() else 0f
+            }
+            .semantics { this.selected = selected },
+        shape = RoundedCornerShape(7.dp),
+        fill = PaperLight,
+        border = if (selected) Red else Ink.copy(alpha = 0.25f),
     ) {
-        Column(Modifier.padding(horizontal = 18.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Txt(title, size = 19, weight = if (selected) FontWeight.W600 else FontWeight.W400)
-            Txt(caption, size = 14, opacity = 0.65f)
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Txt(title, size = 22, weight = if (selected) FontWeight.W600 else FontWeight.W500)
+            Txt(caption, size = 15, opacity = 0.65f)
         }
     }
-}
-
-@Composable
-private fun MenuButton(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    PaperButton(text, onClick, modifier.widthIn(min = 240.dp), size = 19, spacing = 2f, horizontal = 34.dp)
 }
 
 // --- rooms ---
@@ -370,134 +467,148 @@ private fun ConnectingScreen(controller: GameController) {
 
 // --- lobby ---
 
+/** People and bots sit down at the table instead of joining a list. You're always at the near side. */
 @Composable
 private fun LobbyScreen(controller: GameController, shareInvite: (String) -> Unit) {
     val model = controller.uiModel
-    val kind = if (model.matchTarget == 2) "quick match" else "match"
+    val kind = if (model.matchTarget == 2) "Quick" else "Classic"
     val full = model.members.size == 4
-    // Members arrive in server order (newest first, host last): show the host first.
-    val seated = model.members.reversed()
+    // Going round from our own seat, as the deal will. Before the server has seated anyone it's only us.
+    val table = model.lobbySeats ?: listOf(controller.selfEmail, null, null, null)
+    val me = table.indexOf(controller.selfEmail).coerceAtLeast(0)
+    val around = List(4) { table[(me + it) % 4] }
+    val host = model.members.lastOrNull()
+    // A tap shows at once, and asks only once, however slow the answer is.
+    var asked by remember { mutableStateOf(emptySet<Int>()) }
+    LaunchedEffect(model.members.size) { asked = emptySet() }
+
+    @Composable
+    fun seat(view: Int, modifier: Modifier) {
+        val member = around[view]
+        if (member == null) {
+            val number = (me + view) % 4
+            OpenSeat(model.isHost, !full, number in asked, modifier) {
+                if (number !in asked) {
+                    asked = asked + number
+                    controller.addBot(number)
+                }
+            }
+        } else {
+            TakenSeat(
+                playerProfile(member, model.members),
+                when {
+                    member == controller.selfEmail -> "you"
+                    member == host -> "host"
+                    else -> null
+                },
+                if (model.isHost && member != controller.selfEmail) ({ controller.kick(member) }) else null,
+                modifier,
+            )
+        }
+    }
+
     PaperScreen {
-        BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
             val wide = maxWidth > maxHeight
             Column(
-                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(vertical = 12.dp),
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Panel(Modifier.fillMaxWidth(if (wide) 0.6f else 0.88f).widthIn(max = 480.dp), fill = PaperLight.copy(alpha = 0.98f)) {
-                    Box(Modifier.fillMaxWidth()) {
-                        LeaveTable(if (model.isHost) "Close table" else "Leave table", Modifier.align(Alignment.TopEnd)) {
-                            controller.leaveTable()
-                        }
+                Txt(model.roomName.orEmpty(), Modifier.padding(horizontal = 20.dp), size = 26, weight = FontWeight.W500, maxLines = 1)
+                Txt("$kind, first to ${model.matchTarget}", size = 17, opacity = 0.65f)
+                Spacer(Modifier.size(8.dp))
+                if (wide) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        listOf(3, 2, 1, 0).forEach { seat(it, Modifier) }
                     }
-                    Txt(model.roomName.orEmpty(), Modifier.padding(horizontal = 12.dp, vertical = 2.dp), size = 22, weight = FontWeight.W500)
-                    Txt(
-                        if (model.isHost) "You are hosting this table — $kind to ${model.matchTarget}"
-                        else "Waiting for the host to start — $kind to ${model.matchTarget}",
-                        size = 15,
-                        opacity = 0.65f,
-                    )
-                    Spacer(Modifier.size(14.dp))
-                    for (seat in 0 until 4) {
-                        val member = seated.getOrNull(seat)
-                        if (member == null) {
-                            EmptySeat()
-                        } else {
-                            SeatRow(
-                                profile = playerProfile(member, model.members),
-                                tags = listOfNotNull(if (seat == 0) "host" else null, if (member == controller.selfEmail) "you" else null),
-                                onKick = if (model.isHost && member != controller.selfEmail) ({ controller.kick(member) }) else null,
+                } else {
+                    Box(
+                        Modifier.size(width = 330.dp, height = 400.dp).drawBehind {
+                            drawOval(
+                                Ink.copy(alpha = 0.18f),
+                                topLeft = Offset(30.dp.toPx(), 40.dp.toPx()),
+                                size = Size(size.width - 60.dp.toPx(), size.height - 80.dp.toPx()),
+                                style = Stroke(1.4.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(7f, 9f))),
                             )
-                        }
-                        if (seat < 3) Hairline()
+                        },
+                    ) {
+                        seat(2, Modifier.align(Alignment.TopCenter))
+                        seat(3, Modifier.align(Alignment.CenterStart))
+                        seat(1, Modifier.align(Alignment.CenterEnd))
+                        seat(0, Modifier.align(Alignment.BottomCenter))
                     }
-                    Spacer(Modifier.size(16.dp))
-                    if (model.isHost) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            PaperButton("Add a bot", { controller.addBot() }, Modifier.testTag("add-bot"), enabled = !full)
-                            PaperButton("Start game", { controller.startGame() }, Modifier.testTag("start-game"), enabled = full)
-                        }
-                        Spacer(Modifier.size(8.dp))
-                        Txt(
-                            if (full) "All seats taken — ready when you are."
-                            else "Friends can join from their own phone, or fill seats with bots.",
-                            size = 15,
-                            opacity = 0.65f,
-                        )
-                    }
-                    Spacer(Modifier.size(4.dp))
-                    LinkButton("share invite link", { model.roomName?.let(shareInvite) }, Modifier.testTag("invite-button"))
                 }
-                Spacer(Modifier.size(12.dp))
+                Spacer(Modifier.size(10.dp))
+                if (model.isHost) {
+                    if (full) {
+                        BigSealButton("Start the hand", Modifier.testTag("start-game").padding(horizontal = 44.dp).fillMaxWidth().widthIn(max = 330.dp).height(62.dp), fontSize = 28) {
+                            controller.startGame()
+                        }
+                    } else {
+                        Txt("Waiting for ${4 - model.members.size} more", Modifier.testTag("start-game"), size = 21, opacity = 0.6f)
+                    }
+                } else {
+                    Txt("Waiting for the host to start", size = 21, opacity = 0.6f)
+                }
+                Spacer(Modifier.size(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                    LinkButton("Share invite link", { model.roomName?.let(shareInvite) }, Modifier.testTag("invite-button"), size = 18)
+                    LinkButton(if (model.isHost) "Close table" else "Leave table", { controller.leaveTable() }, Modifier.testTag("leave-table"), size = 18)
+                }
                 // We are seated by now, so the join notice has outlived its moment.
-                StatusNote(controller.statusText.takeUnless { it == "Joining the table…" }.orEmpty())
+                StatusNote(controller.statusText.takeUnless { it == "Joining the table…" || it.startsWith("Your table is ready") }.orEmpty())
             }
         }
     }
 }
 
 @Composable
-private fun LeaveTable(text: String, modifier: Modifier, onClick: () -> Unit) {
-    Pressable(onClick, modifier.testTag("leave-table").alpha(0.7f), border = Ink.copy(alpha = 0.25f)) {
-        Txt(text, Modifier.padding(horizontal = 12.dp, vertical = 8.dp), size = 15)
-    }
-}
-
-@Composable
-private fun EmptySeat() {
-    Box(Modifier.fillMaxWidth().heightIn(min = 46.dp).padding(horizontal = 4.dp), contentAlignment = Alignment.CenterStart) {
-        Txt("empty seat", size = 18, opacity = 0.45f, italic = true)
-    }
-}
-
-@Composable
-private fun SeatRow(profile: PlayerProfile, tags: List<String>, onKick: (() -> Unit)?) {
-    Row(
-        Modifier.fillMaxWidth().heightIn(min = 46.dp).padding(horizontal = 4.dp, vertical = 3.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Avatar(profile)
-            Txt(profile.displayName, Modifier.weight(1f, fill = false), size = 18, align = TextAlign.Start, maxLines = 1)
-            if (profile.isBot) BotTag(accentColor(profile.accent))
+private fun OpenSeat(canFill: Boolean, open: Boolean, waiting: Boolean, modifier: Modifier, onFill: () -> Unit) {
+    val body = if (canFill && open) modifier.testTag("add-bot").clickable(role = Role.Button, onClick = onFill) else modifier
+    Column(body.width(104.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.size(72.dp), contentAlignment = Alignment.Center) {
+            BrushedEnso(false, Modifier.alpha(0.42f))
+            Txt(if (waiting) "…" else "+", size = 30, opacity = 0.6f, spacing = 0f)
         }
-        Txt(tags.joinToString(" · "), size = 16, opacity = 0.55f, maxLines = 1)
+        Txt(if (waiting) "Seating…" else "Empty", size = 17, opacity = 0.7f, maxLines = 1)
+        if (canFill && !waiting) Txt("add a bot", size = 14, opacity = 0.6f, maxLines = 1)
+    }
+}
+
+@Composable
+private fun TakenSeat(profile: PlayerProfile, tag: String?, onKick: (() -> Unit)?, modifier: Modifier) {
+    val reduce = LocalReduceMotion.current
+    val arrive = remember { Animatable(if (reduce) 1f else 0.2f) }
+    LaunchedEffect(Unit) {
+        if (!reduce) {
+            arrive.animateTo(1.14f, tween(230))
+            arrive.animateTo(1f, tween(130))
+        }
+    }
+    Column(modifier.width(104.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            Modifier.size(72.dp).graphicsLayer {
+                scaleX = arrive.value
+                scaleY = arrive.value
+            },
+            contentAlignment = Alignment.Center,
+        ) {
+            BrushedEnso(false)
+            if (profile.isBot) {
+                BasicText(profile.avatar, style = TextStyle(fontSize = 28.sp, color = Color.Black))
+            } else {
+                Txt(profile.avatar, size = 26, weight = FontWeight.W600, color = accentColor(profile.accent), spacing = 0f)
+            }
+        }
+        Txt(profile.displayName, size = 17, maxLines = 1)
+        if (tag != null) Txt(tag, size = 14, opacity = 0.6f, maxLines = 1)
         if (onKick != null) {
-            Box(
-                Modifier.size(40.dp).testTag("kick").clickable(role = Role.Button, onClick = onKick),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(Modifier.size(24.dp).border(1.dp, Red.copy(alpha = 0.4f), CircleShape), contentAlignment = Alignment.Center) {
-                    BasicText("✕", style = TextStyle(color = Red, fontSize = 13.sp))
+            Box(Modifier.size(40.dp).testTag("kick").clickable(role = Role.Button, onClick = onKick), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(22.dp).border(1.dp, Red.copy(alpha = 0.4f), CircleShape), contentAlignment = Alignment.Center) {
+                    BasicText("✕", style = TextStyle(color = Red, fontSize = 12.sp))
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun Avatar(profile: PlayerProfile) {
-    val accent = accentColor(profile.accent)
-    Box(
-        Modifier
-            .size(34.dp)
-            .background(lerp(PaperLight, accent, 0.2f), CircleShape)
-            .border(2.dp, lerp(PaperLight, accent, 0.7f), CircleShape),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (profile.isBot) {
-            BasicText(profile.avatar, style = TextStyle(fontSize = 19.sp, color = Color.Black))
-        } else {
-            Txt(profile.avatar, size = 18, weight = FontWeight.W600, color = accent)
-        }
-    }
-}
-
-@Composable
-private fun BotTag(accent: Color) {
-    Box(Modifier.border(1.dp, accent.copy(alpha = 0.42f), RoundedCornerShape(999.dp)).padding(horizontal = 5.dp, vertical = 1.dp)) {
-        BasicText("BOT", style = TextStyle(color = accent, fontSize = 9.sp, fontWeight = FontWeight.W700, letterSpacing = 0.8.sp))
     }
 }
 
