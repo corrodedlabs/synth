@@ -1,10 +1,14 @@
 package dev.synth.app
 
+import android.annotation.SuppressLint
 import android.content.Intent
-import android.view.KeyEvent
+import android.os.Build
 import android.os.Bundle
+import android.view.KeyEvent
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.lifecycle.Lifecycle
@@ -26,6 +30,9 @@ import org.libsdl.app.SDLActivity
 class GameActivity : SDLActivity(), LifecycleOwner, SavedStateRegistryOwner {
     private val registry = LifecycleRegistry(this)
     private val savedState = SavedStateRegistryController.create(this)
+    private val backCallback = if (Build.VERSION.SDK_INT >= 33) {
+        OnBackInvokedCallback { moveTaskToBack(true) }
+    } else null
 
     override val lifecycle: Lifecycle get() = registry
     override val savedStateRegistry: SavedStateRegistry get() = savedState.savedStateRegistry
@@ -37,6 +44,11 @@ class GameActivity : SDLActivity(), LifecycleOwner, SavedStateRegistryOwner {
     override fun onCreate(savedInstanceState: Bundle?) {
         savedState.performRestore(savedInstanceState)
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= 33) {
+            backCallback?.let {
+                onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, it)
+            }
+        }
         registry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         TableBridge.attach()
 
@@ -85,6 +97,9 @@ class GameActivity : SDLActivity(), LifecycleOwner, SavedStateRegistryOwner {
     }
 
     override fun onDestroy() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            backCallback?.let(onBackInvokedDispatcher::unregisterOnBackInvokedCallback)
+        }
         registry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         super.onDestroy()
     }
@@ -95,10 +110,12 @@ class GameActivity : SDLActivity(), LifecycleOwner, SavedStateRegistryOwner {
     }
 
     /**
-     * Back leaves the app running, like Home: closing the activity would tear down the table. It's caught here
-     * because SDL's key handling otherwise takes it as a game key, and it never reaches onBackPressed.
+     * Back leaves the app running, like Home: closing the activity would tear down the table. Older
+     * Android versions send a key event; Android 13+ uses the callback registered in onCreate.
      */
+    @SuppressLint("GestureBackNavigation") // Only the pre-33 fallback; newer versions use backCallback.
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (Build.VERSION.SDK_INT >= 33) return super.dispatchKeyEvent(event)
         if (event.keyCode != KeyEvent.KEYCODE_BACK) return super.dispatchKeyEvent(event)
         if (event.action == KeyEvent.ACTION_UP && !event.isCanceled) moveTaskToBack(true)
         return true
