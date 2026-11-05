@@ -12,6 +12,8 @@ const URL = process.argv[2] ?? "http://localhost:5179/?server=ws://localhost:808
 const SERIAL = process.env.ADB_SERIAL ?? "emulator-5580";
 const PHONE_SERVER = process.env.PHONE_SERVER ?? "ws://10.0.2.2:8082/test";
 const SHOTS = "/tmp/game-shots-android";
+// The installed app. Its classes keep the Kotlin package dev.synth.app.
+const APP = "com.respawnfi.twentyeight";
 mkdirSync(SHOTS, { recursive: true });
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -20,7 +22,7 @@ const run = (...args) => execFileSync("adb", ["-s", SERIAL, ...args], { encoding
 const adb = (...args) => {
   if (args[0] === "shell" && args[1] === "input") {
     const top = run("shell", "dumpsys activity activities | grep topResumedActivity");
-    if (!top.includes("dev.synth.app")) {
+    if (!top.includes(APP)) {
       console.error("FAIL: another app is on screen, so the test stopped");
       process.exit(3);
     }
@@ -43,7 +45,7 @@ const check = (ok, message) => (ok ? console.log(`ok: ${message}`) : fail(messag
 
 const phoneState = async () => {
   adb("logcat", "-c");
-  adb("shell", "am", "broadcast", "-n", "dev.synth.app/.DebugBridge", "--es", "cmd", "state");
+  adb("shell", "am", "broadcast", "-n", `${APP}/dev.synth.app.DebugBridge`, "--es", "cmd", "state");
   for (let i = 0; i < 20; i++) {
     const line = adb("logcat", "-d", "-s", "synth:*").split("\n").find((l) => l.includes("state phase="));
     if (line) {
@@ -96,7 +98,7 @@ const tapTag = async (tag, timeout = 20000) => {
 
 const fanCards = async () => {
   adb("logcat", "-c");
-  adb("shell", "am", "broadcast", "-n", "dev.synth.app/.DebugBridge", "--es", "cmd", "dump");
+  adb("shell", "am", "broadcast", "-n", `${APP}/dev.synth.app.DebugBridge`, "--es", "cmd", "dump");
   await sleep(250);
   const cards = [];
   for (const line of adb("logcat", "-d", "-s", "apsis:*").split("\n")) {
@@ -175,16 +177,16 @@ let engineLog = null;
 let engineText = "";
 
 try {
-  adb("shell", "am", "force-stop", "dev.synth.app");
-  adb("shell", "pm", "clear", "dev.synth.app");
+  adb("shell", "am", "force-stop", APP);
+  adb("shell", "pm", "clear", APP);
   adb("logcat", "-b", "crash", "-c");
   adb("logcat", "-c");
   // Kept running, since the steps below clear the log to read their own answers.
   engineLog = spawn("adb", ["-s", SERIAL, "logcat", "-s", "apsis:*"]);
   engineLog.stdout.on("data", (chunk) => (engineText += chunk));
-  adb("shell", "am", "start", "-n", "dev.synth.app/.GameActivity", "--es", "server", PHONE_SERVER);
+  adb("shell", "am", "start", "-n", `${APP}/dev.synth.app.GameActivity`, "--es", "server", PHONE_SERVER);
   await sleep(6000);
-  const pid = adb("shell", "pidof", "dev.synth.app").trim();
+  const pid = adb("shell", "pidof", APP).trim();
 
   await tapTag("name-input", 40000);
   await sleep(500);
@@ -234,7 +236,7 @@ try {
     if (!dropped && phone.phase === "PLAYING" && +phone.played >= 1) {
       dropped = true;
       const handBefore = +phone.hand;
-      adb("shell", "am", "broadcast", "-n", "dev.synth.app/.DebugBridge", "--es", "cmd", "drop");
+      adb("shell", "am", "broadcast", "-n", `${APP}/dev.synth.app.DebugBridge`, "--es", "cmd", "drop");
       await sleep(1200);
       const during = await phoneState();
       check(during.reconnecting === "true", "the dropped socket shows the reconnecting state");
@@ -255,7 +257,7 @@ try {
       backgrounded = true;
       adb("shell", "input", "keyevent", "KEYCODE_HOME");
       await sleep(4000);
-      adb("shell", "am", "start", "-n", "dev.synth.app/.GameActivity");
+      adb("shell", "am", "start", "-n", `${APP}/dev.synth.app.GameActivity`);
       await sleep(3000);
       const after = await phoneState();
       check(after.phase !== "IDLE", "the match survived the background");
@@ -290,9 +292,9 @@ try {
   check(phoneCardsPlayed > 0, `the phone played ${phoneCardsPlayed} cards by touch`);
   check(dropped && backgrounded, "the drop and the background both happened");
 
-  check(adb("shell", "pidof", "dev.synth.app").trim() === pid, "the app stayed one process throughout");
+  check(adb("shell", "pidof", APP).trim() === pid, "the app stayed one process throughout");
   const crash = adb("logcat", "-d", "-b", "crash");
-  check(!crash.includes("dev.synth.app"), "no crashes");
+  check(!crash.includes(APP), "no crashes");
   check(engineText.includes("Vulkan validation: on"), "validation layers were on");
   check(!/VUID|Validation Error/.test(engineText), "no Vulkan validation messages");
 } catch (error) {

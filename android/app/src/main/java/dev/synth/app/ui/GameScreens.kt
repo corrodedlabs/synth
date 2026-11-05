@@ -83,6 +83,7 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.synth.app.BuildConfig
 import dev.synth.app.GameController
 import dev.synth.core.GamePhase
 import dev.synth.core.LeaderboardRow
@@ -662,5 +663,6 @@ private fun openStore(context: Context) {
         false
     }
     // Phones without a store app still have a browser.
-    if (!open("market://details?id=dev.synth.app")) open("https://play.google.com/store/apps/details?id=dev.synth.app")
+    val id = BuildConfig.APPLICATION_ID
+    if (!open("market://details?id=$id")) open("https://play.google.com/store/apps/details?id=$id")
 }

@@ -13,7 +13,9 @@ android {
     ndkVersion = "27.1.12297006"
 
     defaultConfig {
-        applicationId = "dev.synth.app"
+        // The ID Play and the phone see. It can never change after the first upload. The Kotlin
+        // package (namespace) stays dev.synth.app, which the JNI names in native/src/jni.c depend on.
+        applicationId = "com.respawnfi.twentyeight"
         minSdk = 29
         targetSdk = 36
         versionCode = (System.getenv("SYNTH_VERSION_CODE") ?: "1").toInt()
