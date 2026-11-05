@@ -29,8 +29,8 @@ const modelHand = () => page.evaluate(() => window.__game.state().hand.map((card
 await page.goto(URL);
 await page.waitForSelector("#create-button", { state: "visible", timeout: 15_000 });
 await page.fill("#player-name", "Arranger");
+await page.click('.mode-card[data-target="6"]');
 await page.click("#create-button");
-await page.click('#create-panel .table-choice[data-target="6"]');
 await page.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15_000 });
 for (let bots = 0; bots < 3; bots += 1) {
   await page.click("#add-bot");

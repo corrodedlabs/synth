@@ -121,11 +121,15 @@ This document defines the visual language for the 28 card game UI. Use this as a
 - Gentle opacity fades
 - Slow, eased transitions (300-500ms)
 
+### Big Moments
+The calm is broken on purpose at a few moments, in ink rather than light: a red seal that thumps down for
+a bid or a result, a small landing bounce for a played card, and an ink burst for a trump reveal or a match
+win. Keep these rare, so they keep their weight.
+
 ### Not Allowed
 - Glow effects
-- Particle systems
-- Sharp animations or bounces
 - Blur effects (except shadow)
+- Motion that blocks play: the game never waits for an effect, and Reduce motion turns the movement off
 - Any neon or bright colors
 
 ---
@@ -147,11 +151,11 @@ This document defines the visual language for the 28 card game UI. Use this as a
 |--------|-----------|
 | **Card Hover** | Lift 5%, subtle scale 1.02 |
 | **Card Select** | Lift 10%, gentle float |
-| **Card Play** | Smooth slide to position, 400ms ease-out |
+| **Card Play** | Arcs to position with ease-out, then a small landing bounce |
 | **Turn Indicator** | Enso marker pulses (scale 1.0 → 1.05 → 1.0), 2s cycle |
 | **Trick Complete** | Cards fade/slide off, 500ms |
 
-**Easing**: Always use ease-out or ease-in-out; never linear or bounce
+**Easing**: Use ease-out or ease-in-out. Only the big moments above may overshoot.
 
 ---
 

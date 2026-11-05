@@ -96,8 +96,8 @@ await page.tap("#help-close");
 
 // lobby
 await page.fill("#player-name", "Phone");
+await page.tap('.mode-card[data-target="6"]');
 await page.tap("#create-button");
-await page.tap('#create-panel .table-choice[data-target="6"]');
 await page.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });
 await checkFits("#lobby-panel", "lobby panel");
 for (let bots = 1; bots <= 3; bots++) {
@@ -274,7 +274,8 @@ while (Date.now() < deadline) {
     }
     // touch plays are two-step: the first tap arms the card…
     const cardId = snapshot.legal[0];
-    const pos = await page.evaluate((id) => window.__game.cardScreenPos(id), cardId);
+    // In a full fan the next card covers a card's centre, so tap the part a player can see.
+    const pos = await page.evaluate((id) => window.__game.cardTapPoint(id), cardId);
     if (pos) {
       await page.touchscreen.tap(pos.x, pos.y);
       await page.waitForTimeout(400);
@@ -284,7 +285,7 @@ while (Date.now() < deadline) {
         checkedArming = true;
       }
       // …and a second tap on the raised card commits it
-      const raised = await page.evaluate((id) => window.__game.cardScreenPos(id), cardId);
+      const raised = await page.evaluate((id) => window.__game.cardTapPoint(id), cardId);
       if (raised) await page.touchscreen.tap(raised.x, raised.y);
       await page.waitForTimeout(500);
       const after = await state();

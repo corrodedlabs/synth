@@ -325,6 +325,7 @@ describe("encodeCommand", () => {
     expect(encodeCommand({ _tag: "MakeRoom", hostEmail: "a@b", roomName: "r1", target: 2 })).toBe(
       '(make-room "a@b" "r1" 2)'
     );
+    expect(encodeCommand({ _tag: "AddBot", roomName: "r1", seat: 2 })).toBe('(add-bot-to-room "r1" 2)');
     expect(encodeCommand({ _tag: "AddBot", roomName: "r1" })).toBe('(add-bot-to-room "r1")');
     expect(encodeCommand({ _tag: "StartGame", roomName: "r1" })).toBe('(start-game "r1")');
     expect(encodeCommand({ _tag: "PutBid", email: "a@b", bid: 17 })).toBe('(put-bid "a@b" 17)');

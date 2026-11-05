@@ -56,6 +56,15 @@ describe("SoundService", () => {
     });
   });
 
+  it("counts the game-feel knocks", () => {
+    const sound = new SoundService();
+    sound.cardLand();
+    sound.sealThump();
+    sound.bigThump();
+    sound.settle();
+    expect(sound.played).toEqual({ cardLand: 1, sealThump: 1, bigThump: 1, settle: 1 });
+  });
+
   it("counts wins and losses separately", () => {
     const sound = new SoundService();
     sound.result(true);

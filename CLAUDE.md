@@ -29,9 +29,11 @@ These files hold the full detail. Read the matching one before starting that kin
 | Changing anything under `app/` | [`docs/agents/architecture-frontend.md`](docs/agents/architecture-frontend.md) |
 | Writing code | [`docs/agents/code-style.md`](docs/agents/code-style.md) |
 | Using `repos/` or writing Effect code | [`docs/agents/vendored-repos.md`](docs/agents/vendored-repos.md) |
+| Changing `android/` or `native/` | [`android/README.md`](android/README.md) |
 | Deploying | [`docs/deployment.md`](docs/deployment.md) |
 
-## Shared engine
+## Android
 
-A planned Android version will use the shared Apsis engine (`~/workspace/apsis`, plan in its
-`docs/PLAN.md`). That work hasn't started.
+The Android app is in `android/` (Kotlin) and `native/` (the table, C17, on the shared Apsis engine in the
+`apsis` submodule). Read `android/README.md` before changing them. It still follows the rule above: the
+server holds every rule, and the app only presents them.

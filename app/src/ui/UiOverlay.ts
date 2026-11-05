@@ -2,26 +2,31 @@ import { GameModel, PlayerIndex, Suit } from "../game/GameModel";
 import type { ArrangementMode, ArrangementPreset } from "../game/CardArrangement";
 import type { GamePacingProfile } from "../game/GamePacing";
 import { RoomInfo } from "../net/protocol";
+import { lobbySeats, scoreText, signedText } from "./HudModel";
+import type { HandResultCopy } from "./HudModel";
 import { playerProfile } from "./PlayerProfile";
 import type { PlayerProfile } from "./PlayerProfile";
+import { suitGlyph } from "./ScoreHud";
 
 export { memberDisplayName } from "./PlayerProfile";
 
 export interface UiCallbacks {
   readonly onCreate: (playerName: string, target: number) => void;
+  // the big button: a table of the chosen length, three bots, and straight in
+  readonly onPlayBots: (playerName: string, target: number) => void;
   readonly onBrowse: (playerName: string) => void;
   readonly onJoin: (roomName: string) => void;
   readonly onJoinLink: (playerName: string, roomName: string) => void;
   readonly onEmote: (emote: string) => void;
   readonly onStandings: (playerName: string) => void;
   readonly onRefreshRooms: () => void;
-  readonly onAddBot: () => void;
+  readonly onAddBot: (seat?: number) => void;
   readonly onStartGame: () => void;
   readonly onLeave: () => void;
   readonly onKick: (member: string) => void;
   readonly onBid: (bid: number) => void;
   readonly onPass: () => void;
-  readonly onTrump: (suit: Suit) => void;
+  readonly onTrump: (suit: Suit, cards: ReadonlyArray<{ suit: Suit; box: DOMRect }>) => void;
   readonly onExpose: () => void;
   readonly onNextHand: () => void;
   readonly onLeaveMatch: () => void;
@@ -29,6 +34,7 @@ export interface UiCallbacks {
   readonly onEndMatch: () => void;
   readonly onGoHome: () => void;
   readonly onCyclePacing: () => GamePacingProfile;
+  readonly onToggleMotion: () => GamePacingProfile;
   readonly onArrangePreset: (preset: ArrangementPreset) => void;
   readonly onArrangeCustom: () => void;
   readonly onArrangeDone: () => void;
@@ -36,14 +42,20 @@ export interface UiCallbacks {
   readonly onAbandonReconnect: () => void;
 }
 
+const YOUR_TURN = "Your turn";
+
 export const SEAT_NAMES = ["You", "Right", "Partner", "Left"] as const;
 
-const SUIT_GLYPHS: Record<Suit, string> = {
-  hearts: "♥",
-  diamonds: "♦",
-  clubs: "♣",
-  spades: "♠",
-};
+const MODE_KEY = "game28-match-length";
+const MAX_BID = 28;
+
+function storedMode(): number {
+  try {
+    return localStorage.getItem(MODE_KEY) === "6" ? 6 : 2;
+  } catch {
+    return 2;
+  }
+}
 
 // the emote vocabulary; ids must match the server's whitelist
 export const EMOTES: Record<string, string> = {
@@ -121,7 +133,6 @@ export class UiOverlay {
   private trumpPanel = element("trump-panel");
   private exposeButton = element("expose-button") as HTMLButtonElement;
   private resultPanel = element("result-panel");
-  private resultIcon = element("result-icon");
   private resultTitle = element("result-title");
   private resultDetail = element("result-detail");
   private resultDelta = element("result-delta");
@@ -141,13 +152,23 @@ export class UiOverlay {
   private abandonPanel = element("abandon-panel");
   private abandonText = element("abandon-text");
   private reconnectPanel = element("reconnect-panel");
-  private createPanel = element("create-panel");
   private leaderboardPanel = element("leaderboard-panel");
   private leaderboardList = element("leaderboard-list");
   private uiLayer = element("ui-layer");
-  private trumpIndicator = element("trump-indicator");
+  private menuButton = element("menu-button") as HTMLButtonElement;
+  private menuPanel = element("menu-panel");
+  private motionButton = element("motion-button") as HTMLButtonElement;
+  private playBotsButton = element("play-bots") as HTMLButtonElement;
+  private homeAvatar = element("home-avatar");
+  private homeFan = element("home-fan");
+  private resultSeal = element("result-seal");
+  private resultNote = element("result-note");
+  private resultTeam = element("result-team");
+  private bidChips = element("bid-chips");
+  private lobbyControls = element("lobby-controls");
+  private selectedTarget = storedMode();
+  private seatedMembers: ReadonlySet<string> = new Set();
   private statusTimer: number | null = null;
-  private bidActionTimer: number | null = null;
   private tableMomentTimer: number | null = null;
   private leaveArmTimer: number | null = null;
   private shareResetTimer: number | null = null;
@@ -162,45 +183,49 @@ export class UiOverlay {
       if (this.tableMoment.classList.contains("dismissible")) this.hideTableMoment();
     });
 
-    // "Create a table" first asks what the table will play to; picking a
-    // type is what actually creates it
+    // Play with friends opens a table to invite them to, of the length picked on the cards above it.
     element("create-button").addEventListener("click", () => {
-      this.show(this.createPanel);
+      this.hide(this.startScreen);
+      callbacks.onCreate(this.playerNameInput.value, this.selectedTarget);
     });
-    element("create-cancel").addEventListener("click", () => {
-      this.hide(this.createPanel);
+    this.playBotsButton.addEventListener("click", () => {
+      callbacks.onPlayBots(this.playerNameInput.value, this.selectedTarget);
     });
-    for (const button of document.querySelectorAll<HTMLButtonElement>(
-      "#create-panel .table-choice"
-    )) {
-      button.addEventListener("click", () => {
-        const target = Number(button.dataset.target);
-        this.hide(this.createPanel);
-        this.hide(this.startScreen);
-        callbacks.onCreate(
-          this.playerNameInput.value,
-          Number.isInteger(target) && target >= 1 ? target : 6
-        );
+    for (const card of document.querySelectorAll<HTMLButtonElement>(".mode-card")) {
+      card.addEventListener("click", () => {
+        this.selectMode(Number(card.dataset.target));
       });
     }
+    this.selectMode(this.selectedTarget);
+    this.playerNameInput.addEventListener("input", () => this.refreshHomeAvatar());
     element("browse-button").addEventListener("click", () => {
       this.show(this.roomBrowser);
       this.roomList.innerHTML = `<div id="room-empty">looking for tables…</div>`;
+      this.roomBrowser.scrollIntoView({ block: "nearest" });
       callbacks.onBrowse(this.playerNameInput.value);
     });
     element("refresh-rooms").addEventListener("click", () => callbacks.onRefreshRooms());
-    this.addBotButton.addEventListener("click", () => callbacks.onAddBot());
+    this.addBotButton.addEventListener("click", () => this.seatBot(this.addBotButton));
     this.startGameButton.addEventListener("click", () => callbacks.onStartGame());
     this.leaveTableButton.addEventListener("click", () => callbacks.onLeave());
 
     this.bidPass.addEventListener("click", () => callbacks.onPass());
-    this.bidRaise.addEventListener("click", () => {
-      const bid = Number(this.bidRaise.dataset.bid);
-      if (!Number.isNaN(bid)) callbacks.onBid(bid);
+    this.bidChips.addEventListener("click", (event) => {
+      const chip = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-bid]");
+      const bid = Number(chip?.dataset.bid);
+      if (chip && !Number.isNaN(bid)) callbacks.onBid(bid);
     });
 
-    this.trumpPanel.querySelectorAll<HTMLButtonElement>("[data-suit]").forEach((button) => {
-      button.addEventListener("click", () => callbacks.onTrump(button.dataset.suit as Suit));
+    const suitCards = this.trumpPanel.querySelectorAll<HTMLButtonElement>("[data-suit]");
+    suitCards.forEach((button) => {
+      button.addEventListener("click", () => {
+        // measured before the panel goes away, so the cards can leave from there
+        const cards = [...suitCards].map((card) => ({
+          suit: card.dataset.suit as Suit,
+          box: card.getBoundingClientRect(),
+        }));
+        callbacks.onTrump(button.dataset.suit as Suit, cards);
+      });
     });
 
     this.exposeButton.addEventListener("click", () => callbacks.onExpose());
@@ -230,6 +255,10 @@ export class UiOverlay {
     // how-to-play overlay is pure UI — no game state involved
     const helpPanel = element("help-panel");
     element("help-button").addEventListener("click", () => this.show(helpPanel));
+    element("menu-help").addEventListener("click", () => {
+      this.closePopovers();
+      this.show(helpPanel);
+    });
     element("help-close").addEventListener("click", () => this.hide(helpPanel));
 
     // the standings: ask the server, the panel opens when rows arrive
@@ -274,17 +303,14 @@ export class UiOverlay {
       }
     });
 
-    this.emoteButton.addEventListener("click", () => {
-      this.emoteStrip.classList.toggle("hidden");
-    });
+    this.menuButton.addEventListener("click", () => this.togglePopover(this.menuPanel, this.menuButton));
+    this.emoteButton.addEventListener("click", () => this.togglePopover(this.emoteStrip, this.emoteButton));
     this.arrangeButton.addEventListener("click", () => {
       if (this.arrangeButton.classList.contains("active")) {
         callbacks.onArrangeDone();
         return;
       }
-      const opening = this.arrangePanel.classList.contains("hidden");
-      this.arrangePanel.classList.toggle("hidden", !opening);
-      this.arrangeButton.setAttribute("aria-expanded", String(opening));
+      this.togglePopover(this.arrangePanel, this.arrangeButton);
     });
     this.arrangePanel
       .querySelectorAll<HTMLButtonElement>("[data-arrangement-preset]")
@@ -300,16 +326,14 @@ export class UiOverlay {
       this.arrangeButton.setAttribute("aria-expanded", "false");
       callbacks.onArrangeCustom();
     });
-    // A felt tap closes only the preset menu. Custom mode is deliberately
-    // sticky until Done so an ordinary card gesture cannot escape into play.
+    // A tap anywhere else closes whatever is folded out. Custom mode is
+    // deliberately sticky until Done, so an ordinary card gesture cannot escape
+    // into play: its panel is already closed and this leaves the mode alone.
     document.addEventListener("pointerdown", (event) => {
       const target = event.target as HTMLElement | null;
-      if (!target?.closest?.("#arrange-button, #arrange-panel")) {
-        this.hide(this.arrangePanel);
-        if (!this.arrangeButton.classList.contains("active")) {
-          this.arrangeButton.setAttribute("aria-expanded", "false");
-        }
-      }
+      const popover =
+        "#menu-button, #menu-panel, #emote-button, #emote-strip, #arrange-button, #arrange-panel";
+      if (!target?.closest?.(popover)) this.closePopovers();
     });
     element("replace-bot").addEventListener("click", () => {
       this.hideAbandonPanel();
@@ -325,6 +349,7 @@ export class UiOverlay {
       callbacks.onAbandonReconnect();
     });
     this.speedButton.addEventListener("click", () => this.setPacing(callbacks.onCyclePacing()));
+    this.motionButton.addEventListener("click", () => this.setPacing(callbacks.onToggleMotion()));
     for (const [id, glyph] of Object.entries(EMOTES)) {
       const button = document.createElement("button");
       button.type = "button";
@@ -336,6 +361,62 @@ export class UiOverlay {
       });
       this.emoteStrip.append(button);
     }
+    this.refreshHomeAvatar();
+  }
+
+  private togglePopover(panel: HTMLElement, trigger: HTMLElement) {
+    const opening = panel.classList.contains("hidden");
+    this.closePopovers();
+    if (!opening) return;
+    this.show(panel);
+    trigger.setAttribute("aria-expanded", "true");
+  }
+
+  closePopovers() {
+    this.hide(this.menuPanel);
+    this.hide(this.emoteStrip);
+    this.hide(this.arrangePanel);
+    this.menuButton.setAttribute("aria-expanded", "false");
+    this.emoteButton.setAttribute("aria-expanded", "false");
+    this.arrangeButton.setAttribute("aria-expanded", "false");
+  }
+
+  private selectMode(target: number) {
+    this.selectedTarget = target === 6 ? 6 : 2;
+    document.querySelectorAll<HTMLButtonElement>(".mode-card").forEach((card) => {
+      card.setAttribute("aria-pressed", String(Number(card.dataset.target) === this.selectedTarget));
+    });
+    try {
+      localStorage.setItem(MODE_KEY, String(this.selectedTarget));
+    } catch {
+      // the choice just won't be remembered next time
+    }
+  }
+
+  // Your seat at the home table wears your initial as soon as you type it.
+  refreshHomeAvatar() {
+    this.homeAvatar.textContent = this.playerNameInput.value.trim().slice(0, 1).toUpperCase();
+  }
+
+  // Lays out the small fan on the home table. The art is painted later, when
+  // it has loaded; until then the cards simply lie face down.
+  setHomeFan(faces: readonly HTMLCanvasElement[]) {
+    const middle = (faces.length - 1) / 2;
+    this.homeFan.replaceChildren(
+      ...faces.map((face, index) => {
+        const offset = index - middle;
+        face.className = "fan-card";
+        face.style.transform =
+          `translate(${offset * 30}px, ${Math.abs(offset) * 4}px) rotate(${offset * 9}deg)`;
+        return face;
+      })
+    );
+  }
+
+  // While the bots are being seated the button says so, and can't be pressed twice.
+  setPlayBotsBusy(busy: boolean) {
+    this.playBotsButton.disabled = busy;
+    this.playBotsButton.textContent = busy ? "Setting the table…" : "Play with bots";
   }
 
   // Desktop fallback where no native share sheet exists: clipboard, with the
@@ -390,8 +471,9 @@ export class UiOverlay {
 
   showStartScreen() {
     this.hide(this.lobbyPanel);
-    this.hide(this.createPanel); // never a stale question over a fresh start
     this.hide(this.reconnectPanel);
+    this.setPlayBotsBusy(false);
+    this.refreshHomeAvatar();
     this.show(this.startScreen);
   }
 
@@ -401,7 +483,6 @@ export class UiOverlay {
   showReconnecting() {
     this.hide(this.startScreen);
     this.hide(this.lobbyPanel);
-    this.hide(this.createPanel);
     this.show(this.reconnectPanel);
   }
 
@@ -448,52 +529,81 @@ export class UiOverlay {
       ? `You are hosting this table — ${kind} to ${model.matchTarget}`
       : `Waiting for the host to start — ${kind} to ${model.matchTarget}`;
 
-    // members arrive in server order (newest first, host last); show host first
-    const seated = [...model.members].reverse();
+    // Everyone sits where the deal will seat them, whoever is still to come.
+    const host = model.members[model.members.length - 1];
+    const seats = lobbySeats(model.members, selfEmail, model.lobbySeats);
+    const full = model.members.length >= 4;
     this.seatList.innerHTML = "";
-    for (let seat = 0; seat < 4; seat++) {
+    let offered = false;
+    for (const seat of seats) {
       const item = document.createElement("li");
-      const member = seated[seat];
-      if (member === undefined) {
-        item.className = "empty-seat";
-        item.textContent = "empty seat";
+      item.classList.add(`seat-view-${seat.view}`);
+      const { member } = seat;
+      if (member === null) {
+        item.classList.add("empty-seat");
+        if (model.isHost && (seat.seat !== undefined || seat.next)) {
+          // each empty seat offers a bot for itself
+          let button = this.addBotButton;
+          if (offered) {
+            button = document.createElement("button");
+            button.type = "button";
+            button.className = "add-bot-seat";
+            button.addEventListener("click", () => this.seatBot(button));
+          }
+          offered = true;
+          button.textContent = "Add a bot";
+          button.classList.remove("hidden");
+          button.disabled = false;
+          if (seat.seat === undefined) delete button.dataset.seat;
+          else button.dataset.seat = String(seat.seat);
+          item.append(button);
+        } else {
+          const ring = document.createElement("span");
+          ring.className = "empty-ring";
+          item.append(ring, "Empty");
+        }
       } else {
         const profile = playerProfile(member, model.members);
         const tags = [
-          seat === 0 ? "host" : null,
-          member === selfEmail ? "you" : null,
+          member === host ? "host" : null,
+          member === selfEmail ? "you" : seat.view === 2 ? "partner" : null,
         ].filter(Boolean);
         const identity = createPlayerIdentity(profile);
-        const right = document.createElement("span");
-        right.className = "seat-tags";
+        // The list is redrawn on every change: only a new arrival sits down.
+        if (!this.seatedMembers.has(member)) identity.classList.add("just-seated");
         const label = document.createElement("span");
         label.className = "seat-label";
         label.textContent = tags.join(" · ");
-        right.append(label);
+        item.append(identity, label);
         // host can remove anyone but themselves
         if (model.isHost && member !== selfEmail) {
           const kick = document.createElement("button");
           kick.type = "button";
           kick.className = "kick-button";
           kick.title = `Remove ${profile.displayName}`;
+          kick.setAttribute("aria-label", kick.title);
           kick.textContent = "✕";
           kick.addEventListener("click", () => this.callbacks.onKick(member));
-          right.append(kick);
+          item.append(kick);
         }
-        item.append(identity, right);
       }
       this.seatList.append(item);
     }
 
-    const full = model.members.length === 4;
-    this.addBotButton.classList.toggle("hidden", !model.isHost);
-    this.addBotButton.disabled = full;
+    this.seatedMembers = new Set(model.members);
+    if (full || !model.isHost) {
+      this.addBotButton.classList.add("hidden");
+      this.addBotButton.disabled = true;
+      this.lobbyControls.append(this.addBotButton);
+    }
     this.startGameButton.classList.toggle("hidden", !model.isHost);
     this.startGameButton.disabled = !full;
+    const missing = 4 - model.members.length;
+    this.startGameButton.textContent = full ? "Start game" : `Waiting for ${missing} more`;
     this.lobbyHint.textContent = model.isHost
       ? full
-        ? "All seats taken — ready when you are."
-        : "Friends can join from their own browser, or fill seats with bots."
+        ? "All seats taken. Ready when you are."
+        : "Friends can join from their own browser, or tap the empty seat for a bot."
       : "";
     this.leaveTableButton.textContent = model.isHost ? "Close table" : "Leave table";
 
@@ -502,6 +612,7 @@ export class UiOverlay {
 
   hideLobby() {
     this.hide(this.lobbyPanel);
+    this.seatedMembers = new Set();
   }
 
   status(text: string, transient = false) {
@@ -511,11 +622,28 @@ export class UiOverlay {
     }
     this.statusLine.textContent = text;
     this.statusLine.classList.toggle("visible", text.length > 0);
+    this.statusLine.classList.toggle("your-turn", text === YOUR_TURN);
     if (transient && text.length > 0) {
       this.statusTimer = window.setTimeout(() => {
         this.statusLine.classList.remove("visible");
       }, 2600);
     }
+  }
+
+  // One tap, one bot: the seat stops offering until the server answers.
+  private seatBot(button: HTMLButtonElement) {
+    button.disabled = true;
+    const seat = button.dataset.seat;
+    this.callbacks.onAddBot(seat === undefined ? undefined : Number(seat));
+  }
+
+  yourTurn() {
+    this.status(YOUR_TURN);
+  }
+
+  // Takes a message down if it's still the one showing, and leaves any other.
+  clearStatus(...messages: readonly string[]) {
+    if (messages.includes(this.statusLine.textContent ?? "")) this.status("");
   }
 
   // This sits over the table rather than in the busy HUD, so the player can
@@ -531,29 +659,39 @@ export class UiOverlay {
     this.trickOutcome.classList.remove("visible", "ours");
   }
 
-  showBidEvent(playerIndex: PlayerIndex, bid: number | "pass", durationMs: number) {
-    const kind = bid === "pass" ? "pass" : "raise";
-    this.clearBidHistory();
+  // A call stays beside its player for the rest of the auction: a bid is a
+  // seal, a pass is quiet text. Returns the new seal, for the effects to stamp.
+  showBidEvent(playerIndex: PlayerIndex, bid: number | "pass"): HTMLElement | null {
     const action = document.getElementById(`seat-action-${playerIndex}`);
-    if (!action) return;
-
-    action.textContent = bid === "pass" ? "— Pass" : `✦ Bid ${bid}`;
-    action.style.setProperty("--bid-call-duration", `${durationMs}ms`);
-    void action.offsetWidth; // restart the callout for consecutive actions
-    action.classList.add(kind, "visible");
-    action.closest(".seat-name-label")?.classList.add("speaking");
-    this.bidActionTimer = window.setTimeout(() => {
-      action.classList.remove("visible");
-      action.closest(".seat-name-label")?.classList.remove("speaking");
-      this.bidActionTimer = null;
-    }, durationMs);
+    if (!action) return null;
+    document.querySelectorAll<HTMLElement>(".seat-action.raise").forEach((earlier) => {
+      if (bid !== "pass") earlier.classList.add("superseded");
+    });
+    document.querySelectorAll(".seat-name-label.speaking").forEach((label) => {
+      label.classList.remove("speaking");
+    });
+    action.classList.remove("pass", "raise", "superseded");
+    action.classList.add("visible", bid === "pass" ? "pass" : "raise");
+    const seat = action.closest(".seat-name-label");
+    if (seat) {
+      void (seat as HTMLElement).offsetWidth; // restart the avatar's reaction
+      seat.classList.add("speaking");
+    }
+    if (bid === "pass") {
+      action.textContent = "Pass";
+      return null;
+    }
+    const seal = document.createElement("span");
+    seal.className = "seal";
+    seal.textContent = String(bid);
+    action.replaceChildren(seal);
+    return seal;
   }
 
   clearBidHistory() {
-    if (this.bidActionTimer !== null) window.clearTimeout(this.bidActionTimer);
-    this.bidActionTimer = null;
     document.querySelectorAll<HTMLElement>(".seat-action").forEach((action) => {
-      action.classList.remove("visible", "raise", "pass");
+      action.classList.remove("visible", "raise", "pass", "superseded");
+      action.replaceChildren();
       action.closest(".seat-name-label")?.classList.remove("speaking");
     });
   }
@@ -572,6 +710,7 @@ export class UiOverlay {
     this.tableMomentTitle.textContent = title;
     this.tableMomentDetail.textContent = detail;
     this.tableMomentHint.textContent = dismissible ? "tap anywhere to continue" : "";
+    this.tableMoment.classList.toggle("trump", symbol !== "");
     this.tableMoment.classList.toggle("dismissible", dismissible);
     this.tableMoment.classList.remove("visible");
     void this.tableMoment.offsetWidth; // restart the entrance animation
@@ -581,9 +720,8 @@ export class UiOverlay {
   }
 
   showTrumpReveal(suit: Suit, revealer: string | null, duration: number) {
-    const glyph = SUIT_GLYPHS[suit];
-    const title = revealer === null ? "Trump revealed" : `${revealer} revealed trump`;
-    this.showTableMoment(glyph, title, `${glyph} is now live`, duration, true);
+    const glyph = suitGlyph(suit);
+    this.showTableMoment(glyph, trumpRevealCaption(revealer), `${glyph} is now live`, duration, true);
   }
 
   hideTableMoment() {
@@ -601,17 +739,36 @@ export class UiOverlay {
       : `speed: ${pacing.speed}`;
     this.speedButton.disabled = pacing.reducedMotion;
     this.speedButton.title = pacing.reducedMotion
-      ? "Your device requests reduced motion"
+      ? "Reduced motion keeps every animation short"
       : "Change animation speed";
+  }
+
+  // The toggle shows the setting in force; a device that asks for reduced
+  // motion can't be overruled from here, so the toggle says so and stays put.
+  setMotion(reduced: boolean, forcedByDevice: boolean) {
+    this.motionButton.textContent = `Reduce motion: ${reduced ? "on" : "off"}`;
+    this.motionButton.setAttribute("aria-checked", String(reduced));
+    this.motionButton.disabled = forcedByDevice;
+    this.motionButton.title = forcedByDevice ? "Your device asks for reduced motion" : "";
   }
 
   // minBid is the lowest bid the server will accept; the opener must bid.
   showBidPanel(minBid: number, isOpening: boolean) {
-    this.bidLabel.textContent = isOpening
-      ? "Open the bidding"
-      : `Bid stands at ${minBid - 1}`;
-    this.bidRaise.textContent = `Bid ${minBid}`;
+    this.bidLabel.textContent = isOpening ? "Your bid" : `Beat ${minBid - 1}`;
+    // #bid-raise is the lowest bid that's allowed; any higher one is a chip beside it
+    this.bidChips.querySelectorAll(".bid-extra").forEach((chip) => chip.remove());
+    this.bidRaise.textContent = String(minBid);
     this.bidRaise.dataset.bid = String(minBid);
+    this.bidRaise.setAttribute("aria-label", `Bid ${minBid}`);
+    for (let value = minBid + 1; value <= MAX_BID; value++) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "bid-chip bid-extra";
+      chip.textContent = String(value);
+      chip.dataset.bid = String(value);
+      chip.setAttribute("aria-label", `Bid ${value}`);
+      this.bidChips.insertBefore(chip, this.bidPass);
+    }
     this.bidPass.classList.toggle("hidden", isOpening);
     this.show(this.bidPanel);
   }
@@ -632,47 +789,18 @@ export class UiOverlay {
     this.exposeButton.classList.toggle("hidden", !visible);
   }
 
-  setTrump(suit: Suit | null, exposed: boolean) {
-    if (suit === null && !exposed) {
-      this.trumpIndicator.textContent = "";
-      return;
-    }
-    const glyph = suit ? SUIT_GLYPHS[suit] : "?";
-    const suitClass = suit === "hearts" || suit === "diamonds" ? "red-suit" : "black-suit";
-    this.trumpIndicator.innerHTML = exposed
-      ? `Trump: <span class="${suitClass}">${glyph}</span>`
-      : suit
-        ? `Trump (hidden): <span class="${suitClass}">${glyph}</span>`
-        : "Trump: hidden";
-  }
-
-  // Between hands: the hand's card points, the verdict + match score, and
-  // either the host's deal button or a waiting note for everyone else.
-  showHandResult(
-    ourPoints: number,
-    theirPoints: number,
-    detail: string,
-    isHost: boolean,
-    matchSwing: number
-  ) {
-    this.resultTitle.textContent = `${ourPoints} — ${theirPoints}`;
-    this.resultDetail.textContent = detail;
-    const ours = matchSwing > 0;
-    this.resultPanel.classList.toggle("hand-won", ours);
-    this.resultPanel.classList.toggle("hand-lost", matchSwing < 0);
-    this.resultIcon.textContent = ours ? "✦" : "◆";
-    this.resultIcon.classList.toggle("gain", ours);
-    this.resultIcon.classList.toggle("loss", matchSwing < 0);
-    this.show(this.resultIcon);
-    this.resultDelta.textContent =
-      matchSwing > 0
-        ? `+${matchSwing} match point${matchSwing === 1 ? "" : "s"}`
-        : matchSwing < 0
-          ? `−${-matchSwing} match point${matchSwing === -1 ? "" : "s"}`
-          : "match score unchanged";
-    this.resultDelta.classList.toggle("gain", ours);
-    this.resultDelta.classList.toggle("loss", matchSwing < 0);
-    this.show(this.resultDelta);
+  // Between hands: the verdict, the wording of its points, and either the
+  // host's deal button or a waiting note for everyone else. Returns the parts
+  // the effects animate. Everything is in place straight away.
+  showHandResult(copy: HandResultCopy, note: string, isHost: boolean) {
+    this.resultPanel.classList.remove("match");
+    this.hide(this.resultTeam);
+    this.hide(this.resultTitle);
+    this.resultSeal.textContent = copy.seal;
+    this.resultDetail.textContent = copy.detail;
+    this.resultDelta.textContent = copy.points ?? "";
+    this.resultDelta.classList.toggle("hidden", copy.points === null);
+    this.resultNote.textContent = note;
     this.hide(this.resultHands);
     this.hide(this.goHomeButton);
     if (isHost) {
@@ -683,7 +811,12 @@ export class UiOverlay {
       this.resultWait.textContent = "waiting for the host to deal…";
       this.show(this.resultWait);
     }
-    this.show(this.resultPanel);
+    this.showResultPanel();
+    return {
+      seal: this.resultSeal,
+      detail: this.resultDetail,
+      delta: copy.points === null ? null : this.resultDelta,
+    };
   }
 
   showMatchOver(
@@ -692,16 +825,27 @@ export class UiOverlay {
     weWon: boolean,
     hands: number,
     target: number,
-    handResults: readonly number[]
+    handResults: readonly number[],
+    team: readonly PlayerProfile[],
+    finalHand = ""
   ) {
-    this.resultPanel.classList.remove("hand-won", "hand-lost");
-    this.resultIcon.classList.remove("gain", "loss");
-    this.resultIcon.textContent = weWon ? "🏆" : "🍂";
-    this.show(this.resultIcon);
-    this.resultTitle.textContent = weWon ? "You win the match!" : "Match lost";
+    this.resultPanel.classList.add("match");
+    this.resultTeam.replaceChildren(
+      ...team.map((profile) => {
+        const ring = document.createElement("div");
+        ring.className = `team-ring ${profile.isBot ? "bot" : "human"}`;
+        ring.textContent = profile.avatar;
+        ring.setAttribute("aria-label", profile.displayName);
+        return ring;
+      })
+    );
+    this.resultTeam.classList.toggle("hidden", team.length === 0);
+    this.resultTitle.textContent = weWon ? "You win the match" : "Match lost";
+    this.show(this.resultTitle);
+    this.resultSeal.textContent = `${scoreText(ourGamePoints)} – ${scoreText(theirGamePoints)}`;
     this.resultDetail.textContent =
-      `${ourGamePoints} — ${theirGamePoints} in game points\n` +
       `first to ${target} · ${hands} hand${hands === 1 ? "" : "s"} played`;
+    this.resultNote.textContent = finalHand;
     // hand-by-hand swing chips — only when we saw every hand (a mid-match
     // reconnect starts the tally over)
     this.resultHands.innerHTML = "";
@@ -709,7 +853,7 @@ export class UiOverlay {
       for (const swing of handResults) {
         const chip = document.createElement("span");
         chip.className = `hand-chip ${swing > 0 ? "gain" : "loss"}`;
-        chip.textContent = swing > 0 ? `+${swing}` : `−${-swing}`;
+        chip.textContent = signedText(swing);
         this.resultHands.append(chip);
       }
       this.show(this.resultHands);
@@ -720,14 +864,20 @@ export class UiOverlay {
     this.hide(this.resultWait);
     this.hide(this.resultDelta);
     this.show(this.goHomeButton);
+    this.showResultPanel();
+    return { team: this.resultTeam, title: this.resultTitle, seal: this.resultSeal };
+  }
+
+  private showResultPanel() {
+    this.hideTableMoment();
     this.show(this.resultPanel);
+    this.uiLayer.classList.add("result-up");
   }
 
   hideResult() {
-    this.resultPanel.classList.remove("hand-won", "hand-lost");
-    this.resultIcon.classList.remove("gain", "loss");
     this.hideTableMoment();
     this.hide(this.resultPanel);
+    this.uiLayer.classList.remove("result-up");
   }
 
   // Someone walked out (or timed out of their reconnect grace): the
@@ -796,6 +946,12 @@ export class UiOverlay {
     if (!visible) this.hide(this.emoteStrip);
   }
 
+  // The match HUD shows from the first deal until we're back at the home page.
+  setInMatch(inMatch: boolean) {
+    this.uiLayer.classList.toggle("in-match", inMatch);
+    this.closePopovers();
+  }
+
   setArrangeAvailable(available: boolean, trumpKnown: boolean) {
     this.arrangeButton.classList.toggle("hidden", !available);
     this.arrangeTrumpButton.disabled = !trumpKnown;
@@ -849,6 +1005,10 @@ function element(id: string): HTMLElement {
   const el = document.getElementById(id);
   if (!el) throw new Error(`UiOverlay: missing #${id}`);
   return el;
+}
+
+export function trumpRevealCaption(revealer: string | null): string {
+  return revealer === null ? "Trump revealed" : `${revealer} revealed trump`;
 }
 
 // A shareable URL that drops a friend straight into this table. Dev-server

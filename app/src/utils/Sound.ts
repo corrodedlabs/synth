@@ -88,6 +88,38 @@ export class SoundService {
     this.tone(ctx, { freq: 150, duration: 0.06, peak: 0.05 });
   }
 
+  // the same card arriving: a soft knock on the table
+  cardLand() {
+    this.count("cardLand");
+    const ctx = this.ready();
+    if (!ctx) return;
+    this.thock(ctx, { freq: 105, duration: 0.09, peak: 0.16 });
+  }
+
+  // a bid's red seal coming down
+  sealThump() {
+    this.count("sealThump");
+    const ctx = this.ready();
+    if (!ctx) return;
+    this.thock(ctx, { freq: 95, duration: 0.1, peak: 0.2 });
+  }
+
+  // the big seal, or the trump card turning over in the middle of the table
+  bigThump() {
+    this.count("bigThump");
+    const ctx = this.ready();
+    if (!ctx) return;
+    this.thock(ctx, { freq: 64, duration: 0.24, peak: 0.3 });
+  }
+
+  // a face-down card settling into the score, or a point landing on a pip
+  settle() {
+    this.count("settle");
+    const ctx = this.ready();
+    if (!ctx) return;
+    this.thock(ctx, { freq: 150, duration: 0.07, peak: 0.13 });
+  }
+
   // the completed trick swept toward its winner
   trickSweep() {
     this.count("trickSweep");
@@ -269,6 +301,24 @@ export class SoundService {
     gain.connect(this.master);
     source.start(start);
     source.stop(start + options.duration + 0.05);
+  }
+
+  // a low knock: a triangle wave dropping an octave as it dies away
+  private thock(ctx: AudioContext, options: ToneOptions) {
+    if (!this.master) return;
+    const start = ctx.currentTime + (options.delay ?? 0);
+    const end = start + options.duration;
+    const osc = ctx.createOscillator();
+    osc.type = options.type ?? "triangle";
+    osc.frequency.setValueAtTime(options.freq * 2, start);
+    osc.frequency.exponentialRampToValueAtTime(options.freq, end);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(options.peak, start);
+    gain.gain.exponentialRampToValueAtTime(0.0001, end);
+    osc.connect(gain);
+    gain.connect(this.master);
+    osc.start(start);
+    osc.stop(end + 0.02);
   }
 
   private tone(ctx: AudioContext, options: ToneOptions) {

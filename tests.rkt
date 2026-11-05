@@ -209,6 +209,20 @@
           (sleep 3))
 
    ;; test cases
+   ;; an installed app states its version; only an old one is turned away
+   (test-begin
+     (let ((connection (connect-to-ws)))
+       (send-msg connection '(client-hello "android" 1))
+       (check-equal? (recv-msg connection) '(protocol-ok 1))
+       (send-msg connection '(client-hello "android" 0))
+       (check-equal? (recv-msg connection) '(update-required 1))
+       (send-msg connection '(client-hello "android" "soon"))
+       (check-equal? (recv-msg connection) '(update-required 1))
+       ;; the socket still works afterwards
+       (send-msg connection '(ping))
+       (check-equal? (recv-msg connection) 'pong)
+       (ws-close! connection)))
+
    (test-begin
      (let ((connection (connect-to-ws))
            (watcher (connect-to-ws)))
@@ -366,7 +380,7 @@
                    (await host
                           (λ (events)
                             (findf (λ (m) (and ((tagged 'room-members) m)
-                                               (= (length m) 4)
+                                               (>= (length m) 4)
                                                (equal? (cadddr m) 2)))
                                    events))
                           #:label 'lobby-knows-target))
@@ -663,6 +677,48 @@
          (ws-close! probe))
        (for-each close-scripted! players))
      (putenv "MATCH-TARGET" ""))
+
+   ;; a bot goes to the seat the host tapped, a taken seat adds nobody, and the
+   ;; match seats everyone there, turned so the host comes last
+   (test-begin
+     (let ((connection (connect-to-ws)))
+       (connect-user connection 'seat-host)
+       (check-equal? (create-room connection 'seat-host 'seat-room) 'room-created)
+       (let ((host (spawn-scripted 'seat-host connection #:auto-next? #t #:smart? #t))
+             (members-message? (λ (m) (and (pair? m) (eq? (car m) 'room-members)))))
+         (define (seats-when-seated count label)
+           (list-ref (await host
+                            (λ (events)
+                              (findf (λ (m) (and (members-message? m)
+                                                 (= (length m) 5)
+                                                 (= (length (caddr m)) count)))
+                                     events))
+                            #:label label)
+                     4))
+         (send-msg connection '(add-bot-to-room seat-room 3))
+         (define first-seats (seats-when-seated 2 'bot-in-seat-3))
+         (check-equal? (car first-seats) 'seat-host)
+         (check-equal? (cadr first-seats) "")
+         (define bot (cadddr first-seats))
+         (check-not-equal? bot "")
+         ;; seat 3 is taken: this one adds nobody, so the next arrives as the third member
+         (send-msg connection '(add-bot-to-room seat-room 3))
+         (send-msg connection '(add-bot-to-room seat-room 1))
+         (define second-seats (seats-when-seated 3 'second-bot))
+         (check-not-equal? (cadr second-seats) "")
+         (check-equal? (caddr second-seats) "")
+         (send-msg connection '(add-bot-to-room seat-room 2))
+         (seats-when-seated 4 'third-bot)
+         (send-msg connection '(start-game seat-room))
+         (define final
+           (await host
+                  (λ (events)
+                    (findf (λ (m) (and (members-message? m) (= (length m) 4))) events))
+                  #:label 'final-order))
+         (check-equal? (last (caddr final)) 'seat-host)
+         (check-equal? (list-ref (caddr final) 2) bot)
+         (send-msg connection '(leave-match seat-room)))))
+
 
    ;; with hand-strength bidding, a table of bots (plus one bot-brained
    ;; host) makes its bids at a healthy rate — the old always-chase bots
