@@ -55,6 +55,7 @@ document.addEventListener('visibilitychange', () => {
   legalCards: () => gameState.legalCardIds(),
   play: (cardId: string) => gameState.playCardById(cardId),
   cardScreenPos: (cardId: string) => gameState.cardScreenPosition(cardId),
+  cardTapPoint: (cardId: string) => gameState.cardTapPoint(cardId),
   playedCardBounds: () => gameState.playedCardScreenBounds(),
   handCardBounds: () => gameState.handCardScreenBounds(),
   bid: (value: number) => gameState.getSession()?.submitBid(value),

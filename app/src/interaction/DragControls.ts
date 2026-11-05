@@ -66,8 +66,14 @@ export class DragControls {
     this.canvas.addEventListener('mouseup', this.onUp.bind(this));
   }
 
+  // The hand card a press at this page point would pick, by the same rules a
+  // finger gets. Lets automated tests aim at the part of a card that shows.
+  public cardAt(clientX: number, clientY: number): Card | null {
+    const cardMeshes = this.hand.getCards().map((c) => c.mesh);
+    return this.topmostCard(this.intersectsAt(clientX, clientY, cardMeshes));
+  }
+
   private getIntersects(event: MouseEvent | TouchEvent, objects: THREE.Object3D[]) {
-    const rect = this.canvas.getBoundingClientRect();
     let clientX, clientY;
 
     if (window.TouchEvent && event instanceof TouchEvent) {
@@ -78,6 +84,11 @@ export class DragControls {
       clientY = (event as MouseEvent).clientY;
     }
 
+    return this.intersectsAt(clientX, clientY, objects);
+  }
+
+  private intersectsAt(clientX: number, clientY: number, objects: THREE.Object3D[]) {
+    const rect = this.canvas.getBoundingClientRect();
     this.mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     this.mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
 
