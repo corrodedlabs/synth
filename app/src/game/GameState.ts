@@ -33,7 +33,7 @@ import { mockGameProgram } from "./MockGameProgram";
 import { GamePacing } from "./GamePacing";
 import type { GamePacingProfile } from "./GamePacing";
 import { PlayArea } from "./PlayArea";
-import { responsiveTableLayout, screenPointOnPlane } from "./TableLayout";
+import { objectScreenBounds, responsiveTableLayout, screenPointOnPlane } from "./TableLayout";
 import type { ResponsiveTableLayout } from "./TableLayout";
 
 // How long Play with bots may take to reach a deal before it says something's wrong.
@@ -803,6 +803,29 @@ export class GameState {
       x: ((projected.x + 1) / 2) * canvas.clientWidth,
       y: ((1 - projected.y) / 2) * canvas.clientHeight,
     };
+  }
+
+  // A canvas point where a tap picks this hand card, nearest its centre. In a
+  // tight fan the next card covers the centre, so tests tap here instead.
+  public cardTapPoint(cardId: string): { x: number; y: number } | null {
+    const card = this.hand.getCards().find((handCard) => handCard.mesh.userData.modelId === cardId);
+    const centre = this.cardScreenPosition(cardId);
+    if (!card || !centre) return null;
+    const canvas = this.sceneManager.renderer.domElement;
+    const rect = canvas.getBoundingClientRect();
+    const bounds = objectScreenBounds(card.mesh, this.sceneManager.camera, canvas);
+    const steps = 12;
+    let best: { x: number; y: number; distance: number } | null = null;
+    for (let i = 1; i < steps; i++) {
+      for (let j = 1; j < steps; j++) {
+        const x = bounds.left + ((bounds.right - bounds.left) * i) / steps;
+        const y = bounds.top + ((bounds.bottom - bounds.top) * j) / steps;
+        if (this.dragControls.cardAt(rect.left + x, rect.top + y) !== card) continue;
+        const distance = Math.hypot(x - centre.x, y - centre.y);
+        if (!best || distance < best.distance) best = { x, y, distance };
+      }
+    }
+    return best && { x: best.x, y: best.y };
   }
 
   public playedCardScreenBounds() {
