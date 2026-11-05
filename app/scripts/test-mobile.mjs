@@ -41,6 +41,42 @@ const check = (label, ok) => {
 };
 const shot = (name) => page.screenshot({ path: `${SHOTS}/${name}.png` });
 
+// Played cards slide in from their seat, so measure them only once none is moving.
+const settledPlayedCards = async () => {
+  let last = "";
+  for (let i = 0; i < 40; i++) {
+    const now = await page.evaluate(() =>
+      JSON.stringify(window.__game.playedCardBounds().map((c) => [c.player, Math.round(c.left), Math.round(c.top)]))
+    );
+    if (now === last) return;
+    last = now;
+    await page.waitForTimeout(150);
+  }
+};
+
+// Playable cards rise out of the fan when the server asks for a play, so a
+// tap aimed while one is still moving can land on its neighbour. Aim only
+// once the card has stopped.
+const settledTapPoint = async (cardId) => {
+  let last = "";
+  for (let i = 0; i < 30; i++) {
+    const point = await page.evaluate((id) => window.__game.cardTapPoint(id), cardId);
+    const now = JSON.stringify(point && [Math.round(point.x), Math.round(point.y)]);
+    if (point && now === last) return point;
+    last = now;
+    await page.waitForTimeout(100);
+  }
+  return page.evaluate((id) => window.__game.cardTapPoint(id), cardId);
+};
+
+// Playwright scrolls a control into view before tapping it, even though the
+// page itself can't scroll (body is overflow: hidden). A player's page never
+// moves, so put it back, or every later measurement and tap is off by the scroll.
+const tapControl = async (selector) => {
+  await page.tap(selector);
+  await page.evaluate(() => window.scrollTo(0, 0));
+};
+
 const state = () =>
   page.evaluate(() => {
     const model = window.__game.state();
@@ -89,19 +125,19 @@ await shot("01-start");
 await checkFits("#start-actions", "start actions");
 
 // help overlay on a phone
-await page.tap("#help-button");
+await tapControl("#help-button");
 await checkFits("#help-panel", "help panel");
 await shot("02-help");
-await page.tap("#help-close");
+await tapControl("#help-close");
 
 // lobby
 await page.fill("#player-name", "Phone");
-await page.tap('.mode-card[data-target="6"]');
-await page.tap("#create-button");
+await tapControl('.mode-card[data-target="6"]');
+await tapControl("#create-button");
 await page.waitForSelector("#lobby-panel:not(.hidden)", { timeout: 15000 });
 await checkFits("#lobby-panel", "lobby panel");
 for (let bots = 1; bots <= 3; bots++) {
-  await page.tap("#add-bot");
+  await tapControl("#add-bot");
   await page.waitForFunction(
     (expected) => window.__game.state().members.length === expected,
     bots + 1,
@@ -122,7 +158,7 @@ check(
     new Set(lobbyBots.map((bot) => bot.avatar)).size === 3 &&
     lobbyBots.every((bot) => !/^Bot \d+$/.test(bot.name))
 );
-await page.tap("#start-game");
+await tapControl("#start-game");
 await page.waitForSelector(".seat-name-label.visible .seat-marker");
 const seatPresentation = await page.evaluate(() =>
   [...document.querySelectorAll(".seat-name-label.visible")].map((seat) => {
@@ -214,7 +250,7 @@ while (Date.now() < deadline) {
   }
 
   if (snapshot.played >= 2 && !checkedSeatClearance) {
-    await page.waitForTimeout(600);
+    await settledPlayedCards();
     const layout = await page.evaluate(() => ({
       markers: [...document.querySelectorAll(".seat-marker")].map((marker) => {
         const rect = marker.getBoundingClientRect();
@@ -222,6 +258,8 @@ while (Date.now() < deadline) {
       }),
       cards: window.__game.playedCardBounds(),
     }));
+    // The trick was collected while we waited: measure a later one instead.
+    if (layout.cards.length < 2) continue;
     const overlaps = layout.markers.some((marker) =>
       layout.cards.some((card) =>
         card.left < marker.right && card.right > marker.left &&
@@ -242,13 +280,13 @@ while (Date.now() < deadline) {
 
   if (snapshot.pending === "bid") {
     await checkFits("#bid-panel", "bid panel");
-    await page.tap("#bid-pass");
+    await tapControl("#bid-pass");
     await page.waitForTimeout(300);
     continue;
   }
   if (snapshot.pending === "trump") {
     await checkFits("#trump-panel", "trump panel");
-    await page.tap('#trump-panel [data-suit="spades"]');
+    await tapControl('#trump-panel [data-suit="spades"]');
     await page.waitForTimeout(300);
     continue;
   }
@@ -258,7 +296,7 @@ while (Date.now() < deadline) {
       return button && !button.classList.contains("hidden");
     });
     if (exposable) {
-      await page.tap("#expose-button");
+      await tapControl("#expose-button");
       await page.waitForTimeout(300);
       continue;
     }
@@ -275,7 +313,7 @@ while (Date.now() < deadline) {
     // touch plays are two-step: the first tap arms the card…
     const cardId = snapshot.legal[0];
     // In a full fan the next card covers a card's centre, so tap the part a player can see.
-    const pos = await page.evaluate((id) => window.__game.cardTapPoint(id), cardId);
+    const pos = await settledTapPoint(cardId);
     if (pos) {
       await page.touchscreen.tap(pos.x, pos.y);
       await page.waitForTimeout(400);
@@ -285,7 +323,7 @@ while (Date.now() < deadline) {
         checkedArming = true;
       }
       // …and a second tap on the raised card commits it
-      const raised = await page.evaluate((id) => window.__game.cardTapPoint(id), cardId);
+      const raised = await settledTapPoint(cardId);
       if (raised) await page.touchscreen.tap(raised.x, raised.y);
       await page.waitForTimeout(500);
       const after = await state();

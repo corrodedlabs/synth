@@ -28,6 +28,19 @@ page.on("pageerror", (error) => errors.push(String(error)));
 
 const shot = (name) => page.screenshot({ path: `${SHOTS}/${name}.png` });
 
+// Played cards slide in from their seat, so measure them only once none is moving.
+const settledPlayedCards = async () => {
+  let last = "";
+  for (let i = 0; i < 40; i++) {
+    const now = await page.evaluate(() =>
+      JSON.stringify(window.__game.playedCardBounds().map((c) => [c.player, Math.round(c.left), Math.round(c.top)]))
+    );
+    if (now === last) return;
+    last = now;
+    await page.waitForTimeout(150);
+  }
+};
+
 const getState = () =>
   page.evaluate(() => {
     const state = window.__game.state();
@@ -166,7 +179,7 @@ while (Date.now() < deadline) {
   }
 
   if (state.played >= 2 && !seatClearanceChecked) {
-    await page.waitForTimeout(600);
+    await settledPlayedCards();
     const layout = await page.evaluate(() => ({
       markers: [...document.querySelectorAll(".seat-marker")].map((marker) => {
         const rect = marker.getBoundingClientRect();
@@ -174,6 +187,8 @@ while (Date.now() < deadline) {
       }),
       cards: window.__game.playedCardBounds(),
     }));
+    // The trick was collected while we waited: measure a later one instead.
+    if (layout.cards.length < 2) continue;
     const overlaps = layout.markers.some((marker) =>
       layout.cards.some((card) =>
         card.left < marker.right && card.right > marker.left &&
