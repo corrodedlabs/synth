@@ -7,6 +7,7 @@
         android:name=".SynthApp"
         android:label="28"
         android:icon="@mipmap/ic_launcher"
+        android:enableOnBackInvokedCallback="true"
         android:hardwareAccelerated="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:allowBackup="false">
@@ -22,14 +23,15 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Invite links. Android asks which app to use until the site vouches for this one (assetlinks.json). -->
+            <!-- Invite links. Android asks which app to use until respawnfi.com vouches for this one in
+                 /.well-known/assetlinks.json; autoVerify makes it check. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="synth28" android:host="join" />
             </intent-filter>
-            <intent-filter>
+            <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />

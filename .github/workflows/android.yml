@@ -72,7 +72,7 @@ jobs:
       - name: Install the NDK, CMake and SDL's Linux headers
         if: env.HAS_APSIS == 'true'
         run: |
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;27.1.12297006" "cmake;3.22.1" > /dev/null
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-36" "ndk;27.1.12297006" "cmake;3.22.1" > /dev/null
           sudo apt-get update -qq
           sudo apt-get install -y -qq ninja-build libx11-dev libxext-dev libxcursor-dev libxi-dev libxrandr-dev \
             libxss-dev libxtst-dev libwayland-dev libxkbcommon-dev libdrm-dev libgbm-dev libegl1-mesa-dev \
@@ -97,7 +97,13 @@ jobs:
           SYNTH_KEY_PASSWORD: ${{ secrets.SYNTH_KEY_PASSWORD }}
           KEYSTORE_BASE64: ${{ secrets.SYNTH_KEYSTORE_BASE64 }}
         run: |
+          umask 077
+          : "${KEYSTORE_BASE64:?Set SYNTH_KEYSTORE_BASE64 before requesting a release}"
+          : "${SYNTH_KEYSTORE_PASSWORD:?Set SYNTH_KEYSTORE_PASSWORD before requesting a release}"
+          : "${SYNTH_KEY_ALIAS:?Set SYNTH_KEY_ALIAS before requesting a release}"
+          : "${SYNTH_KEY_PASSWORD:?Set SYNTH_KEY_PASSWORD before requesting a release}"
           export SYNTH_KEYSTORE="$RUNNER_TEMP/release.jks"
+          trap 'rm -f "$SYNTH_KEYSTORE"' EXIT
           echo "$KEYSTORE_BASE64" | base64 -d > "$SYNTH_KEYSTORE"
           ./gradlew :app:bundleRelease
       - uses: actions/upload-artifact@v4

@@ -805,8 +805,10 @@ export class GameState {
     };
   }
 
-  // A canvas point where a tap picks this hand card, nearest its centre. In a
-  // tight fan the next card covers the centre, so tests tap here instead.
+  // A page point where a tap picks this hand card, nearest its centre. In a
+  // tight fan the next card covers the centre, so tests tap here instead. It is
+  // in page coordinates, as taps are: Playwright can scroll the page to reach
+  // a panel, and then the canvas no longer starts at the page's corner.
   public cardTapPoint(cardId: string): { x: number; y: number } | null {
     const card = this.hand.getCards().find((handCard) => handCard.mesh.userData.modelId === cardId);
     const centre = this.cardScreenPosition(cardId);
@@ -825,7 +827,7 @@ export class GameState {
         if (!best || distance < best.distance) best = { x, y, distance };
       }
     }
-    return best && { x: best.x, y: best.y };
+    return best && { x: rect.left + best.x, y: rect.top + best.y };
   }
 
   public playedCardScreenBounds() {
