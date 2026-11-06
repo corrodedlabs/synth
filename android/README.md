@@ -82,8 +82,10 @@ jarsigner -keystore "$SYNTH_KEYSTORE" -storepass:env SYNTH_KEYSTORE_PASSWORD \
 Validate the signed AAB with Google's `bundletool validate` and check its signature with
 `jarsigner -verify` before uploading. The release must not contain Vulkan validation layers.
 
-For invite links to open the app without asking, publish `/.well-known/assetlinks.json` on
-`respawnfi.com` with the app's signing certificate. Until then Android asks which app to use.
+Invite links open the app because `app/public/.well-known/assetlinks.json`, served at
+`https://respawnfi.com/.well-known/assetlinks.json`, lists Play's app-signing certificate (Play Console →
+App integrity → App signing). Builds signed another way, such as debug builds, aren't covered, so their
+links open in the browser unless the app is allowed under Settings → Apps → 28 → Open by default.
 
 The release app talks to `wss://twenty-eight-game.fly.dev/test`, so deploy the server's `client-hello`
 before anyone installs a build. An older server answers `invalid-request`, which the app ignores.
