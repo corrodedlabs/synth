@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.captionBar
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.union
@@ -134,8 +135,9 @@ fun GameScreens(controller: GameController, shareInvite: (String) -> Unit) {
     }
 }
 
+// The caption bar is the window handle Android draws at the top of a tablet's screen. Phones report none.
 private val MenuInsets: WindowInsets
-    @Composable get() = WindowInsets.displayCutout.union(WindowInsets.ime)
+    @Composable get() = WindowInsets.displayCutout.union(WindowInsets.captionBar).union(WindowInsets.ime)
 
 /** Opaque paper for the menus, scrolled when a short screen or the keyboard leaves too little room. */
 @Composable
@@ -198,14 +200,15 @@ private fun StartScreen(controller: GameController, name: String, onName: (Strin
             }
             Spacer(Modifier.size(16.dp))
             // Friends is the headline; bots is just as easy to reach, in ink rather than red.
-            BigSealButton("Play with friends", Modifier.testTag("create-button").padding(horizontal = 44.dp).fillMaxWidth().widthIn(max = 330.dp).height(62.dp), fontSize = 28) {
+            BigSealButton("Play with friends", Modifier.testTag("create-button").padding(horizontal = 44.dp).widthIn(max = 330.dp).fillMaxWidth().height(62.dp), fontSize = 28) {
                 focus.clearFocus()
                 controller.createTable(name, target)
             }
-            Spacer(Modifier.size(12.dp))
+            // The torn edges and tilts reach past each button's box, so they need a clear gap to look apart.
+            Spacer(Modifier.size(22.dp))
             BigSealButton(
                 "Play with bots",
-                Modifier.testTag("play-bots").padding(horizontal = 44.dp).fillMaxWidth().widthIn(max = 330.dp).height(62.dp),
+                Modifier.testTag("play-bots").padding(horizontal = 44.dp).widthIn(max = 330.dp).fillMaxWidth().height(62.dp),
                 fontSize = 28,
                 fill = Ink,
                 edge = Color(0xFF241C18),
@@ -542,7 +545,7 @@ private fun LobbyScreen(controller: GameController, shareInvite: (String) -> Uni
                 Spacer(Modifier.size(10.dp))
                 if (model.isHost) {
                     if (full) {
-                        BigSealButton("Start the hand", Modifier.testTag("start-game").padding(horizontal = 44.dp).fillMaxWidth().widthIn(max = 330.dp).height(62.dp), fontSize = 28) {
+                        BigSealButton("Start the hand", Modifier.testTag("start-game").padding(horizontal = 44.dp).widthIn(max = 330.dp).fillMaxWidth().height(62.dp), fontSize = 28) {
                             controller.startGame()
                         }
                     } else {

@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.captionBar
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -96,6 +97,8 @@ private const val MAX_BID = 28
 private const val LEAVE_ARM_MS = 4_000L
 private const val RESULT_HOLD_MS = 700L
 private const val FAN_TOP_FROM_BOTTOM = 0.3f  // of the screen's height, in portrait
+private val SHORT_LANDSCAPE = 550.dp  // seatSpots' and the table's short landscape: a phone on its side
+private val HANDLE_CLEARANCE = 16.dp  // below a tablet's window handle
 private val PORTRAIT_RING = 66.dp
 private val LANDSCAPE_RING = 52.dp
 
@@ -184,15 +187,26 @@ internal fun PlayOverlay(controller: GameController) {
                 SeatMarker(controller, seat, spots[seat], landscape, width, insetLeft, insetRight)
             }
         }
+        // A tablet draws its window handle at the top centre, over the score. The score only has to clear
+        // the handle itself: dropping it the caption bar's full height would push it into the partner's seat.
+        val handle = if (WindowInsets.captionBar.asPaddingValues().calculateTopPadding() > 0.dp) HANDLE_CLEARANCE else 0.dp
         Box(safe) {
-            TopBar(model, Modifier.align(Alignment.TopCenter), onMenu = { toggle(Popover.MENU) })
+            TopBar(model, Modifier.align(Alignment.TopCenter).padding(top = handle), onMenu = { toggle(Popover.MENU) })
             BottomBar(controller, landscape, Modifier.align(Alignment.BottomCenter), onSort = { toggle(Popover.SORT) }, onEmote = { toggle(Popover.EMOTE) })
         }
 
         // In portrait the prompts sit just above the fan, where the player is already looking. A landscape
-        // fan leaves no room there, so they hang from the top.
-        val promptPlace = if (landscape) {
-            Modifier.align(Alignment.TopCenter).padding(top = 130.dp)
+        // fan leaves no room there. A phone on its side has none between the seats either, so they hang from
+        // the top, below the partner's name. A tablet's taller table has its middle free: they sit there,
+        // level with the side seats, as they do on the web.
+        val roomy = landscape && height > SHORT_LANDSCAPE
+        val promptTop = when {
+            roomy -> spots[1].y.dp - 60.dp
+            landscape -> 130.dp
+            else -> null
+        }
+        val promptPlace = if (promptTop != null) {
+            Modifier.align(Alignment.TopCenter).padding(top = promptTop)
         } else {
             Modifier.align(Alignment.BottomCenter).padding(bottom = height * FAN_TOP_FROM_BOTTOM)
         }
@@ -227,7 +241,7 @@ internal fun PlayOverlay(controller: GameController) {
         }
 
         flyingTrump?.let { suit ->
-            FlyingTrump(suit, width, height, landscape, onDone = {
+            FlyingTrump(suit, width, height, promptTop, onDone = {
                 flyingTrump = null
                 controller.thump()
             })
@@ -239,6 +253,8 @@ internal fun PlayOverlay(controller: GameController) {
         // Announcements never take touches. They keep to whichever part of the table a prompt leaves free.
         controller.moment?.let { moment ->
             val top = when {
+                // On a tablet the gap between the partner's card and yours, level with the side seats, is free.
+                roomy && model.phase == GamePhase.PLAYING -> spots[1].y.dp - 20.dp
                 landscape -> height * 0.24f
                 pending != null || model.phase == GamePhase.BIDDING || model.phase == GamePhase.CHOOSING_TRUMP -> height * 0.30f
                 else -> height * 0.62f
@@ -780,7 +796,7 @@ private fun TrumpPanel(modifier: Modifier, onSuit: (Suit) -> Unit) {
 
 /** The chosen suit turns face down and goes up to its place in the score, where nobody else can see it. */
 @Composable
-private fun BoxScope.FlyingTrump(suit: Suit, width: Dp, height: Dp, landscape: Boolean, onDone: () -> Unit) {
+private fun BoxScope.FlyingTrump(suit: Suit, width: Dp, height: Dp, promptTop: Dp?, onDone: () -> Unit) {
     val reduce = LocalReduceMotion.current
     val turn = remember { Animatable(0f) }
     val fly = remember { Animatable(0f) }
@@ -792,7 +808,8 @@ private fun BoxScope.FlyingTrump(suit: Suit, width: Dp, height: Dp, landscape: B
         onDone()
     }
     val startX = width / 2 - PICK_W / 2
-    val startY = if (landscape) 150.dp else height * (1 - FAN_TOP_FROM_BOTTOM) - PICK_H
+    // Where the chosen card sat in the prompt: below its title.
+    val startY = promptTop?.plus(20.dp) ?: (height * (1 - FAN_TOP_FROM_BOTTOM) - PICK_H)
     val endX = width - 12.dp - PICK_W * 0.65f
     val endY = 2.dp
     val p = fly.value
