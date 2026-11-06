@@ -66,7 +66,9 @@ To release through GitHub Actions:
 1. Create the app in Play Console. The first upload fixes its ID as `com.respawnfi.twentyeight`.
 2. Enable Play App Signing, letting Google create the app signing key. The configured key is the
    separate upload key, used to authenticate bundles sent to Play.
-3. Run the Android workflow by hand with a version code. It produces a signed bundle as an artifact.
+3. Run the Android workflow by hand on `master` with a version code. It publishes a GitHub pre-release,
+   tagged `android-v<versionName>-<versionCode>`, with the signed bundle, its checksum and the commits since
+   the last release. A run from any other branch only leaves the bundle as an artifact.
 4. Upload the bundle to the internal testing track. Play needs the first upload done by hand.
 
 For a cloud build, leave the `SYNTH_KEYSTORE*` variables unset and run `./gradlew :app:bundleRelease`.
