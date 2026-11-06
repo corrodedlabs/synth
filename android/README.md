@@ -52,6 +52,13 @@ shows a "please update" screen. Installed apps go stale while the server auto-de
 `min-client-protocol` in `server.rkt` only when a change would break apps people already have, and only
 once an updated app has been out long enough.
 
+## The icon
+
+`android/icon/make_icons.py` draws every icon from the app's ensō (`drawable-nodpi/enso.png`) and font:
+the adaptive launcher icon with its themed (monochrome) layer, the Play Store icon and feature graphic in
+`android/icon/store/`, and the website's icons and favicon. Edit the script and rerun it, rather than
+editing the images. It needs Pillow.
+
 ## Releasing
 
 The upload key and all four GitHub Actions signing secrets were configured on 2026-11-05. The key
