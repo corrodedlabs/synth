@@ -658,6 +658,30 @@ private fun UpdateRequiredScreen() {
     }
 }
 
+/**
+ * For a phone whose GPU can't run the table, found before SDL starts (GameActivity). The game itself still
+ * runs in the browser. [reason] is the check's short answer, shown small so a player can pass it on.
+ */
+@Composable
+internal fun UnsupportedScreen(reason: String, onPlayInBrowser: () -> Unit) {
+    Box(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
+        PaperScreen(Modifier.testTag("unsupported-screen")) {
+            Stack(Modifier.padding(horizontal = 28.dp), gap = 12.dp) {
+                Txt("28", size = 64, weight = FontWeight.W500, spacing = 4f)
+                Txt("This phone can't run the table yet", size = 24, weight = FontWeight.W500)
+                Txt("You can play the same game in your browser.", size = 19, opacity = 0.8f)
+                Spacer(Modifier.size(6.dp))
+                PaperButton(
+                    "Play in browser", onPlayInBrowser, Modifier.testTag("unsupported-browser"),
+                    size = 19, spacing = 1f, horizontal = 30.dp,
+                )
+                Spacer(Modifier.size(10.dp))
+                Txt(reason, Modifier.testTag("unsupported-reason"), size = 13, opacity = 0.55f)
+            }
+        }
+    }
+}
+
 private fun openStore(context: Context) {
     fun open(link: String): Boolean = try {
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link)))

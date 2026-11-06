@@ -11,6 +11,7 @@
 #include "commands.h"
 #include "core/file.h"
 #include "core/log.h"
+#include "gpu_desc.h"
 #include "platform/platform.h"
 #include "simple/simple.h"
 #include "sound.h"
@@ -20,6 +21,15 @@
 #include <sys/system_properties.h>
 void bridge_card_played(const char *card);  /* jni.c */
 #endif
+
+/* The table needs nothing beyond the engine's base, and runs on the Vulkan 1.1 path too, so it reaches
+ * the most phones. Its shaders are built for vulkan1.1 to match (CMakeLists.txt). */
+const GpuDesc synth_gpu_desc = {
+    .app_name = "28",
+    .shader_dir = SYNTH_SHADERS,
+    .paced = true,
+    .allow_vulkan_1_1 = true,
+};
 
 #define CARD_W 0.6f
 #define CARD_H 0.9f
@@ -231,14 +241,11 @@ int main(int argc, char **argv)
 #endif
 
     Gpu gpu;
-    gpu_init(&gpu, &(GpuDesc){
-        .window = platform.window,
-        .app_name = "28",
-        .shader_dir = SYNTH_SHADERS,
-        .validation = !no_validation,
-        .vsync = !headless,
-        .paced = true,
-    });
+    GpuDesc desc = synth_gpu_desc;
+    desc.window = platform.window;
+    desc.validation = !no_validation;
+    desc.vsync = !headless;
+    gpu_init(&gpu, &desc);
     audio_init(&app.audio);
     table_sounds_init(&app.sounds, &app.audio);
     platform_attach(&platform, &gpu, &app.audio);
