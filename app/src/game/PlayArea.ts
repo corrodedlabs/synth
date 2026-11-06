@@ -68,6 +68,7 @@ export class PlayArea {
       const center = card.mesh.getWorldPosition(new THREE.Vector3()).project(this.camera);
       return {
         player: card.mesh.userData.playerIndex as number,
+        moving: card.isMoving(),
         centerX: ((center.x + 1) / 2) * canvas.clientWidth,
         centerY: ((1 - center.y) / 2) * canvas.clientHeight,
         ...objectScreenBounds(card.mesh, this.camera, canvas),

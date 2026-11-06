@@ -30,15 +30,11 @@ const shot = (name) => page.screenshot({ path: `${SHOTS}/${name}.png` });
 
 // Played cards slide in from their seat, so measure them only once none is moving.
 const settledPlayedCards = async () => {
-  let last = "";
-  for (let i = 0; i < 40; i++) {
-    const now = await page.evaluate(() =>
-      JSON.stringify(window.__game.playedCardBounds().map((c) => [c.player, Math.round(c.left), Math.round(c.top)]))
-    );
-    if (now === last) return;
-    last = now;
-    await page.waitForTimeout(150);
-  }
+  // Ask the game rather than compare positions: on a slow software GPU one frame can outlast the
+  // sampling gap, so two equal samples don't prove a card has landed.
+  await page
+    .waitForFunction(() => window.__game.playedCardBounds().every((c) => !c.moving), null, { timeout: 6000 })
+    .catch(() => {});
 };
 
 const getState = () =>

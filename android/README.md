@@ -66,7 +66,9 @@ To release through GitHub Actions:
 1. Create the app in Play Console. The first upload fixes its ID as `com.respawnfi.twentyeight`.
 2. Enable Play App Signing, letting Google create the app signing key. The configured key is the
    separate upload key, used to authenticate bundles sent to Play.
-3. Run the Android workflow by hand with a version code. It produces a signed bundle as an artifact.
+3. Run the Android workflow by hand on `master` with a version code. It publishes a GitHub pre-release,
+   tagged `android-v<versionName>-<versionCode>`, with the signed bundle, its checksum and the commits since
+   the last release. A run from any other branch only leaves the bundle as an artifact.
 4. Upload the bundle to the internal testing track. Play needs the first upload done by hand.
 
 For a cloud build, leave the `SYNTH_KEYSTORE*` variables unset and run `./gradlew :app:bundleRelease`.
@@ -82,8 +84,10 @@ jarsigner -keystore "$SYNTH_KEYSTORE" -storepass:env SYNTH_KEYSTORE_PASSWORD \
 Validate the signed AAB with Google's `bundletool validate` and check its signature with
 `jarsigner -verify` before uploading. The release must not contain Vulkan validation layers.
 
-For invite links to open the app without asking, publish `/.well-known/assetlinks.json` on
-`respawnfi.com` with the app's signing certificate. Until then Android asks which app to use.
+Invite links open the app because `app/public/.well-known/assetlinks.json`, served at
+`https://respawnfi.com/.well-known/assetlinks.json`, lists Play's app-signing certificate (Play Console →
+App integrity → App signing). Builds signed another way, such as debug builds, aren't covered, so their
+links open in the browser unless the app is allowed under Settings → Apps → 28 → Open by default.
 
 The release app talks to `wss://twenty-eight-game.fly.dev/test`, so deploy the server's `client-hello`
 before anyone installs a build. An older server answers `invalid-request`, which the app ignores.

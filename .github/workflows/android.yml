@@ -111,3 +111,55 @@ jobs:
         with:
           name: synth-release-bundle
           path: android/app/build/outputs/bundle/release/*.aab
+
+  # A release build run by hand from master also becomes a GitHub pre-release, tagged
+  # android-v<versionName>-<versionCode>, with the bundle and its checksum. Builds from other branches
+  # stay as artifacts only.
+  release:
+    name: GitHub release
+    needs: [core, app]
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: synth-release-bundle
+          path: bundle
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_CODE: ${{ inputs.version_code }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          version_name=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' android/app/build.gradle.kts)
+          short=$(git rev-parse --short=7 HEAD)
+          tag="android-v${version_name}-${VERSION_CODE}"
+          file="twenty-eight-${VERSION_CODE}-${short}.aab"
+          if git rev-parse -q --verify "refs/tags/$tag" > /dev/null; then
+            echo "::error::$tag already exists. Use a higher version code."
+            exit 1
+          fi
+          mv bundle/*.aab "bundle/$file"
+          (cd bundle && sha256sum "$file" > "$file.sha256")
+          previous=$(git tag --list 'android-v*' --sort=-creatordate | head -n 1)
+          {
+            echo "Version ${version_name} (version code ${VERSION_CODE}) of **28** for Android, \`com.respawnfi.twentyeight\`."
+            echo
+            echo "Built from \`master\` at ${short} by [this run](${RUN_URL}), and signed with the upload key."
+            echo "Upload \`${file}\` to Play Console; the bundle can't be installed directly."
+            echo
+            if [ -n "$previous" ]; then
+              echo "### Changes since ${previous}"
+              echo
+              git log --no-merges --format='- %s (%h)' "${previous}..HEAD"
+            fi
+          } > notes.md
+          gh release create "$tag" --target "$GITHUB_SHA" --prerelease \
+            --title "28 for Android ${version_name} (build ${VERSION_CODE})" \
+            --notes-file notes.md "bundle/$file" "bundle/$file.sha256"
