@@ -65,6 +65,11 @@ export class Card {
     this.mesh.userData = { card: this }; // Link back to Card instance
   }
 
+  // True while the card is travelling, bouncing or turning. Tests measure cards only once it's false.
+  public isMoving(): boolean {
+    return this.positionTween !== null || this.bounceTween !== null || this.rotationTween !== null;
+  }
+
   public setPosition(x: number, y: number, z: number, immediate = false, duration = 500) {
     // Cancel any in-flight tween so stale targets can't drag the card back
     if (this.positionTween) {
