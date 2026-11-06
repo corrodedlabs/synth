@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.respawnfi.twentyeight",
+      "sha256_cert_fingerprints": [
+        "CE:C4:A0:DA:DC:D5:30:99:DE:9E:E5:BA:A3:E0:3F:78:64:71:96:B2:A5:78:58:C4:A9:58:1F:A6:EB:42:6F:9A"
+      ]
+    }
+  }
+]
