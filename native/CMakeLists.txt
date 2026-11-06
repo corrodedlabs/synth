@@ -62,4 +62,5 @@ set_source_files_properties(src/third_party.c PROPERTIES COMPILE_OPTIONS "-w")
 target_include_directories(game PRIVATE ${stb_SOURCE_DIR})
 target_link_libraries(game PRIVATE synth_table apsis_platform apsis_simple apsis_anim apsis_audio apsis_gpu apsis_core SDL3::SDL3 m)
 target_compile_options(game PRIVATE ${warnings})
-apsis_add_simple_shaders(game ${shader_dir})
+# SPIR-V 1.3, which phones on Apsis's Vulkan 1.1 path can load, and 1.3 phones run too.
+apsis_add_simple_shaders(game ${shader_dir} TARGET_ENV vulkan1.1)

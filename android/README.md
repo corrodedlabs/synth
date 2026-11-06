@@ -44,6 +44,32 @@ An emulator proves behaviour and not speed: it draws with a software GPU. It nee
 on a real phone, with `adb shell setprop debug.apsis.validation 0`, since debug builds run with
 validation on.
 
+## Phones without Vulkan 1.3
+
+The table runs on Vulkan 1.3, and on 1.1 and 1.2 phones that have bindless textures, buffer addresses and
+scalar layouts, through Apsis's fallback (`allow_vulkan_1_1` in `native/src/main.c`; the shaders build for
+`vulkan1.1`). The fallback swaps dynamic rendering and synchronization2 for the original render passes and
+barriers. The manifest asks for Vulkan 1.1, and Play can't tell which of those phones have the three
+features, so the app checks at launch:
+
+- `GameActivity.onCreate` calls `TableBridge.gpuProblem()` before SDL starts. It runs Apsis's
+  `gpu_check_support` with the table's own GPU settings (`native/src/gpu_desc.h`).
+- A phone that fails sees "This phone can't run the table yet", the reason in small text, and **Play in
+  browser**. That opens respawnfi.com in a Custom Tab, at the invited table when an invite link opened the
+  app. SDL never starts, so nothing touches the GPU. The reason goes to logcat under `synth`, and nowhere else.
+
+To test either way:
+
+| Switch | What it does |
+|---|---|
+| `adb shell setprop debug.apsis.force_legacy 1` | A 1.3 phone takes the fallback, as if it were 1.1. A driver that has the features only as 1.2 ones, as the emulator's does, runs it at 1.2. |
+| `adb shell setprop debug.synth.force_unsupported 1` | In debug builds, any phone gets the "can't run the table" screen |
+| `APSIS_FORCE_LEGACY=1 build/native/synth_table --demo` | The fallback on desktop |
+
+Set them back to 0 afterwards. The emulator images for Android 13 and older can't run the table on either
+path: their GPU claims Vulkan 1.3 without its features, so the check sends them to the browser. Use Android
+14 or later. `logcat -s apsis` shows which path a run took, on the `GPU path:` line.
+
 ## The protocol version
 
 The app sends `(client-hello "android" <version>)` when it connects, using `PROTOCOL_VERSION` in
