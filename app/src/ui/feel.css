@@ -1137,6 +1137,10 @@ body {
   font-size: 28px;
   margin: 0;
 }
+/* The drop shadow and the opposite tilts eat most of the column's gap, so give this pair its own. */
+#create-button + #play-bots {
+  margin-top: 10px;
+}
 #play-bots:disabled {
   font-size: 26px;
   opacity: 0.75;
