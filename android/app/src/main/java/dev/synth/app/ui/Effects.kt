@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
@@ -343,7 +344,8 @@ internal fun Pips(label: String, score: Int, target: Int, color: Color, modifier
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp),
     ) {
-        Txt(label, Modifier.width(44.dp).padding(end = 3.dp), size = 14, opacity = 0.7f, spacing = 0f, align = TextAlign.End, maxLines = 1)
+        // At least this wide, and wider for large type. The rows end level, so the pips still line up.
+        Txt(label, Modifier.widthIn(min = 44.dp).padding(end = 3.dp), size = 14, opacity = 0.7f, spacing = 0f, align = TextAlign.End, maxLines = 1)
         for (i in 0 until target) {
             val filled = i < score
             val last = filled && i == score - 1

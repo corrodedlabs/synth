@@ -95,9 +95,21 @@ await host.click("#start-game");
 await host.waitForFunction(() => window.__game.state().phase !== "lobby", undefined, {
   timeout: 15000,
 });
-await host.evaluate(() => window.__game.emote("nice"));
+const nice = '#emote-strip button[data-emote="nice"]';
+await host.click("#emote-button");
+await host.click(nice);
 await guest.waitForSelector('.emote-bubble[data-emote="nice"]', { timeout: 10000 });
 console.log("emote bubble reached the guest");
+
+// Another can be picked while the first is still on screen. It reaches the table too, and takes the first's place.
+await host.waitForTimeout(400);
+await host.click("#emote-button");
+await host.click('#emote-strip button[data-emote="laugh"]');
+await guest.waitForSelector('.emote-bubble[data-emote="laugh"]', { timeout: 1000 });
+for (const page of [host, guest]) {
+  if ((await page.locator(".emote-bubble").count()) !== 1) throw new Error("the new emote landed on the old one");
+}
+console.log("a second emote went while the first was still up");
 
 // --- both browsers play the hand out ---
 const playLoop = async (label, page) => {
@@ -125,7 +137,18 @@ const playLoop = async (label, page) => {
   throw new Error(`${label} timed out in phase ${(await state(page)).phase}`);
 };
 
-const [hostEnd, guestEnd] = await Promise.all([playLoop("host", host), playLoop("guest", guest)]);
+// --- an emote doesn't wait for the table ---
+// The table holds on each bid so that it can be read. A reaction sent during that hold still shows at once,
+// on the sender's screen and across the table.
+const emoteDuringHold = (async () => {
+  await guest.waitForFunction(() => window.__game.state().bidsPlaced >= 1, undefined, { timeout: 60000 });
+  await host.waitForFunction(() => window.__game.emote("wow"), undefined, { timeout: 5000, polling: 50 });
+  await host.waitForSelector('.emote-bubble[data-emote="wow"]', { timeout: 300 });
+  await guest.waitForSelector('.emote-bubble[data-emote="wow"]', { timeout: 1000 });
+  console.log("an emote sent while the table held on a bid showed at once");
+})();
+
+const [hostEnd, guestEnd] = await Promise.all([playLoop("host", host), playLoop("guest", guest), emoteDuringHold]);
 await host.screenshot({ path: `${SHOTS}/04-host-result.png` });
 await guest.screenshot({ path: `${SHOTS}/05-guest-result.png` });
 

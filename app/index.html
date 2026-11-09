@@ -39,6 +39,9 @@
         height: 100%;
         pointer-events: none;
         z-index: 10;
+        /* A seat's box runs past the edge of a phone: it must not make the page wider. */
+        overflow: hidden;
+        overflow: clip;
       }
       .hidden {
         display: none !important;
@@ -461,10 +464,6 @@
         opacity: 0.4;
         transform: none;
       }
-      #abandon-panel {
-        top: 11%;
-        max-width: 420px;
-      }
       #leaderboard-panel {
         top: 50%;
         transform: translate(-50%, -50%);
@@ -638,7 +637,9 @@
           max-width: 76vw;
           padding: 8px 13px;
           font-size: 16px;
-          white-space: nowrap;
+          border-radius: 20px;
+          text-align: center;
+          width: max-content;
         }
         .panel {
           padding: 14px 16px;
@@ -667,11 +668,6 @@
         .emote-bubble {
           font-size: 34px;
         }
-        #abandon-panel {
-          top: 6%; /* clear of the centered between-hands result panel */
-          width: 86vw;
-          box-sizing: border-box;
-        }
         #reconnect-panel {
           width: 86vw;
           box-sizing: border-box;
@@ -679,13 +675,7 @@
         #leaderboard-panel {
           min-width: 0;
           width: 86vw;
-          max-height: 80vh;
-          overflow-y: auto;
           box-sizing: border-box;
-        }
-        #help-panel {
-          max-height: 84vh;
-          overflow-y: auto;
         }
         .seat-name-label {
           width: 132px;
@@ -714,13 +704,6 @@
           top: calc(50% + 62px);
           font-size: 10px;
         }
-        .seat-name-label .seat-action {
-          top: calc(50% + 63px);
-          font-size: 13px;
-        }
-        #seat-label-2 .seat-action {
-          top: calc(50% + 80px);
-        }
       }
       @media (max-height: 550px) and (orientation: landscape) {
         .seat-name-label {
@@ -746,13 +729,6 @@
         .seat-name-label .partner-tag {
           top: calc(50% + 53px);
           font-size: 9px;
-        }
-        .seat-name-label .seat-action {
-          top: calc(50% + 54px);
-          font-size: 12px;
-        }
-        #seat-label-2 .seat-action {
-          top: calc(50% + 68px);
         }
       }
     </style>

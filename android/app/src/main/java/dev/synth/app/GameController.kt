@@ -222,6 +222,8 @@ class GameController(context: Context) : SessionCallbacks {
     override fun emote(seat: PlayerIndex, emote: String) {
         command("sound emote")
         val note = EmoteNote(seat, emote, emoteKey++)
+        // A seat shows one at a time: a new one takes the old one's place rather than landing on it.
+        emotes.removeAll { it.seat == seat }
         emotes.add(note)
         handler.postDelayed({ emotes.remove(note) }, 2_400)
     }

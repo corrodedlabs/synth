@@ -116,6 +116,11 @@ jobs:
       - name: test-mobile
         working-directory: app
         run: node scripts/test-mobile.mjs "http://localhost:5179/?port=8082"
+      - name: test-prompt-clearance
+        working-directory: app
+        env:
+          SIZES: 360x800,412x915,500x724,600x800,671x724,673x841,700x700,701x724,768x1024,915x412,1280x800
+        run: node scripts/test-prompt-clearance.mjs "http://localhost:5179/?port=8082"
       - name: Upload screenshots and server logs
         if: failure()
         uses: actions/upload-artifact@v4

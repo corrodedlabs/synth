@@ -18,6 +18,8 @@ export interface UiCallbacks {
   readonly onJoin: (roomName: string) => void;
   readonly onJoinLink: (playerName: string, roomName: string) => void;
   readonly onEmote: (emote: string) => void;
+  // Where the top of the player's fan is on screen, or null with no cards in hand.
+  readonly fanTop: () => number | null;
   readonly onStandings: (playerName: string) => void;
   readonly onRefreshRooms: () => void;
   readonly onAddBot: (seat?: number) => void;
@@ -48,6 +50,11 @@ export const SEAT_NAMES = ["You", "Right", "Partner", "Left"] as const;
 
 const MODE_KEY = "game28-match-length";
 const MAX_BID = 28;
+// px between a seat's name and a prompt, and how far a call starts above its ring's middle.
+const PROMPT_CLEARANCE = 4;
+const SEAT_CALL_RISE = 21;
+// px a prompt stops short of the top of the fan.
+const FAN_CLEARANCE = 6;
 
 function storedMode(): number {
   try {
@@ -146,6 +153,7 @@ export class UiOverlay {
   private shareInviteButton = element("share-invite") as HTMLButtonElement;
   private emoteButton = element("emote-button") as HTMLButtonElement;
   private emoteStrip = element("emote-strip");
+  private emoteBubbles = new Map<number, HTMLElement>();
   private arrangeButton = element("arrange-button") as HTMLButtonElement;
   private arrangePanel = element("arrange-panel");
   private arrangeTrumpButton = element("arrange-trump") as HTMLButtonElement;
@@ -166,6 +174,8 @@ export class UiOverlay {
   private resultTeam = element("result-team");
   private bidChips = element("bid-chips");
   private lobbyControls = element("lobby-controls");
+  private scoreDisplay = element("score-display");
+  private bringRoomsIntoView = false;
   private selectedTarget = storedMode();
   private seatedMembers: ReadonlySet<string> = new Set();
   private statusTimer: number | null = null;
@@ -182,6 +192,13 @@ export class UiOverlay {
     document.addEventListener("pointerdown", () => {
       if (this.tableMoment.classList.contains("dismissible")) this.hideTableMoment();
     });
+    // Next frame: the seats move to their new places in a listener of their own.
+    window.addEventListener("resize", () =>
+      requestAnimationFrame(() => {
+        this.makeRoomForPrompt();
+        this.keepOffCards();
+      })
+    );
 
     // Play with friends opens a table to invite them to, of the length picked on the cards above it.
     element("create-button").addEventListener("click", () => {
@@ -201,7 +218,7 @@ export class UiOverlay {
     element("browse-button").addEventListener("click", () => {
       this.show(this.roomBrowser);
       this.roomList.innerHTML = `<div id="room-empty">looking for tables…</div>`;
-      this.roomBrowser.scrollIntoView({ block: "nearest" });
+      this.bringRoomsIntoView = true;
       callbacks.onBrowse(this.playerNameInput.value);
     });
     element("refresh-rooms").addEventListener("click", () => callbacks.onRefreshRooms());
@@ -455,8 +472,9 @@ export class UiOverlay {
     }
   }
 
-  // An emote bubble that pops near a seat and drifts away.
-  showEmoteAt(x: number, y: number, emote: string) {
+  // An emote bubble that pops near a seat and drifts away. A seat shows one at a time: a new one takes the
+  // old one's place rather than landing on it.
+  showEmoteAt(seat: number, x: number, y: number, emote: string) {
     const glyph = EMOTES[emote];
     if (!glyph) return;
     const bubble = document.createElement("div");
@@ -465,6 +483,8 @@ export class UiOverlay {
     bubble.textContent = glyph;
     bubble.style.left = `${x}px`;
     bubble.style.top = `${y}px`;
+    this.emoteBubbles.get(seat)?.remove();
+    this.emoteBubbles.set(seat, bubble);
     this.uiLayer.append(bubble);
     window.setTimeout(() => bubble.remove(), 2400);
   }
@@ -491,6 +511,15 @@ export class UiOverlay {
   }
 
   showRooms(rooms: readonly RoomInfo[]) {
+    this.fillRoomList(rooms);
+    // Only the first answer scrolls: the list is pushed live, and may be mid-swipe.
+    if (this.bringRoomsIntoView) {
+      this.bringRoomsIntoView = false;
+      this.roomBrowser.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  private fillRoomList(rooms: readonly RoomInfo[]) {
     this.roomList.innerHTML = "";
     const open = rooms.filter((room) => room.members.length < 4);
     if (open.length === 0) {
@@ -677,14 +706,16 @@ export class UiOverlay {
       void (seat as HTMLElement).offsetWidth; // restart the avatar's reaction
       seat.classList.add("speaking");
     }
+    let seal: HTMLElement | null = null;
     if (bid === "pass") {
       action.textContent = "Pass";
-      return null;
+    } else {
+      seal = document.createElement("span");
+      seal.className = "seal";
+      seal.textContent = String(bid);
+      action.replaceChildren(seal);
     }
-    const seal = document.createElement("span");
-    seal.className = "seal";
-    seal.textContent = String(bid);
-    action.replaceChildren(seal);
+    if (playerIndex === 0) this.keepOffCards();
     return seal;
   }
 
@@ -771,22 +802,91 @@ export class UiOverlay {
     }
     this.bidPass.classList.toggle("hidden", isOpening);
     this.show(this.bidPanel);
+    this.makeRoomForPrompt();
   }
 
   hideBidPanel() {
     this.hide(this.bidPanel);
+    this.makeRoomForPrompt();
   }
 
   showTrumpPanel() {
     this.show(this.trumpPanel);
+    this.makeRoomForPrompt();
   }
 
   hideTrumpPanel() {
     this.hide(this.trumpPanel);
+    this.makeRoomForPrompt();
+  }
+
+  // The fan's size on screen follows the camera and the camera follows the window's shape, which the
+  // rules that place a prompt can't see. So a prompt moves as little as it can from where they put it, to
+  // sit between the partner and the cards. Where it can't clear both the cards win, because they're what
+  // the player is deciding on, and the partner rises out of its way as far as the score lets it.
+  //
+  // On a short phone a prompt takes the whole gap over the hand, the side seats
+  // with it. They rise until the prompt closes, and the partner rises too if
+  // their calls would land on its name. Offsets ignore the lift already applied.
+  private makeRoomForPrompt() {
+    const prompt = [this.bidPanel, this.trumpPanel].find((panel) => !panel.classList.contains("hidden"));
+    let promptRise = 0;
+    let sideLift = 0;
+    let partnerLift = 0;
+    if (prompt) {
+      const fanTop = this.callbacks.fanTop();
+      const scoreBottom = this.scoreDisplay.getBoundingClientRect().bottom;
+      const partner = document.getElementById("seat-label-2");
+      const tag = partner?.querySelector<HTMLElement>(".partner-tag");
+      const marker = partner?.querySelector<HTMLElement>(".seat-marker");
+      const partnerBottom =
+        partner && tag ? partner.offsetTop - partner.offsetHeight / 2 + tag.offsetTop + tag.offsetHeight : scoreBottom;
+      if (fanTop !== null) {
+        const onCards = prompt.offsetTop + prompt.offsetHeight + FAN_CLEARANCE - fanTop;
+        const underPartner = prompt.offsetTop - partnerBottom - PROMPT_CLEARANCE;
+        const underScore = prompt.offsetTop - scoreBottom - PROMPT_CLEARANCE;
+        const wanted = onCards > underPartner ? onCards : Math.max(onCards, Math.min(0, underPartner));
+        promptRise = Math.ceil(Math.min(wanted, underScore));
+      }
+      const promptTop = prompt.offsetTop - promptRise;
+      const span = prompt.getBoundingClientRect();
+      const sides = [1, 3].flatMap((seat) => {
+        const label = document.getElementById(`seat-label-${seat}`);
+        const name = label?.querySelector<HTMLElement>(".player-copy");
+        return label && name ? [{ label, name }] : [];
+      });
+      for (const { label, name } of sides) {
+        const across = name.getBoundingClientRect();
+        if (across.right <= span.left || across.left >= span.right) continue;
+        const nameBottom = label.offsetTop - label.offsetHeight / 2 + name.offsetTop + name.offsetHeight;
+        sideLift = Math.max(sideLift, Math.ceil(nameBottom + PROMPT_CLEARANCE - promptTop));
+      }
+      if (partner && marker) {
+        const markerTop = partner.offsetTop - marker.offsetHeight / 2;
+        const callTop = sideLift > 0 && sides[0] ? sides[0].label.offsetTop - sideLift - SEAT_CALL_RISE : Infinity;
+        const highest = Math.min(promptTop - PROMPT_CLEARANCE, callTop);
+        partnerLift = Math.ceil(Math.max(0, Math.min(partnerBottom - highest, markerTop - scoreBottom - 4)));
+      }
+    }
+    this.uiLayer.style.setProperty("--prompt-rise", `${promptRise}px`);
+    this.uiLayer.style.setProperty("--seat-lift", `${Math.max(0, sideLift)}px`);
+    this.uiLayer.style.setProperty("--partner-lift", `${partnerLift}px`);
   }
 
   setExposeVisible(visible: boolean) {
     this.exposeButton.classList.toggle("hidden", !visible);
+    this.keepOffCards();
+  }
+
+  // The rules that place the reveal button and our own call can't see how far the fan reaches either,
+  // so they rise off the cards the way a prompt does.
+  private keepOffCards() {
+    const fanTop = this.callbacks.fanTop();
+    const rise = (el: HTMLElement) =>
+      fanTop === null ? 0 : Math.ceil(Math.max(0, el.offsetTop + el.offsetHeight + FAN_CLEARANCE - fanTop));
+    this.uiLayer.style.setProperty("--expose-rise", `${rise(this.exposeButton)}px`);
+    const ownCall = document.getElementById("seat-action-0");
+    if (ownCall) this.uiLayer.style.setProperty("--own-call-rise", `${rise(ownCall)}px`);
   }
 
   // Between hands: the verdict, the wording of its points, and either the

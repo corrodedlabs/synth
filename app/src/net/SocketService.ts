@@ -16,7 +16,12 @@ export class SocketError {
   constructor(readonly message: string) {}
 }
 
-export const connectSocket = (url: string): Effect.Effect<GameSocket, SocketError> =>
+// `live` sees an event as soon as it arrives, and returns true if that's all it needs. The rest wait in
+// `events`, for the session to present in its own time.
+export const connectSocket = (
+  url: string,
+  live: (event: ServerEvent) => boolean = () => false
+): Effect.Effect<GameSocket, SocketError> =>
   Effect.gen(function* () {
     const events = yield* Queue.unbounded<ServerEvent>();
 
@@ -32,7 +37,7 @@ export const connectSocket = (url: string): Effect.Effect<GameSocket, SocketErro
       const event = decodeServerEvent(String(message.data));
       if (event) {
         console.debug("[ws] ←", event);
-        Queue.unsafeOffer(events, event);
+        if (!live(event)) Queue.unsafeOffer(events, event);
       }
     };
     ws.onclose = () => {

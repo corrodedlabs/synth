@@ -109,6 +109,10 @@ const PING_INTERVAL = "25 seconds";
 
 const MAX_PLAYERS = 4;
 
+// A little over the server's gap between one player's emotes. Two taps this far apart can still reach it
+// closer together on a bad connection, and it would drop the second after we had already shown it.
+const EMOTE_GAP_MS = 300;
+
 export class GameSession {
   private socket: GameSocket | null = null;
   private fiber: Fiber.RuntimeFiber<void, SocketError> | null = null;
@@ -121,6 +125,7 @@ export class GameSession {
   private locallyPlayed = new Set<string>();
   private chosenTrump: Suit | null = null;
   private justExposed = false; // we called for the trump, must trump if able
+  private lastEmoteAt = -Infinity;
 
   readonly email: string;
   readonly displayName: string;
@@ -313,15 +318,29 @@ export class GameSession {
     if (this.socket?.isOpen()) this.socket.send({ _tag: "Ping" });
   }
 
-  // A quick table emote; the server validates and rate-limits, we just
-  // need to be in a running match for it to mean anything.
-  sendEmote(emote: string) {
+  // A quick table emote. The server validates it, and we only need to be in a running match for it to
+  // mean anything. It shows here at once, so the tap answers without waiting on the network. Returns
+  // whether it went.
+  sendEmote(emote: string): boolean {
     const phase = this.callbacks.getModel().phase;
     const inMatch =
       phase === "bidding" || phase === "choosing-trump" ||
       phase === "playing" || phase === "hand-finished";
-    if (!this.socket || !inMatch) return;
+    const now = performance.now();
+    if (!this.socket || !inMatch || now - this.lastEmoteAt < EMOTE_GAP_MS) return false;
+    this.lastEmoteAt = now;
     this.socket.send({ _tag: "SendEmote", email: this.email, emote });
+    this.callbacks.emote(0, emote);
+    return true;
+  }
+
+  private showEmote(seatOnServer: number, emote: string) {
+    // until we are seated (rejoin still restoring), myServerIndex is
+    // a default and the bubble would land at the wrong seat
+    if (!this.inRoom) return;
+    const seat = this.toView(seatOnServer);
+    // Our own showed when we sent it.
+    if (seat !== 0) this.callbacks.emote(seat, emote);
   }
 
   // Back to the start screen: reset lobby state and refresh the table list
@@ -370,7 +389,13 @@ export class GameSession {
       dispatch({ _tag: "PhaseChanged", phase: "connecting" });
       this.callbacks.status("Connecting…");
 
-      const socket = yield* connectSocket(serverUrl());
+      // The session holds each event for the table's pacing. An emote is a live reaction rather than part
+      // of the game, so it never waits in that line.
+      const socket = yield* connectSocket(serverUrl(), (event) => {
+        if (event._tag !== "EmotePlayed") return false;
+        this.showEmote(event.seat, event.emote);
+        return true;
+      });
       this.socket = socket;
 
       socket.send({ _tag: "ConnectUser", email: this.email, picUrl: "none" });
@@ -473,6 +498,7 @@ export class GameSession {
               target: event.target,
             });
             if (event.seats) dispatch({ _tag: "MembersChanged", members: event.members, seats: event.seats });
+            this.callbacks.status(""); // we're in, and only the host hears "game started" to replace it
           }
           return false;
         }
@@ -557,6 +583,8 @@ export class GameSession {
           return false;
 
         case "ChooseTrumpRequested":
+          // No turn comes with this, and the last bidder would stay lit as "bidding…".
+          dispatch({ _tag: "ActivePlayerChanged", playerIndex: 0 });
           dispatch({ _tag: "RequestReceived", request: { kind: "trump" } });
           return false;
 
@@ -661,12 +689,8 @@ export class GameSession {
           }
           return false;
 
+        // Never queued: see connectSocket in program.
         case "EmotePlayed":
-          // until we are seated (rejoin still restoring), myServerIndex is
-          // a default and the bubble would land at the wrong seat
-          if (this.inRoom) {
-            this.callbacks.emote(this.toView(event.seat), event.emote);
-          }
           return false;
 
         case "SeatAbandoned": {

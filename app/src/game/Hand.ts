@@ -271,4 +271,20 @@ export class Hand {
       ...objectScreenBounds(card.mesh, this.camera, canvas),
     }));
   }
+
+  // Where the top of the fan is on screen with every card in its slot, whether or not it has got there yet.
+  public fanScreenTop(canvas: HTMLElement): number | null {
+    if (this.cards.length === 0) return null;
+    return Math.min(
+      ...this.cards.map((card, index) => {
+        const { position, rotation } = this.computeLayout(index, this.cards.length);
+        const slot = new THREE.Group();
+        slot.position.copy(position);
+        slot.rotation.copy(rotation);
+        slot.scale.setScalar(this.cardScale);
+        slot.add(...card.mesh.children.map((child) => child.clone()));
+        return objectScreenBounds(slot, this.camera, canvas).top;
+      })
+    );
+  }
 }

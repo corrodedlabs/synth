@@ -14,7 +14,8 @@ const browser = await chromium.launch({
     ? { executablePath: "/usr/bin/chromium" }
     : { channel: "chrome" }),
   headless: !process.env.HEADED,
-  args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader"],
+  // SwiftShader yields no WebGL context on macOS; Chrome's default GL works there.
+  args: process.platform === "darwin" ? [] : ["--enable-unsafe-swiftshader", "--use-angle=swiftshader"],
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
 const failures = [];
@@ -42,6 +43,39 @@ for (let count = 2; count <= 4; count++) {
   await page.click("#add-bot");
   await page.waitForFunction((expected) => window.__game.state().members.length === expected, count);
 }
+
+// The status line is drawn over the lobby, whose last row runs to the foot of a
+// small screen: that row has to make room while a message is up.
+for (const viewport of [
+  { width: 280, height: 653 },
+  { width: 320, height: 568 },
+  { width: 360, height: 640 },
+  { width: 568, height: 320 },
+  { width: 640, height: 360 },
+]) {
+  await page.setViewportSize(viewport);
+  const clashes = await page.evaluate(() => {
+    const line = document.getElementById("status-line");
+    line.textContent = "padmanabhan-iyer left the table.";
+    line.classList.add("visible");
+    const range = document.createRange();
+    range.selectNodeContents(line);
+    const message = range.getBoundingClientRect();
+    const hit = ["#start-game", "#share-invite", "#leave-table"].filter((selector) => {
+      const control = document.querySelector(selector).getBoundingClientRect();
+      return (
+        Math.min(control.right, message.right) - Math.max(control.left, message.left) > 2 &&
+        Math.min(control.bottom, message.bottom) - Math.max(control.top, message.top) > 2
+      );
+    });
+    line.textContent = "";
+    line.classList.remove("visible");
+    return hit;
+  });
+  check(`${viewport.width}×${viewport.height}: a status message clears the lobby's controls`, clashes.length === 0, clashes);
+}
+await page.setViewportSize({ width: 1280, height: 800 });
+
 await page.click("#start-game");
 await page.waitForSelector("#table-moment.visible", { timeout: 15000 });
 const dealAnnouncement = await page.evaluate(() => {
@@ -70,6 +104,92 @@ check(
   dealAnnouncement
 );
 
+// The bid panel, with the other seats' calls showing, on every class of phone:
+// it must clear the seats and the hand, and its calls must stay beside their
+// players. scripts/test-layout-matrix.mjs checks every other screen.
+async function checkBidPanelAtEverySize() {
+  await page.waitForTimeout(2500); // the calls land one at a time
+  for (const viewport of [
+    { width: 280, height: 653 },
+    { width: 320, height: 568 },
+    { width: 360, height: 640 },
+    { width: 390, height: 844 },
+    { width: 412, height: 915 },
+    { width: 768, height: 1024 },
+    { width: 568, height: 320 },
+    { width: 640, height: 360 },
+    { width: 844, height: 390 },
+    { width: 915, height: 412 },
+    { width: 820, height: 600 },
+    { width: 1024, height: 600 },
+    { width: 1280, height: 800 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.waitForTimeout(450); // seats rise out of a prompt's way with a transition
+    const prompt = await page.evaluate(() => {
+      const box = (element) => {
+        const { left, top, right, bottom } = element.getBoundingClientRect();
+        return { left, top, right, bottom };
+      };
+      const panel = document.getElementById("bid-panel");
+      const seats = [1, 2, 3].map((player) => {
+        const root = document.getElementById(`seat-label-${player}`);
+        const call = root.querySelector(".seat-action.visible");
+        const parts = [root.querySelector(".seat-marker"), root.querySelector(".player-copy"), root.querySelector(".partner-tag"), call];
+        return {
+          player,
+          marker: box(root.querySelector(".seat-marker")),
+          call: call ? box(call) : null,
+          parts: parts.filter(Boolean).map(box),
+        };
+      });
+      return {
+        panel: box(panel),
+        seats,
+        chips: [...panel.querySelectorAll(".bid-chip")].filter((chip) => chip.getClientRects().length).map(box),
+        hand: window.__game.handCardBounds(),
+        pageWidth: document.scrollingElement.scrollWidth,
+      };
+    });
+    const overlaps = (first, second) =>
+      Math.min(first.right, second.right) - Math.max(first.left, second.left) > 2 &&
+      Math.min(first.bottom, second.bottom) - Math.max(first.top, second.top) > 2;
+    const name = `${viewport.width}×${viewport.height}`;
+    check(
+      `${name}: bid panel fits the screen`,
+      prompt.panel.left >= 0 && prompt.panel.right <= viewport.width && prompt.panel.top >= 0 && prompt.panel.bottom <= viewport.height,
+      prompt.panel
+    );
+    check(
+      `${name}: bid panel clears every seat's ring, name and call`,
+      prompt.seats.every((seat) => seat.parts.every((part) => !overlaps(part, prompt.panel))),
+      prompt.seats
+    );
+    check(
+      `${name}: bid panel clears the hand`,
+      prompt.hand.every((card) => !overlaps(card, prompt.panel)),
+      { panel: prompt.panel, hand: prompt.hand }
+    );
+    check(
+      `${name}: every call sits beside its ring`,
+      prompt.seats.some((seat) => seat.call) &&
+        prompt.seats.every((seat) => !seat.call || (seat.call.top < seat.marker.bottom && seat.call.bottom > seat.marker.top)),
+      prompt.seats
+    );
+    // The smallest phones on their side give up a little of a chip to keep every bid on two rows.
+    const finger = viewport.height <= 340 ? 36 : 40;
+    check(
+      `${name}: bid chips are a finger wide`,
+      prompt.chips.length > 0 && prompt.chips.every((chip) => chip.right - chip.left >= finger && chip.bottom - chip.top >= finger),
+      prompt.chips
+    );
+    check(`${name}: the page has no sideways scroll`, prompt.pageWidth <= viewport.width, prompt.pageWidth);
+    await page.screenshot({ path: `${SHOTS}/${viewport.width}x${viewport.height}-bid.png` });
+  }
+  await page.setViewportSize({ width: 1280, height: 800 });
+}
+
+let bidPanelChecked = false;
 let frozen = false;
 const deadline = Date.now() + 180_000;
 while (Date.now() < deadline) {
@@ -83,6 +203,10 @@ while (Date.now() < deadline) {
     };
   });
 
+  if (state.pending === "bid" && !bidPanelChecked) {
+    bidPanelChecked = true;
+    await checkBidPanelAtEverySize();
+  }
   if (state.pending === "play" && state.played.length === 3 && !state.played.includes(0)) {
     frozen = true;
     break;

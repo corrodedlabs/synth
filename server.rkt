@@ -423,8 +423,9 @@
   (define *leavers* (make-hash))
 
   ;; --- table emotes ---
-  ;; a fixed vocabulary (anything else is dropped) and a per-player
-  ;; cooldown so the table cannot be flooded
+  ;; a fixed vocabulary (anything else is dropped) and a short per-player
+  ;; gap so the table cannot be flooded. It must stay under what a player
+  ;; can tap, because clients show an emote as it's tapped: see EMOTE_GAP_MS.
 
   (define +emotes+ '(nice ouch wow think laugh fire))
   (define *last-emote* (make-hash))
@@ -442,7 +443,7 @@
             (let ((now (current-inexact-milliseconds))
                   (last (hash-ref *last-emote* email 0)))
               (cond
-                ((< (- now last) 1500) 'emote-throttled)
+                ((< (- now last) 200) 'emote-throttled)
                 (else
                  (hash-set! *last-emote* email now)
                  (let* ((players (hash-ref *running-games* name))
