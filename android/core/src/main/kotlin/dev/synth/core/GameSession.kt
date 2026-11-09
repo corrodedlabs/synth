@@ -100,9 +100,9 @@ const val CONNECT_BEAT_MS = 300L
 
 const val REJOIN_RETRY_MS = 3_000L
 
-// A little over the server's cooldown on emotes. Two taps this far apart can still reach it closer
-// together on a bad connection, and it would drop the second after we had already shown it.
-const val EMOTE_COOLDOWN_MS = 1_800L
+// A little over the server's gap between one player's emotes. Two taps this far apart can still reach it
+// closer together on a bad connection, and it would drop the second after we had already shown it.
+const val EMOTE_GAP_MS = 300L
 
 private const val MAX_PLAYERS = 4
 
@@ -459,7 +459,7 @@ class GameSession(
         if (socket == null || !inMatch || emoteCooldown?.isActive == true) return false
         send(ClientCommand.SendEmote(email, emote))
         callbacks.emote(0, emote)
-        emoteCooldown = scope.launch { delay(EMOTE_COOLDOWN_MS) }
+        emoteCooldown = scope.launch { delay(EMOTE_GAP_MS) }
         return true
     }
 

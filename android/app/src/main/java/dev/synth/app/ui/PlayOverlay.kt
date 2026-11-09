@@ -97,7 +97,6 @@ private val EMOTES = listOf(
 private const val MAX_BID = 28
 private const val LEAVE_ARM_MS = 4_000L
 private const val RESULT_HOLD_MS = 700L
-private const val FAN_TOP_FROM_BOTTOM = 0.3f  // of the screen's height, in portrait
 private val SHORT_LANDSCAPE = 550.dp  // seatSpots' and the table's short landscape: a phone on its side
 private val SHORT_PORTRAIT = 700.dp   // below this, the prompts run out of room between the side seats and the fan
 private val SHORT_RESULT = 420.dp     // below this, a phone on its side, the result panels tighten up to fit
@@ -145,12 +144,20 @@ private fun seatSpots(width: Float, height: Float): List<Spot> {
             val sideX = (width * 0.12f).coerceIn(100f, 220f)
             val topY = (height * 0.14f).coerceIn(112f, 138f)
             val topCardY = topY + 168
-            val sideY = if (height <= 650) topCardY + 58 else maxOf(height * 0.46f, topCardY + 70)
-            val bottomY = if (height <= 650) sideY + 36 else sideY + (height * 0.11f).coerceIn(68f, 105f)
+            val sideY = if (height < 700) topCardY + 58 else maxOf(height * 0.46f, topCardY + 70)
+            val bottomY = if (height < 700) sideY + 36 else sideY + (height * 0.11f).coerceIn(68f, 105f)
             listOf(Spot(width / 2, bottomY), Spot(width - sideX, sideY), Spot(width / 2, topY), Spot(sideX, sideY))
         }
     }
 }
+
+/**
+ * How far up the screen the top of the fan reaches in portrait, as a share of its height, with a little clearance.
+ * The table's camera comes closer as the screen gets squarer, and the cards don't quite give all of that back: this
+ * line is measured from the table at aspects up to 1. A table wider than seatSpots' compact one holds its hand lower.
+ */
+private fun fanTopFromBottom(width: Dp, height: Dp): Float =
+    if (width > 700.dp) 0.31f else 0.3f + 0.06f * maxOf(0f, width / height - 0.55f)
 
 /** On a phone on its side, the prompts start below the partner's name. The height is seatSpots' top seat. */
 private fun sidewaysPromptTop(height: Dp): Dp = (height * 0.2f).coerceIn(72.dp, 88.dp) + 50.dp
@@ -219,7 +226,7 @@ internal fun PlayOverlay(controller: GameController) {
         val promptPlace = if (promptTop != null) {
             Modifier.align(Alignment.TopCenter).padding(top = promptTop)
         } else {
-            Modifier.align(Alignment.BottomCenter).padding(bottom = height * FAN_TOP_FROM_BOTTOM)
+            Modifier.align(Alignment.BottomCenter).padding(bottom = height * fanTopFromBottom(width, height))
         }
         if (controller.canExpose) {
             PaperButton(
@@ -695,7 +702,6 @@ private fun EmoteStrip(controller: GameController, close: () -> Unit) {
             Pressable(
                 { controller.sendEmote(id); close() },
                 Modifier.size(40.dp).testTag("emote-$id"),
-                enabled = !controller.emoteCooling,
                 shape = RoundedCornerShape(50),
                 border = Color.Transparent,
             ) {
@@ -829,7 +835,7 @@ private val PICK_GAP = 6.dp
 private fun pickScale(width: Dp, height: Dp, landscape: Boolean): Float {
     val across = (width - 24.dp - PICK_GAP * 3) / (PICK_W * 4)
     val down = when {
-        !landscape -> (height * (1 - FAN_TOP_FROM_BOTTOM) - 372.dp) / PICK_H
+        !landscape -> (height * (1 - fanTopFromBottom(width, height)) - 372.dp) / PICK_H
         height <= SHORT_LANDSCAPE -> (height * SIDEWAYS_FAN_TOP - sidewaysPromptTop(height) - 30.dp) / PICK_H
         else -> 1f
     }
@@ -884,7 +890,7 @@ private fun BoxScope.FlyingTrump(suit: Suit, cardScale: Float, width: Dp, height
     val pickH = PICK_H * cardScale
     val startX = width / 2 - pickW / 2
     // Where the chosen card sat in the prompt: below its title.
-    val startY = promptTop?.plus(20.dp) ?: (height * (1 - FAN_TOP_FROM_BOTTOM) - pickH)
+    val startY = promptTop?.plus(20.dp) ?: (height * (1 - fanTopFromBottom(width, height)) - pickH)
     val endX = width - 12.dp - pickW * 0.65f
     val endY = 2.dp
     val p = fly.value
@@ -1174,7 +1180,7 @@ private fun BidNoteAt(text: String, spot: Spot, seat: Int, landscape: Boolean, s
     val (x, y) = when {
         seat == 0 && landscape -> spot.x.dp - NOTE_WIDTH / 2 to spot.y.dp - 4.dp
         // Just above the fan, where our own bid panel was.
-        seat == 0 -> spot.x.dp - NOTE_WIDTH / 2 to screenHeight * (1 - FAN_TOP_FROM_BOTTOM) - NOTE_HEIGHT + 4.dp
+        seat == 0 -> spot.x.dp - NOTE_WIDTH / 2 to screenHeight * (1 - fanTopFromBottom(screenWidth, screenHeight)) - NOTE_HEIGHT + 4.dp
         seat == 1 -> centre - ring / 2 - NOTE_GAP - NOTE_WIDTH to spot.y.dp - NOTE_HEIGHT / 2
         else -> centre + ring / 2 + NOTE_GAP to spot.y.dp - NOTE_HEIGHT / 2
     }

@@ -176,9 +176,11 @@ async function checkBidPanelAtEverySize() {
         prompt.seats.every((seat) => !seat.call || (seat.call.top < seat.marker.bottom && seat.call.bottom > seat.marker.top)),
       prompt.seats
     );
+    // The smallest phones on their side give up a little of a chip to keep every bid on two rows.
+    const finger = viewport.height <= 340 ? 36 : 40;
     check(
       `${name}: bid chips are a finger wide`,
-      prompt.chips.length > 0 && prompt.chips.every((chip) => chip.right - chip.left >= 40 && chip.bottom - chip.top >= 40),
+      prompt.chips.length > 0 && prompt.chips.every((chip) => chip.right - chip.left >= finger && chip.bottom - chip.top >= finger),
       prompt.chips
     );
     check(`${name}: the page has no sideways scroll`, prompt.pageWidth <= viewport.width, prompt.pageWidth);

@@ -337,12 +337,12 @@ class GameSessionTest {
     }
 
     @Test
-    fun `an emote inside the cooldown isn't sent or shown`() = runTest {
+    fun `an emote right on top of the last isn't sent or shown`() = runTest {
         val h = harness()
         seatedAtTwo(h)
         h.session.sendEmote("fire")
         val sent = h.socket.sent.size
-        settle(EMOTE_COOLDOWN_MS - 1)
+        settle(EMOTE_GAP_MS - 1)
         assertFalse(h.session.sendEmote("wow"))
         assertEquals(sent, h.socket.sent.size)
         assertEquals(1, h.emotes.size)

@@ -306,7 +306,14 @@
          (check-equal? (length ((events-tagged 'emote-played)
                                 (unbox (scripted-events host))))
                        1
-                       "the cooldown swallows the second emote"))
+                       "the cooldown swallows the second emote")
+         ;; a player can change their mind while the first is still on screen
+         (send-msg (scripted-connection guest) '(emote match-j3 wow))
+         (sleep 0.3)
+         (check-not-false (member '(emote-played 0 wow)
+                                  ((events-tagged 'emote-played)
+                                   (unbox (scripted-events host))))
+                          "half a second on, the next emote goes"))
 
        ;; a seat whose phone lost its socket and surfaced back on the start
        ;; screen must not get a second life mid-match: opening or joining

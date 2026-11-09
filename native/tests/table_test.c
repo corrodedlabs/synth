@@ -46,6 +46,15 @@ static void test_layout(void)
     CHECK(wide.table_card_scale < 1);
     TableLayout landscape = table_layout(844, 390);
     CHECK(fabsf(landscape.hand_card_scale - 0.68f) < 0.001f);
+    /* A compact window squaring up gives back what the closer camera would add to its cards. */
+    TableLayout folding = table_layout(673, 841);
+    CHECK(fabsf(folding.hand_card_scale - 1.12f * 0.65f * 841 / 673) < 0.001f);
+    TableLayout tall = table_layout(700, 900);
+    CHECK(fabsf(tall.played[1].x - (700 - 134)) < 0.001f);
+    TableLayout low = table_layout(841, 673);
+    CHECK(fabsf(low.hand_center.y - (673 - 673 * 0.165f)) < 0.001f);
+    TableLayout square = table_layout(700, 700);
+    CHECK(fabsf(square.table_card_scale - 1.08f * 0.7f) < 0.001f);
 }
 
 static void test_names(void)

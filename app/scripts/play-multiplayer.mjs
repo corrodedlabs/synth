@@ -101,12 +101,15 @@ await host.click(nice);
 await guest.waitForSelector('.emote-bubble[data-emote="nice"]', { timeout: 10000 });
 console.log("emote bubble reached the guest");
 
-// The strip says when another can't go yet, and comes back by itself.
+// Another can be picked while the first is still on screen. It reaches the table too, and takes the first's place.
+await host.waitForTimeout(400);
 await host.click("#emote-button");
-if (!(await host.locator(nice).isDisabled())) throw new Error("emote buttons stayed live through the cooldown");
-await host.waitForSelector(`${nice}:not(:disabled)`, { timeout: 3000 });
-await host.click("#emote-button");
-console.log("emote buttons rest, then come back");
+await host.click('#emote-strip button[data-emote="laugh"]');
+await guest.waitForSelector('.emote-bubble[data-emote="laugh"]', { timeout: 1000 });
+for (const page of [host, guest]) {
+  if ((await page.locator(".emote-bubble").count()) !== 1) throw new Error("the new emote landed on the old one");
+}
+console.log("a second emote went while the first was still up");
 
 // --- both browsers play the hand out ---
 const playLoop = async (label, page) => {

@@ -109,9 +109,9 @@ const PING_INTERVAL = "25 seconds";
 
 const MAX_PLAYERS = 4;
 
-// A little over the server's cooldown on emotes. Two taps this far apart can still reach it closer
-// together on a bad connection, and it would drop the second after we had already shown it.
-export const EMOTE_COOLDOWN_MS = 1800;
+// A little over the server's gap between one player's emotes. Two taps this far apart can still reach it
+// closer together on a bad connection, and it would drop the second after we had already shown it.
+const EMOTE_GAP_MS = 300;
 
 export class GameSession {
   private socket: GameSocket | null = null;
@@ -327,7 +327,7 @@ export class GameSession {
       phase === "bidding" || phase === "choosing-trump" ||
       phase === "playing" || phase === "hand-finished";
     const now = performance.now();
-    if (!this.socket || !inMatch || now - this.lastEmoteAt < EMOTE_COOLDOWN_MS) return false;
+    if (!this.socket || !inMatch || now - this.lastEmoteAt < EMOTE_GAP_MS) return false;
     this.lastEmoteAt = now;
     this.socket.send({ _tag: "SendEmote", email: this.email, emote });
     this.callbacks.emote(0, emote);

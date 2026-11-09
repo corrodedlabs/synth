@@ -72,24 +72,27 @@ TableLayout table_layout(float width, float height)
         float marker = 66, side_x = marker / 2 + 19, top_y = clampf(height * 0.16f, 118, 150);
         float top_card_y = top_y + 112;
         float side_y = clampf(height * 0.43f, top_y + 155, height * 0.48f);
-        float inset = side_x + marker / 2 + 40;
+        float inset = side_x + marker / 2 + (width * 0.07f > 40 ? width * 0.07f : 40);
         float bottom_y = side_y + clampf(height * 0.11f, 75, 102);
+        /* The camera comes closer as a window squares up, so the cards would take more of it. They give that back. */
+        float squaring = clampf(0.65f * height / width, 0.7f, 1);
         l = (TableLayout){
             .seats = {{0, 0}, {width - side_x, side_y}, {width / 2, top_y}, {side_x, side_y}},
             .played = {{width / 2, bottom_y}, {width - inset, side_y}, {width / 2, top_card_y}, {inset, side_y}},
             .hand_center = {width / 2, height * 0.78f},
-            .hand_width_scale = clampf(width / 500, 0.7f, 0.84f),
-            .hand_card_scale = width <= 375 ? 1.08f : 1.12f,
-            .table_card_scale = 1.08f,
+            .hand_width_scale = clampf(width / 500, 0.7f, 0.84f) * squaring,
+            .hand_card_scale = (width <= 375 ? 1.08f : 1.12f) * squaring,
+            .table_card_scale = 1.08f * squaring,
         };
     } else {
         float marker = 88, side_x = clampf(width * 0.12f, 100, 220), top_y = clampf(height * 0.14f, 112, 138);
         float top_card_y = top_y + 168;
-        bool is_short = height <= 650;
+        bool is_short = height < 700;
         float tall_side = height * 0.46f > top_card_y + 70 ? height * 0.46f : top_card_y + 70;
         float side_y = is_short ? top_card_y + 58 : tall_side;
-        float inset = side_x + marker / 2 + 63;
-        float hand_y = is_short ? height - 105 : height - clampf(height * 0.18f, 110, 165);
+        /* The cards grow with the window and the seats' names don't, so the lanes keep clear of a long name. */
+        float inset = side_x + marker / 2 + (height * 0.075f > 63 ? height * 0.075f : 63);
+        float hand_y = height - (is_short ? (height * 0.165f > 105 ? height * 0.165f : 105) : clampf(height * 0.18f, 110, 165));
         float bottom_y = is_short ? side_y + 36 : side_y + clampf(height * 0.11f, 68, 105);
         l = (TableLayout){
             .seats = {{0, 0}, {width - side_x, side_y}, {width / 2, top_y}, {side_x, side_y}},

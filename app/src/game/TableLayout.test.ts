@@ -14,6 +14,24 @@ const viewports = [
 ];
 
 describe("responsiveTableLayout", () => {
+  it("gives back what the closer camera adds to the cards as a compact window squares up", () => {
+    expect(responsiveTableLayout(390, 844).handCardScale).toBe(1.12);
+    expect(responsiveTableLayout(360, 640).handCardScale).toBe(1.08);
+    expect(responsiveTableLayout(673, 841).handCardScale).toBeCloseTo((1.12 * 0.65 * 841) / 673);
+    expect(responsiveTableLayout(700, 700).tableCardScale).toBeCloseTo(1.08 * 0.7);
+  });
+
+  it("keeps the side lanes off a seat's name in wide compact windows, and phones where they were", () => {
+    expect(responsiveTableLayout(700, 900).playedCards[1].x).toBeCloseTo(700 - 134);
+    expect(responsiveTableLayout(700, 900).playedCards[3].x).toBeCloseTo(134);
+    expect(responsiveTableLayout(412, 915).playedCards[3].x).toBe(125);
+  });
+
+  it("lifts the hand off the status line as a short window grows", () => {
+    expect(responsiveTableLayout(1024, 600).handCenter.y).toBe(600 - 105);
+    expect(responsiveTableLayout(841, 673).handCenter.y).toBeCloseTo(673 - 673 * 0.165);
+  });
+
   it.each(viewports)("keeps side seats and their cards on one row at $width×$height", ({ width, height }) => {
     const layout = responsiveTableLayout(width, height);
     expect(layout.playedCards[1].y).toBe(layout.opponentSeats[1].y);

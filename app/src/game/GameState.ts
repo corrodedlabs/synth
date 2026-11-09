@@ -27,7 +27,7 @@ import {
   initialGameModel,
   isLegalPlay,
 } from "./GameModel";
-import { EMOTE_COOLDOWN_MS, forgetActiveMatch, GameSession, storedActiveMatch } from "./GameSession";
+import { forgetActiveMatch, GameSession, storedActiveMatch } from "./GameSession";
 import { Hand } from "./Hand";
 import { mockGameProgram } from "./MockGameProgram";
 import { GamePacing } from "./GamePacing";
@@ -120,9 +120,8 @@ export class GameState {
       onBrowse: (name) => this.browseTables(name),
       onJoin: (roomName) => this.session?.join(roomName),
       onJoinLink: (name, roomName) => this.joinTable(name, roomName),
-      onEmote: (emote) => {
-        if (this.session?.sendEmote(emote)) this.ui.coolEmotes(EMOTE_COOLDOWN_MS);
-      },
+      onEmote: (emote) => this.session?.sendEmote(emote),
+      fanTop: () => this.hand.fanScreenTop(this.sceneManager.renderer.domElement),
       onStandings: (name) => this.showStandings(name),
       onRefreshRooms: () => this.session?.refreshRooms(),
       onAddBot: (seat) => this.session?.addBot(seat),
@@ -502,7 +501,7 @@ export class GameState {
         : null;
     if (!screen) return;
     this.sound.emote();
-    this.ui.showEmoteAt(screen.x, screen.y, emote);
+    this.ui.showEmoteAt(seat, screen.x, screen.y, emote);
   }
 
   public getModel(): GameModel {

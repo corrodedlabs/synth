@@ -516,11 +516,6 @@ body {
 #emote-strip button:hover {
   transform: scale(1.18);
 }
-#emote-strip button:disabled {
-  opacity: 0.4;
-  cursor: default;
-  transform: none;
-}
 #arrange-panel {
   position: absolute;
   left: calc(12px + env(safe-area-inset-left));
@@ -690,6 +685,7 @@ body {
   left: 50%;
   bottom: calc(31 * var(--vh) + 4px);
   transform: translateX(-50%);
+  translate: 0 calc(-1 * var(--own-call-rise, 0px));
   z-index: 26;
 }
 /* Our own call would land on the prompt, which already says where the bid stands. */
@@ -809,6 +805,11 @@ body {
   box-shadow: none;
   pointer-events: none;
 }
+/* Set from where the fan really is, when the rules that place a prompt would land it on the cards. */
+#bid-panel,
+#trump-panel {
+  translate: 0 calc(-1 * var(--prompt-rise, 0px));
+}
 #trump-panel .panel-title {
   margin-bottom: 8px;
   font-size: 24px;
@@ -855,6 +856,7 @@ body {
   bottom: calc(31 * var(--vh) + 4px);
   left: 50%;
   transform: translateX(-50%);
+  translate: 0 calc(-1 * var(--expose-rise, 0px));
   z-index: 25;
   min-height: 44px;
   padding: 6px 22px;
@@ -1645,8 +1647,9 @@ body {
     line-height: 1.15;
     overflow-wrap: anywhere;
   }
+  /* Under the partner's tag, however short the window. */
   #table-moment {
-    top: 31%;
+    top: max(31%, 236px);
     width: min(74vw, 290px);
     padding: 5px 12px;
   }
@@ -1916,6 +1919,7 @@ body {
     padding: 6px 12px;
     font-size: 16px;
     transform: none;
+    translate: none;
   }
   #expose-button:active {
     transform: translateY(2px);
@@ -2124,7 +2128,7 @@ body {
     padding-bottom: 76px;
   }
 }
-@media (orientation: portrait) and (max-width: 599px) and (max-height: 720px) {
+@media (orientation: portrait) and (max-width: 599px) and (max-height: 739px) {
   #start-screen {
     gap: 4px;
     padding: 6px 16px 12px;
@@ -2268,6 +2272,22 @@ body {
     top: calc(var(--table-middle, 46%) - 16px);
   }
 }
+/* The smallest phones on their side: three rows of chips would reach the partner, or the hand. Eight to a
+   row keeps them to two, and every bid can still be tapped. */
+@media (max-height: 340px) and (orientation: landscape),
+  (max-width: 639px) and (max-height: 370px) and (orientation: landscape) {
+  #bid-panel #bid-chips {
+    gap: 2px;
+  }
+  #bid-panel .bid-chip {
+    width: 36px;
+    height: 36px;
+    font-size: 17px;
+  }
+  #bid-panel .bid-pass {
+    width: auto;
+  }
+}
 /* Not enough width for the pips at their full size beside the contract. */
 @media (max-width: 300px) {
   #score-pips {
@@ -2302,10 +2322,34 @@ body {
     bottom: auto;
   }
 }
-/* The hand reaches down to the bottom bar here: the status keeps to the bottom of its row. */
+/* The lowest of them only has room over the hand for two rows of a phone's chips. */
+@media (min-width: 701px) and (min-height: 551px) and (max-height: 599px) {
+  #bid-panel {
+    width: min(420px, calc(100vw - 300px));
+    padding: 4px 6px 6px;
+  }
+  #bid-panel #bid-label {
+    margin-bottom: 3px;
+    font-size: 17px;
+  }
+  #bid-panel #bid-chips {
+    gap: 3px;
+  }
+  #bid-panel .bid-chip {
+    width: 40px;
+    height: 40px;
+    font-size: 18px;
+  }
+  #bid-panel .bid-pass {
+    width: auto;
+    padding: 0 14px;
+  }
+}
+/* The hand reaches down to the bottom bar here: the status keeps to the bottom of its row, and a little under it. */
 @media (min-width: 701px) and (min-height: 551px) and (max-height: 767px) {
   #status-line {
     align-self: end;
+    margin-bottom: -4px;
   }
 }
 
@@ -2313,7 +2357,7 @@ body {
    the prompt, or where there's no room above it, gives way. */
 @media (min-width: 701px) and (min-height: 768px) {
   #ui-layer:has(#bid-panel:not(.hidden)) #table-moment {
-    top: calc(100% - max(310px, calc(30 * var(--vh) + 100px)) - 192px);
+    top: calc(100% - max(310px, calc(30 * var(--vh) + 100px)) - 192px - var(--prompt-rise, 0px));
   }
 }
 /* On its side a phone under 844 wide wraps the chips to two rows, which leaves no room below. */

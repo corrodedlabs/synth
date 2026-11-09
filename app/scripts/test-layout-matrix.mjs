@@ -27,6 +27,8 @@ mkdirSync(OUT, { recursive: true });
 const ALL_SIZES = [
   "280x653", "320x568", "360x640", "360x740", "360x800", "390x844", "412x915", "768x1024",
   "568x320", "640x360", "844x390", "915x412", "1024x768", "1280x800",
+  // the shapes between a phone and a tablet: a foldable, a small tablet, a window dragged narrow
+  "500x724", "600x800", "671x724", "673x841", "700x900", "800x700", "841x673", "1366x625", "1920x1080",
 ].map((text) => {
   const [width, height] = text.split("x").map(Number);
   return { width, height };
@@ -281,7 +283,8 @@ function measureScreen() {
     const rect = el.getBoundingClientRect();
     if (scrolledOut(el, rect)) continue;
     if (browsing && el.closest("#start-screen") && !el.closest("#room-browser")) continue;
-    if (Math.min(rect.width, rect.height) < 40) {
+    // The smallest phone on its side trades 4px of each bid chip for not covering the partner or the hand.
+    if (Math.min(rect.width, rect.height) < (H <= 340 && el.matches(".bid-chip") ? 36 : 40)) {
       fault("small-target", nameOf(el), {
         width: Math.round(rect.width),
         height: Math.round(rect.height),

@@ -61,9 +61,12 @@ export function responsiveTableLayout(width: number, height: number): Responsive
     const topSeatY = clamp(height * 0.16, 118, 150);
     const topCardY = topSeatY + 112;
     const sideY = clamp(height * 0.43, topSeatY + 155, height * 0.48);
-    const sideCardInset = sideSeatX + markerSize / 2 + 40;
+    // Wide compact windows have taller cards, so the lanes keep clear of a seat's name.
+    const sideCardInset = sideSeatX + markerSize / 2 + Math.max(40, width * 0.07);
     const handCenterY = height * 0.78;
     const bottomCardY = sideY + clamp(height * 0.11, 75, 102);
+    // The camera comes closer as a window squares up, so the cards would take more of it. They give that back.
+    const squaring = clamp((0.65 * height) / width, 0.7, 1);
 
     return {
       viewport: { width, height },
@@ -79,9 +82,9 @@ export function responsiveTableLayout(width: number, height: number): Responsive
         3: { x: sideCardInset, y: sideY },
       },
       handCenter: { x: width / 2, y: handCenterY },
-      handWidthScale: clamp(width / 500, 0.7, 0.84),
-      handCardScale: width <= 375 ? 1.08 : 1.12,
-      tableCardScale: 1.08,
+      handWidthScale: clamp(width / 500, 0.7, 0.84) * squaring,
+      handCardScale: (width <= 375 ? 1.08 : 1.12) * squaring,
+      tableCardScale: 1.08 * squaring,
     };
   }
 
@@ -89,11 +92,13 @@ export function responsiveTableLayout(width: number, height: number): Responsive
   const sideSeatX = clamp(width * 0.12, 100, 220);
   const topSeatY = clamp(height * 0.14, 112, 138);
   const topCardY = topSeatY + 168;
-  const short = height <= 650;
+  const short = height < 700;
   const sideY = short ? topCardY + 58 : Math.max(height * 0.46, topCardY + 70);
-  const sideCardInset = sideSeatX + markerSize / 2 + 63;
+  // The cards grow with the window and the seats' names don't, so the lanes keep clear of a long name.
+  const sideCardInset = sideSeatX + markerSize / 2 + Math.max(63, height * 0.075);
+  // The fan's reach grows with the height, so it rises to stay off the status line under it.
   const handCenterY = short
-    ? height - 105
+    ? height - Math.max(105, height * 0.165)
     : height - clamp(height * 0.18, 110, 165);
   const bottomCardY = short ? sideY + 36 : sideY + clamp(height * 0.11, 68, 105);
 
