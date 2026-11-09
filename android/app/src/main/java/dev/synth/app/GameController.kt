@@ -12,6 +12,7 @@ import dev.synth.core.AbandonChoice
 import dev.synth.core.ArrangementPreset
 import dev.synth.core.BidValue
 import dev.synth.core.CardModel
+import dev.synth.core.EMOTE_COOLDOWN_MS
 import dev.synth.core.GameAction
 import dev.synth.core.GameModel
 import dev.synth.core.GamePacing
@@ -85,6 +86,9 @@ class GameController(context: Context) : SessionCallbacks {
     var joinTarget by mutableStateOf<String?>(null)
     val bidNotes = mutableStateListOf<BidNote>()
     val emotes = mutableStateListOf<EmoteNote>()
+    // Just sent one: the server would drop another this soon.
+    var emoteCooling by mutableStateOf(false)
+        private set
     var arrangement by mutableStateOf<ArrangementPreset?>(null)
         private set
     // The verdict of the hand just finished, for the between-hands panel. Null until it arrives.
@@ -176,7 +180,11 @@ class GameController(context: Context) : SessionCallbacks {
     fun nextHand() { click(); session.nextHand() }
     fun resolveAbandon(choice: AbandonChoice) { click(); abandonedName = null; session.resolveAbandon(choice) }
     fun abandonInterrupted() { click(); session.abandonInterruptedMatch() }
-    fun sendEmote(id: String) { session.sendEmote(id) }
+    fun sendEmote(id: String) {
+        if (!session.sendEmote(id)) return
+        emoteCooling = true
+        handler.postDelayed({ emoteCooling = false }, EMOTE_COOLDOWN_MS)
+    }
     fun goHome() { click(); statusText = ""; session.goHome() }
     fun displayName(member: String): String = memberDisplayName(member)
 

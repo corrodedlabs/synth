@@ -24,7 +24,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.absoluteOffset
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.captionBar
 import androidx.compose.foundation.layout.displayCutout
@@ -35,6 +37,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -71,6 +74,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -82,6 +86,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.synth.app.BuildConfig
@@ -95,6 +101,15 @@ import kotlinx.coroutines.delay
 
 private const val NAME_LIMIT = 20
 private const val ROOM_POLL_MS = 4_000L
+private val HOME_TABLE_WIDTH = 300.dp
+private val HOME_TABLE_HEIGHT = 190.dp
+private val START_REST_HEIGHT = 472.dp // the start screen below its table, with the small title
+private val SIDEWAYS_HEIGHT = 620.dp   // a window wider than this tall and shorter than this is a phone on its side
+private val SIDEWAYS_WIDTH = 480.dp    // narrower than this, it's a portrait phone with its keyboard up
+private val BRAND_HEIGHT = 420.dp      // below this, a portrait phone has its keyboard up: no room for the title and table
+private const val MAX_FONT_SCALE = 1.3f
+private val LOBBY_TIGHT = 400.dp       // a phone on its side shorter than this has to squeeze the lobby to fit
+private val LOBBY_REST = 216.dp        // the lobby's title, button and links, beside its ring of seats in portrait
 
 /**
  * Everything above the table. Only the menus and real panels take touches: during play nothing here is
@@ -108,7 +123,10 @@ fun GameScreens(controller: GameController, shareInvite: (String) -> Unit) {
     val phase = controller.uiModel.phase
     val standings = controller.standings
 
-    CompositionLocalProvider(LocalReduceMotion provides controller.reduceMotion) {
+    // The seats, notes and panels are laid out around a size of type, and past this they run into each other.
+    val density = LocalDensity.current
+    val capped = if (density.fontScale > MAX_FONT_SCALE) Density(density.density, MAX_FONT_SCALE) else density
+    CompositionLocalProvider(LocalReduceMotion provides controller.reduceMotion, LocalDensity provides capped) {
     Box(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
         when {
             controller.updateRequiredVersion != null -> UpdateRequiredScreen()
@@ -163,98 +181,151 @@ private fun StatusNote(text: String, modifier: Modifier = Modifier) {
 
 /**
  * The way in is a table with your seat waiting at it. Two big buttons say plainly who you'll play with, and the
- * match types are cards to pick up first. Joining someone else's table stays a tap away.
+ * match types are cards to pick up first. Joining someone else's table stays a tap away. The table gives way when
+ * a short phone or the keyboard leaves too little room. A phone on its side has it beside the buttons instead.
  */
 @Composable
 private fun StartScreen(controller: GameController, name: String, onName: (String) -> Unit, onStandings: () -> Unit) {
     var target by rememberSaveable { mutableStateOf(2) }
     val focus = LocalFocusManager.current
     val invite = controller.joinTarget
-    PaperScreen {
-        Column(
-            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(vertical = 14.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+
+    @Composable
+    fun controls(compact: Boolean, inset: Dp) {
+        NameField(name, onName, onDone = { focus.clearFocus() })
+        Spacer(Modifier.size(if (compact) 6.dp else 12.dp))
+
+        if (invite != null) {
+            PaperButton(
+                "Join “$invite”",
+                { focus.clearFocus(); controller.joinByLink(name, invite) },
+                Modifier.testTag("invite-join").padding(horizontal = 12.dp).widthIn(min = 240.dp, max = 330.dp),
+                size = 19,
+                fill = PressTint,
+                spacing = 1f,
+            )
+            LinkButton("not this time", { controller.joinTarget = null }, Modifier.testTag("invite-dismiss"))
+            Spacer(Modifier.size(if (compact) 4.dp else 10.dp))
+        }
+
+        val squeezed = compact && invite != null
+        val cardHeight = if (squeezed) 50.dp else if (compact) 62.dp else 84.dp
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            // A narrow column leaves no margin for the unpicked card's tilt.
+            val cardWidth = if (inset < 44.dp) 124.dp else 132.dp
+            TargetChoice("Quick", "first to 2", target == 2, -2f, cardWidth, cardHeight, Modifier.testTag("target-quick")) { target = 2 }
+            TargetChoice("Classic", "first to 6", target == 6, 2f, cardWidth, cardHeight, Modifier.testTag("target-classic")) { target = 6 }
+        }
+        Spacer(Modifier.size(if (squeezed) 6.dp else if (compact) 10.dp else 16.dp))
+        val buttonHeight = if (squeezed) 42.dp else if (compact) 50.dp else 62.dp
+        val buttonFont = if (squeezed) 21 else if (compact) 25 else 28
+        // Friends is the headline; bots is just as easy to reach, in ink rather than red.
+        BigSealButton("Play with friends", Modifier.testTag("create-button").padding(horizontal = inset).widthIn(max = 330.dp).fillMaxWidth().height(buttonHeight), fontSize = buttonFont) {
+            focus.clearFocus()
+            controller.createTable(name, target)
+        }
+        // The torn edges and tilts reach past each button's box, so they need a clear gap to look apart.
+        Spacer(Modifier.size(if (squeezed) 10.dp else if (compact) 14.dp else 22.dp))
+        BigSealButton(
+            "Play with bots",
+            Modifier.testTag("play-bots").padding(horizontal = inset).widthIn(max = 330.dp).fillMaxWidth().height(buttonHeight),
+            fontSize = buttonFont,
+            fill = Ink,
+            edge = Color(0xFF241C18),
+            tilt = 1.1f,
         ) {
-            Txt("28", size = 76, weight = FontWeight.W500, spacing = 6f)
-            HomeTable(name)
-            Spacer(Modifier.size(10.dp))
-            NameField(name, onName, onDone = { focus.clearFocus() })
-            Spacer(Modifier.size(12.dp))
+            focus.clearFocus()
+            controller.playWithBots(name, target)
+        }
+        Spacer(Modifier.size(if (compact) 4.dp else 12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
+            LinkButton("Join a table", { focus.clearFocus(); controller.browse(name) }, Modifier.testTag("browse-button"), size = 18)
+            LinkButton("Standings", { focus.clearFocus(); onStandings() }, Modifier.testTag("standings-button"), size = 18)
+        }
+        Spacer(Modifier.size(if (compact) 2.dp else 6.dp))
+        // goHome leaves the last status behind: an abandoned connection attempt says nothing true here.
+        StatusNote(controller.statusText.takeUnless { it == "Connecting…" || it == "Rejoining your match…" }.orEmpty())
+    }
 
-            if (invite != null) {
-                PaperButton(
-                    "Join “$invite”",
-                    { focus.clearFocus(); controller.joinByLink(name, invite) },
-                    Modifier.testTag("invite-join").widthIn(min = 240.dp, max = 330.dp),
-                    size = 19,
-                    fill = PressTint,
-                    spacing = 1f,
+    PaperScreen {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val height = maxHeight
+            val inset = if (maxWidth < 340.dp) 20.dp else 44.dp
+            // Two columns only on a phone that's really on its side. A keyboard also makes a portrait phone wider
+            // than it is tall, and two columns there are too narrow for the buttons.
+            if (maxWidth > height && height < SIDEWAYS_HEIGHT && maxWidth >= SIDEWAYS_WIDTH) {
+                Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+                    // The keyboard leaves room only for the name.
+                    if (height >= 210.dp) {
+                        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Txt("28", size = 56, weight = FontWeight.W500, spacing = 6f)
+                            HomeTable(name, ((height - 90.dp) / HOME_TABLE_HEIGHT).coerceIn(0.5f, 1f))
+                        }
+                    }
+                    Column(
+                        Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()).padding(vertical = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) { controls(compact = true, inset = 16.dp) }
+                }
+            } else {
+                val short = height < 600.dp
+                val rest = START_REST_HEIGHT + (if (short) 0.dp else 24.dp) + (if (invite != null) 98.dp else 0.dp)
+                val scale = minOf(
+                    ((height - rest) / HOME_TABLE_HEIGHT).coerceIn(0.5f, 1f),
+                    (maxWidth - 8.dp) / HOME_TABLE_WIDTH,
                 )
-                LinkButton("not this time", { controller.joinTarget = null }, Modifier.testTag("invite-dismiss"))
-                Spacer(Modifier.size(10.dp))
+                Column(
+                    Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(vertical = 14.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    // With the keyboard up there's no room for the brand: the field being typed in comes first.
+                    if (height >= BRAND_HEIGHT) {
+                        Txt("28", size = if (short) 56 else 76, weight = FontWeight.W500, spacing = 6f)
+                        // An invite takes its room on a smaller phone, and the table is only decoration.
+                        if (height - rest >= HOME_TABLE_HEIGHT / 2) HomeTable(name, scale)
+                        Spacer(Modifier.size(10.dp))
+                    }
+                    controls(compact = false, inset = inset)
+                }
             }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                TargetChoice("Quick", "first to 2", target == 2, -2f, Modifier.testTag("target-quick")) { target = 2 }
-                TargetChoice("Classic", "first to 6", target == 6, 2f, Modifier.testTag("target-classic")) { target = 6 }
-            }
-            Spacer(Modifier.size(16.dp))
-            // Friends is the headline; bots is just as easy to reach, in ink rather than red.
-            BigSealButton("Play with friends", Modifier.testTag("create-button").padding(horizontal = 44.dp).widthIn(max = 330.dp).fillMaxWidth().height(62.dp), fontSize = 28) {
-                focus.clearFocus()
-                controller.createTable(name, target)
-            }
-            // The torn edges and tilts reach past each button's box, so they need a clear gap to look apart.
-            Spacer(Modifier.size(22.dp))
-            BigSealButton(
-                "Play with bots",
-                Modifier.testTag("play-bots").padding(horizontal = 44.dp).widthIn(max = 330.dp).fillMaxWidth().height(62.dp),
-                fontSize = 28,
-                fill = Ink,
-                edge = Color(0xFF241C18),
-                tilt = 1.1f,
-            ) {
-                focus.clearFocus()
-                controller.playWithBots(name, target)
-            }
-            Spacer(Modifier.size(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
-                LinkButton("Join a table", { focus.clearFocus(); controller.browse(name) }, Modifier.testTag("browse-button"), size = 18)
-                LinkButton("Standings", { focus.clearFocus(); onStandings() }, Modifier.testTag("standings-button"), size = 18)
-            }
-            Spacer(Modifier.size(6.dp))
-            // goHome leaves the last status behind: an abandoned connection attempt says nothing true here.
-            StatusNote(controller.statusText.takeUnless { it == "Connecting…" || it == "Rejoining your match…" }.orEmpty())
         }
     }
 }
 
 /** Four seats around a small fan of real cards. Yours has your initial in it, and the others are waiting. */
 @Composable
-private fun HomeTable(name: String) {
+private fun HomeTable(name: String, scale: Float) {
     val atlas = rememberCardAtlas()
-    Box(Modifier.size(width = 300.dp, height = 190.dp)) {
-        fun place(x: Int, y: Int) = Modifier.absoluteOffset((x - 24).dp, (y - 24).dp).size(48.dp)
-        Box(place(150, 22), contentAlignment = Alignment.Center) { BrushedEnso(false, Modifier.alpha(0.55f)) }
-        Box(place(36, 92), contentAlignment = Alignment.Center) { BrushedEnso(false, Modifier.alpha(0.55f)) }
-        Box(place(264, 92), contentAlignment = Alignment.Center) { BrushedEnso(false, Modifier.alpha(0.55f)) }
-        Box(place(150, 164), contentAlignment = Alignment.Center) {
-            BrushedEnso(false)
-            Txt(name.trim().take(1).uppercase().ifEmpty { "?" }, size = 19, weight = FontWeight.W600, color = Red, spacing = 0f)
-        }
-        if (atlas != null) {
-            // Jack of spades, ace of hearts, nine of diamonds, ten of clubs: the cards that carry the points.
-            listOf(3 to 0, 0 to 2, 1 to 1, 2 to 3).forEachIndexed { i, (suit, rank) ->
-                val spread = i - 1.5f
-                AtlasCard(
-                    atlas,
-                    suit,
-                    rank,
-                    Modifier
-                        .absoluteOffset((121 + spread * 27).dp, (48 + kotlin.math.abs(spread) * 4).dp)
-                        .size(width = 58.dp, height = 86.dp)
-                        .graphicsLayer { rotationZ = spread * 9f },
-                )
+    Box(Modifier.size(width = HOME_TABLE_WIDTH * scale, height = HOME_TABLE_HEIGHT * scale), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier.requiredSize(width = HOME_TABLE_WIDTH, height = HOME_TABLE_HEIGHT).graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            },
+        ) {
+            fun place(x: Int, y: Int) = Modifier.absoluteOffset((x - 24).dp, (y - 24).dp).size(48.dp)
+            Box(place(150, 22), contentAlignment = Alignment.Center) { BrushedEnso(false, Modifier.alpha(0.55f)) }
+            Box(place(36, 92), contentAlignment = Alignment.Center) { BrushedEnso(false, Modifier.alpha(0.55f)) }
+            Box(place(264, 92), contentAlignment = Alignment.Center) { BrushedEnso(false, Modifier.alpha(0.55f)) }
+            Box(place(150, 164), contentAlignment = Alignment.Center) {
+                BrushedEnso(false)
+                Txt(name.trim().take(1).uppercase().ifEmpty { "?" }, size = 19, weight = FontWeight.W600, color = Red, spacing = 0f)
+            }
+            if (atlas != null) {
+                // Jack of spades, ace of hearts, nine of diamonds, ten of clubs: the cards that carry the points.
+                listOf(3 to 0, 0 to 2, 1 to 1, 2 to 3).forEachIndexed { i, (suit, rank) ->
+                    val spread = i - 1.5f
+                    AtlasCard(
+                        atlas,
+                        suit,
+                        rank,
+                        Modifier
+                            .absoluteOffset((121 + spread * 27).dp, (48 + kotlin.math.abs(spread) * 4).dp)
+                            .size(width = 58.dp, height = 86.dp)
+                            .graphicsLayer { rotationZ = spread * 9f },
+                    )
+                }
             }
         }
     }
@@ -334,11 +405,11 @@ private fun NameField(name: String, onName: (String) -> Unit, onDone: () -> Unit
 
 /** A match type, as a card lying on the table. The one you pick lifts and straightens. */
 @Composable
-private fun TargetChoice(title: String, caption: String, selected: Boolean, tilt: Float, modifier: Modifier, onClick: () -> Unit) {
+private fun TargetChoice(title: String, caption: String, selected: Boolean, tilt: Float, width: Dp, height: Dp, modifier: Modifier, onClick: () -> Unit) {
     Pressable(
         onClick,
         modifier
-            .size(width = 132.dp, height = 84.dp)
+            .size(width = width, height = height)
             .graphicsLayer {
                 rotationZ = if (selected) 0f else tilt
                 translationY = if (selected) -4.dp.toPx() else 0f
@@ -380,7 +451,8 @@ private fun RoomsScreen(controller: GameController) {
                     Txt(if (waited) "no open tables — create one" else "looking for tables…", size = 19, opacity = 0.6f, italic = true)
                 } else {
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(open, key = { it.name }) { room ->
+                        // By host, as the server keeps them: two tables can share a name, and a repeated key crashes the list.
+                        items(open, key = { it.host }) { room ->
                             RoomRow(room, joinable = controller.uiModel.phase == GamePhase.CONNECTING || controller.uiModel.phase == GamePhase.IDLE) {
                                 controller.join(room.name)
                             }
@@ -514,20 +586,25 @@ private fun LobbyScreen(controller: GameController, shareInvite: (String) -> Uni
     PaperScreen {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val wide = maxWidth > maxHeight
+            // A phone on its side has to fit it all, down to the links, without scrolling.
+            val tight = wide && maxHeight < LOBBY_TIGHT
+            val ringHeight = (maxHeight - LOBBY_REST).coerceIn(300.dp, 400.dp)
+            // Centred when it fits, as on a tall phone, and scrolling when it doesn't.
             Column(
-                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 10.dp),
+                Modifier.verticalScroll(rememberScrollState()).fillMaxWidth().heightIn(min = maxHeight).padding(vertical = if (tight) 4.dp else 10.dp),
+                verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Txt(model.roomName.orEmpty(), Modifier.padding(horizontal = 20.dp), size = 26, weight = FontWeight.W500, maxLines = 1)
-                Txt("$kind, first to ${model.matchTarget}", size = 17, opacity = 0.65f)
-                Spacer(Modifier.size(8.dp))
+                Txt(model.roomName.orEmpty(), Modifier.padding(horizontal = 20.dp), size = if (tight) 22 else 26, weight = FontWeight.W500, maxLines = 1)
+                Txt("$kind, first to ${model.matchTarget}", size = if (tight) 15 else 17, opacity = 0.65f)
+                Spacer(Modifier.size(if (tight) 2.dp else 8.dp))
                 if (wide) {
                     Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                         listOf(3, 2, 1, 0).forEach { seat(it, Modifier) }
                     }
                 } else {
                     Box(
-                        Modifier.size(width = 330.dp, height = 400.dp).drawBehind {
+                        Modifier.size(width = 330.dp, height = ringHeight).drawBehind {
                             drawOval(
                                 Ink.copy(alpha = 0.18f),
                                 topLeft = Offset(30.dp.toPx(), 40.dp.toPx()),
@@ -542,10 +619,10 @@ private fun LobbyScreen(controller: GameController, shareInvite: (String) -> Uni
                         seat(0, Modifier.align(Alignment.BottomCenter))
                     }
                 }
-                Spacer(Modifier.size(10.dp))
+                Spacer(Modifier.size(if (tight) 4.dp else 10.dp))
                 if (model.isHost) {
                     if (full) {
-                        BigSealButton("Start the hand", Modifier.testTag("start-game").padding(horizontal = 44.dp).widthIn(max = 330.dp).fillMaxWidth().height(62.dp), fontSize = 28) {
+                        BigSealButton("Start the hand", Modifier.testTag("start-game").padding(horizontal = 44.dp).widthIn(max = 330.dp).fillMaxWidth().height(if (tight) 46.dp else 62.dp), fontSize = if (tight) 24 else 28) {
                             controller.startGame()
                         }
                     } else {
@@ -554,13 +631,13 @@ private fun LobbyScreen(controller: GameController, shareInvite: (String) -> Uni
                 } else {
                     Txt("Waiting for the host to start", size = 21, opacity = 0.6f)
                 }
-                Spacer(Modifier.size(6.dp))
+                Spacer(Modifier.size(if (tight) 0.dp else 6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
                     LinkButton("Share invite link", { model.roomName?.let(shareInvite) }, Modifier.testTag("invite-button"), size = 18)
                     LinkButton(if (model.isHost) "Close table" else "Leave table", { controller.leaveTable() }, Modifier.testTag("leave-table"), size = 18)
                 }
-                // We are seated by now, so the join notice has outlived its moment.
-                StatusNote(controller.statusText.takeUnless { it == "Joining the table…" || it.startsWith("Your table is ready") }.orEmpty())
+                // The hint above already says what the host does next.
+                StatusNote(controller.statusText.takeUnless { it.startsWith("Your table is ready") }.orEmpty())
             }
         }
     }
@@ -634,7 +711,7 @@ private fun ReconnectingScreen(controller: GameController) {
     val pulse = rememberInfiniteTransition(label = "reconnect")
     val titleAlpha by pulse.animateFloat(1f, 0.45f, infiniteRepeatable(tween(1_100), RepeatMode.Reverse), label = "title")
     PaperScreen(Modifier.testTag("reconnecting-screen")) {
-        Panel(Modifier.fillMaxWidth(0.86f).widthIn(max = 420.dp)) {
+        Panel(Modifier.fillMaxWidth(0.86f).widthIn(max = 420.dp).verticalScroll(rememberScrollState())) {
             Txt("Connection lost", Modifier.alpha(titleAlpha), size = 22, weight = FontWeight.W500)
             Spacer(Modifier.size(10.dp))
             Txt("Your match is still running — getting you back to the table…", size = 19, opacity = 0.85f)
@@ -648,7 +725,7 @@ private fun ReconnectingScreen(controller: GameController) {
 private fun UpdateRequiredScreen() {
     val context = LocalContext.current
     PaperScreen(Modifier.testTag("update-screen")) {
-        Stack(Modifier.padding(horizontal = 28.dp), gap = 12.dp) {
+        Stack(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 28.dp), gap = 12.dp) {
             Txt("28", size = 64, weight = FontWeight.W500, spacing = 4f)
             Txt("Time to update", size = 24, weight = FontWeight.W500)
             Txt("This version of the game can no longer reach the tables. Update it to keep playing.", size = 19, opacity = 0.8f)
@@ -666,7 +743,8 @@ private fun UpdateRequiredScreen() {
 internal fun UnsupportedScreen(reason: String, onPlayInBrowser: () -> Unit) {
     Box(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
         PaperScreen(Modifier.testTag("unsupported-screen")) {
-            Stack(Modifier.padding(horizontal = 28.dp), gap = 12.dp) {
+            // SDL never starts here, so the system bars stay up, over the paper.
+            Stack(Modifier.windowInsetsPadding(WindowInsets.systemBars).verticalScroll(rememberScrollState()).padding(horizontal = 28.dp), gap = 12.dp) {
                 Txt("28", size = 64, weight = FontWeight.W500, spacing = 4f)
                 Txt("This phone can't run the table yet", size = 24, weight = FontWeight.W500)
                 Txt("You can play the same game in your browser.", size = 19, opacity = 0.8f)

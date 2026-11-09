@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.absoluteOffset
@@ -98,6 +99,13 @@ private const val LEAVE_ARM_MS = 4_000L
 private const val RESULT_HOLD_MS = 700L
 private const val FAN_TOP_FROM_BOTTOM = 0.3f  // of the screen's height, in portrait
 private val SHORT_LANDSCAPE = 550.dp  // seatSpots' and the table's short landscape: a phone on its side
+private val SHORT_PORTRAIT = 700.dp   // below this, the prompts run out of room between the side seats and the fan
+private val SHORT_RESULT = 420.dp     // below this, a phone on its side, the result panels tighten up to fit
+private val TINY_PORTRAIT = 600.dp    // below this, the bids have to get flatter still to leave the side seats showing
+private val BID_MIN_WIDTH = 36.dp     // the narrowest a bid button gets
+private val BID_ONE_ROW = 760.dp      // a landscape screen this wide has room for every bid on one row
+private const val LABEL_CELLS = 2     // how many bids' width the label takes, when it shares a row with them
+private const val SIDEWAYS_FAN_TOP = 0.74f // a phone on its side: where the fan starts, as a fraction of the height
 private val HANDLE_CLEARANCE = 16.dp  // below a tablet's window handle
 private val PORTRAIT_RING = 66.dp
 private val LANDSCAPE_RING = 52.dp
@@ -143,6 +151,9 @@ private fun seatSpots(width: Float, height: Float): List<Spot> {
         }
     }
 }
+
+/** On a phone on its side, the prompts start below the partner's name. The height is seatSpots' top seat. */
+private fun sidewaysPromptTop(height: Dp): Dp = (height * 0.2f).coerceIn(72.dp, 88.dp) + 50.dp
 
 private enum class Popover { NONE, MENU, SORT, EMOTE }
 
@@ -191,7 +202,7 @@ internal fun PlayOverlay(controller: GameController) {
         // the handle itself: dropping it the caption bar's full height would push it into the partner's seat.
         val handle = if (WindowInsets.captionBar.asPaddingValues().calculateTopPadding() > 0.dp) HANDLE_CLEARANCE else 0.dp
         Box(safe) {
-            TopBar(model, Modifier.align(Alignment.TopCenter).padding(top = handle), onMenu = { toggle(Popover.MENU) })
+            TopBar(model, landscape, Modifier.align(Alignment.TopCenter).padding(top = handle), onMenu = { toggle(Popover.MENU) })
             BottomBar(controller, landscape, Modifier.align(Alignment.BottomCenter), onSort = { toggle(Popover.SORT) }, onEmote = { toggle(Popover.EMOTE) })
         }
 
@@ -202,7 +213,7 @@ internal fun PlayOverlay(controller: GameController) {
         val roomy = landscape && height > SHORT_LANDSCAPE
         val promptTop = when {
             roomy -> spots[1].y.dp - 60.dp
-            landscape -> 130.dp
+            landscape -> sidewaysPromptTop(height)
             else -> null
         }
         val promptPlace = if (promptTop != null) {
@@ -214,8 +225,13 @@ internal fun PlayOverlay(controller: GameController) {
             PaperButton(
                 "Reveal trump",
                 { controller.exposeTrump() },
-                // In landscape the prompts' place is over the trick, so this one waits beside the fan.
-                (if (landscape) Modifier.align(Alignment.BottomEnd).padding(end = 72.dp + insetRight, bottom = 14.dp) else promptPlace).testTag("expose-button"),
+                // In landscape the prompts' place is over the trick, so this one waits beside the fan. On a phone
+                // on its side the fan reaches that far, so it goes above the reactions, clear of the last card.
+                (when {
+                    roomy -> Modifier.align(Alignment.BottomEnd).padding(end = 72.dp + insetRight, bottom = 14.dp)
+                    landscape -> Modifier.align(Alignment.BottomEnd).padding(end = 12.dp + insetRight, bottom = 60.dp)
+                    else -> promptPlace
+                }).testTag("expose-button"),
                 fill = PaperLight.copy(alpha = 0.92f),
                 spacing = 0.6f,
                 horizontal = 22.dp,
@@ -226,13 +242,19 @@ internal fun PlayOverlay(controller: GameController) {
                 minBid = pending.minBid,
                 opening = model.bidsPlaced == 0,
                 landscape = landscape,
+                rowHeight = when {
+                    landscape -> if (width < BID_ONE_ROW) 40.dp else 42.dp
+                    height < TINY_PORTRAIT -> 34.dp
+                    height < SHORT_PORTRAIT -> 40.dp
+                    else -> 42.dp
+                },
                 modifier = promptPlace,
                 maxWidth = width,
                 onBid = controller::bid,
                 onPass = controller::pass,
             )
             PendingRequest.Trump -> if (flyingTrump == null) {
-                TrumpPanel(promptPlace, onSuit = {
+                TrumpPanel(promptPlace, pickScale(width, height, landscape), onSuit = {
                     flyingTrump = it
                     controller.chooseTrump(it)
                 })
@@ -241,7 +263,7 @@ internal fun PlayOverlay(controller: GameController) {
         }
 
         flyingTrump?.let { suit ->
-            FlyingTrump(suit, width, height, promptTop, onDone = {
+            FlyingTrump(suit, pickScale(width, height, landscape), width, height, promptTop, onDone = {
                 flyingTrump = null
                 controller.thump()
             })
@@ -300,13 +322,22 @@ internal fun PlayOverlay(controller: GameController) {
 // --- the HUD ---
 
 @Composable
-private fun TopBar(model: GameModel, modifier: Modifier, onMenu: () -> Unit) {
+private fun TopBar(model: GameModel, landscape: Boolean, modifier: Modifier, onMenu: () -> Unit) {
     Row(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.Top) {
-        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+        if (landscape) {
+            // A landscape table seats the partner high up in the top centre, so the score moves over beside the menu.
             RoundButton(onMenu, "Menu", "menu") { MenuIcon() }
+            Spacer(Modifier.size(10.dp))
+            ScoreBoard(model)
+            Spacer(Modifier.weight(1f))
+            Contract(model)
+        } else {
+            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                RoundButton(onMenu, "Menu", "menu") { MenuIcon() }
+            }
+            ScoreBoard(model)
+            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { Contract(model) }
         }
-        ScoreBoard(model)
-        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { Contract(model) }
     }
 }
 
@@ -559,7 +590,7 @@ private fun SeatMarker(controller: GameController, seat: Int, spot: Spot, landsc
         maxLines = 1,
     )
     if (active && model.phase != GamePhase.HAND_FINISHED && controller.bidNotes.none { it.seat == seat }) {
-        // In the same place as a call they've just made, which takes over when it lands.
+        // A call takes over from this when it lands, beside the ring.
         val below = if (landscape) 21.dp else if (seat == 2) 40.dp else 23.dp
         val x = if (landscape && seat == 2) cx + ring / 2 + 4.dp else nameX
         Txt(
@@ -664,6 +695,7 @@ private fun EmoteStrip(controller: GameController, close: () -> Unit) {
             Pressable(
                 { controller.sendEmote(id); close() },
                 Modifier.size(40.dp).testTag("emote-$id"),
+                enabled = !controller.emoteCooling,
                 shape = RoundedCornerShape(50),
                 border = Color.Transparent,
             ) {
@@ -711,6 +743,7 @@ private fun BidPanel(
     minBid: Int,
     opening: Boolean,
     landscape: Boolean,
+    rowHeight: Dp,
     modifier: Modifier,
     maxWidth: Dp,
     onBid: (Int) -> Unit,
@@ -718,9 +751,41 @@ private fun BidPanel(
 ) {
     val values = (minBid..MAX_BID).toList()
     val label = if (opening) "Your bid" else "Beat ${minBid - 1}"
+    val short = rowHeight < 42.dp
+    val padding = if (short) 5.dp else 8.dp
     val panelWidth = if (landscape) minOf(maxWidth - 240.dp, 660.dp) else minOf(maxWidth - 24.dp, 420.dp)
-    val columns = if (landscape) 13 else 7
-    Panel(modifier.width(panelWidth), padding = 8.dp, entering = true) {
+    // Every bid on one row when they fit at a size a thumb can hit, and two rows when they don't.
+    val columns = if (landscape) minOf(13, ((panelWidth - padding * 2 + 4.dp) / (BID_MIN_WIDTH + 4.dp)).toInt()) else 7
+    @Composable
+    fun RowScope.cell(value: Int) {
+        Pressable({ onBid(value) }, Modifier.weight(1f).heightIn(min = rowHeight).testTag("bid-$value")) {
+            Txt("$value", size = 20, spacing = 0f, maxLines = 1)
+        }
+    }
+    Panel(modifier.width(panelWidth), padding = padding, entering = true) {
+        if (landscape && columns < 13) {
+            // Too narrow for one row, and a phone on its side has no height to spare above the hand. So the label
+            // and Pass share the rows with the bids, and the panel stays two rows tall.
+            val first = values.take(columns - LABEL_CELLS)
+            val rest = values.drop(first.size)
+            val spare = columns - LABEL_CELLS - first.size
+            val passBeside = !opening && rest.isEmpty() && spare > 0
+            Row(Modifier.fillMaxWidth().padding(vertical = 1.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Box(Modifier.weight(LABEL_CELLS.toFloat()), contentAlignment = Alignment.Center) { Txt(label, size = 17, opacity = 0.8f, maxLines = 1) }
+                first.forEach { cell(it) }
+                if (passBeside) PassButton(onPass, Modifier.weight(spare.toFloat()))
+                else if (spare > 0) Spacer(Modifier.weight(spare.toFloat()))
+            }
+            if (rest.isNotEmpty() || (!opening && !passBeside)) {
+                Row(Modifier.fillMaxWidth().padding(vertical = 1.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    rest.forEach { cell(it) }
+                    val left = columns - rest.size
+                    if (!opening) PassButton(onPass, Modifier.weight(left.toFloat()))
+                    else if (left > 0) Spacer(Modifier.weight(left.toFloat()))
+                }
+            }
+            return@Panel
+        }
         if (landscape) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
                 Txt(label, size = 18, opacity = 0.8f)
@@ -730,19 +795,15 @@ private fun BidPanel(
                 }
             }
         } else {
-            Txt(label, size = 18, opacity = 0.8f)
+            Txt(label, size = if (short) 16 else 18, opacity = 0.8f, maxLines = 1)
         }
-        Spacer(Modifier.size(3.dp))
+        Spacer(Modifier.size(if (short) 1.dp else 3.dp))
         val rows = values.chunked(columns)
         rows.forEachIndexed { index, row ->
             // Pass shares the last row when it has room, which keeps the panel low.
             val passHere = !landscape && !opening && index == rows.lastIndex && row.size < columns
             Row(Modifier.fillMaxWidth().padding(vertical = 1.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                row.forEach { value ->
-                    Pressable({ onBid(value) }, Modifier.weight(1f).heightIn(min = 42.dp).testTag("bid-$value")) {
-                        Txt("$value", size = 20, spacing = 0f, maxLines = 1)
-                    }
-                }
+                row.forEach { cell(it) }
                 val spare = columns - row.size
                 if (passHere) PassButton(onPass, Modifier.weight(spare.toFloat()))
                 else repeat(spare) { Spacer(Modifier.weight(1f)) }
@@ -762,14 +823,26 @@ private fun PassButton(onPass: () -> Unit, modifier: Modifier) {
 
 private val PICK_W = 72.dp
 private val PICK_H = 106.dp
+private val PICK_GAP = 6.dp
+
+/** How much the trump cards shrink, so that four of them fit across the screen and stop below a side seat's name. */
+private fun pickScale(width: Dp, height: Dp, landscape: Boolean): Float {
+    val across = (width - 24.dp - PICK_GAP * 3) / (PICK_W * 4)
+    val down = when {
+        !landscape -> (height * (1 - FAN_TOP_FROM_BOTTOM) - 372.dp) / PICK_H
+        height <= SHORT_LANDSCAPE -> (height * SIDEWAYS_FAN_TOP - sidewaysPromptTop(height) - 30.dp) / PICK_H
+        else -> 1f
+    }
+    return minOf(1f, across, down.coerceAtLeast(0.72f))
+}
 
 /** Four suit cards to choose from, dealt up from the table. */
 @Composable
-private fun TrumpPanel(modifier: Modifier, onSuit: (Suit) -> Unit) {
+private fun TrumpPanel(modifier: Modifier, scale: Float, onSuit: (Suit) -> Unit) {
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Txt("Choose trump", size = 22, opacity = 0.85f)
         Spacer(Modifier.size(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(PICK_GAP)) {
             SUITS.forEachIndexed { index, suit ->
                 val turn = remember { Animatable(1f) }
                 val reduce = LocalReduceMotion.current
@@ -783,11 +856,11 @@ private fun TrumpPanel(modifier: Modifier, onSuit: (Suit) -> Unit) {
                 }
                 Pressable(
                     { onSuit(suit) },
-                    Modifier.size(width = PICK_W, height = PICK_H).testTag("trump-${suit.id}"),
+                    Modifier.size(width = PICK_W * scale, height = PICK_H * scale).testTag("trump-${suit.id}"),
                     shape = RoundedCornerShape(6.dp),
                     border = Color.Transparent,
                 ) {
-                    SuitCard(suit, turn.value, Modifier.fillMaxSize(), glyphSize = 42)
+                    SuitCard(suit, turn.value, Modifier.fillMaxSize(), glyphSize = (42 * scale).toInt())
                 }
             }
         }
@@ -796,7 +869,7 @@ private fun TrumpPanel(modifier: Modifier, onSuit: (Suit) -> Unit) {
 
 /** The chosen suit turns face down and goes up to its place in the score, where nobody else can see it. */
 @Composable
-private fun BoxScope.FlyingTrump(suit: Suit, width: Dp, height: Dp, promptTop: Dp?, onDone: () -> Unit) {
+private fun BoxScope.FlyingTrump(suit: Suit, cardScale: Float, width: Dp, height: Dp, promptTop: Dp?, onDone: () -> Unit) {
     val reduce = LocalReduceMotion.current
     val turn = remember { Animatable(0f) }
     val fly = remember { Animatable(0f) }
@@ -807,10 +880,12 @@ private fun BoxScope.FlyingTrump(suit: Suit, width: Dp, height: Dp, promptTop: D
         }
         onDone()
     }
-    val startX = width / 2 - PICK_W / 2
+    val pickW = PICK_W * cardScale
+    val pickH = PICK_H * cardScale
+    val startX = width / 2 - pickW / 2
     // Where the chosen card sat in the prompt: below its title.
-    val startY = promptTop?.plus(20.dp) ?: (height * (1 - FAN_TOP_FROM_BOTTOM) - PICK_H)
-    val endX = width - 12.dp - PICK_W * 0.65f
+    val startY = promptTop?.plus(20.dp) ?: (height * (1 - FAN_TOP_FROM_BOTTOM) - pickH)
+    val endX = width - 12.dp - pickW * 0.65f
     val endY = 2.dp
     val p = fly.value
     SuitCard(
@@ -818,13 +893,13 @@ private fun BoxScope.FlyingTrump(suit: Suit, width: Dp, height: Dp, promptTop: D
         turn.value,
         Modifier
             .absoluteOffset(startX + (endX - startX) * p, startY + (endY - startY) * p)
-            .size(width = PICK_W, height = PICK_H)
+            .size(width = pickW, height = pickH)
             .graphicsLayer {
                 val shrink = 1f - p * 0.64f
                 scaleX = shrink
                 scaleY = shrink
             },
-        glyphSize = 42,
+        glyphSize = (42 * cardScale).toInt(),
     )
 }
 
@@ -875,7 +950,7 @@ private fun BoxScope.ResultStage(height: Dp, content: @Composable () -> Unit) {
     Box(Modifier.fillMaxSize().background(PaperLight.copy(alpha = 0.76f * wash.value)))
     Column(
         // The padding is inside the scroller, which would otherwise cut the corners off a tilted seal.
-        Modifier.align(Alignment.Center).heightIn(max = height * 0.94f).verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 24.dp),
+        Modifier.align(Alignment.Center).heightIn(max = height * 0.94f).verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = if (height < SHORT_RESULT) 12.dp else 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) { content() }
 }
@@ -987,6 +1062,8 @@ private fun BoxScope.MatchOverPanel(controller: GameController, width: Dp, heigh
     }
     val members = model.seatMembers
     val thump = rememberThump()
+    // A phone on its side has to fit all of this, down to the button, without scrolling.
+    val tight = height < SHORT_RESULT
     ResultStage(height) {
         Column(Modifier.testTag("match-over"), horizontalAlignment = Alignment.CenterHorizontally) {
             // Our side of the table together.
@@ -994,31 +1071,31 @@ private fun BoxScope.MatchOverPanel(controller: GameController, width: Dp, heigh
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(0, 2).forEach { seat ->
                         val profile = playerProfile(members[seat], model.members)
-                        Box(Modifier.size(84.dp), contentAlignment = Alignment.Center) {
+                        Box(Modifier.size(if (tight) 54.dp else 84.dp), contentAlignment = Alignment.Center) {
                             BrushedEnso(won)
                             if (profile.isBot) {
-                                BasicText(profile.avatar, style = TextStyle(fontSize = 32.sp, color = Color.Black))
+                                BasicText(profile.avatar, style = TextStyle(fontSize = (if (tight) 21 else 32).sp, color = Color.Black))
                             } else {
-                                Txt(profile.avatar, size = 30, weight = FontWeight.W600, color = accentColor(profile.accent), spacing = 0f)
+                                Txt(profile.avatar, size = if (tight) 20 else 30, weight = FontWeight.W600, color = accentColor(profile.accent), spacing = 0f)
                             }
                         }
                     }
                 }
-                Spacer(Modifier.size(10.dp))
+                Spacer(Modifier.size(if (tight) 2.dp else 10.dp))
             }
-            Txt(if (won) "You win the match" else "Match lost", size = 42, weight = FontWeight.W500)
-            Spacer(Modifier.size(10.dp))
-            Seal("${model.matchUs} – ${model.matchThem}", size = 34, horizontal = 18.dp, vertical = 7.dp, onLand = thump)
-            Spacer(Modifier.size(6.dp))
-            Txt("first to ${model.matchTarget}", size = 17, opacity = 0.7f)
+            Txt(if (won) "You win the match" else "Match lost", size = if (tight) 30 else 42, weight = FontWeight.W500)
+            Spacer(Modifier.size(if (tight) 4.dp else 10.dp))
+            Seal("${model.matchUs} – ${model.matchThem}", size = if (tight) 25 else 34, horizontal = if (tight) 14.dp else 18.dp, vertical = if (tight) 4.dp else 7.dp, onLand = thump)
+            Spacer(Modifier.size(if (tight) 2.dp else 6.dp))
+            Txt("first to ${model.matchTarget}", size = if (tight) 15 else 17, opacity = 0.7f)
             // Hand-by-hand chips only when we saw every hand: a mid-match reconnect starts the tally over.
             if (model.handResults.size == hands && hands > 0) {
-                Spacer(Modifier.size(12.dp))
+                Spacer(Modifier.size(if (tight) 5.dp else 12.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     model.handResults.forEach { swing -> HandChip(swing) }
                 }
             }
-            Spacer(Modifier.size(16.dp))
+            Spacer(Modifier.size(if (tight) 7.dp else 16.dp))
             PaperButton("Back to home", { controller.goHome() }, Modifier.testTag("match-home"), fill = PaperLight, size = 20)
         }
     }
@@ -1032,12 +1109,14 @@ private fun HandChip(swing: Int) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AbandonPanel(name: String, controller: GameController, modifier: Modifier) {
     Panel(modifier, fill = PaperLight, padding = 14.dp, entering = true) {
         Txt("$name abandoned the match.", size = 19, opacity = 0.85f)
         Spacer(Modifier.size(10.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Side by side when they both fit, and one over the other on a narrow phone.
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             PaperButton("Replace with a bot", { controller.resolveAbandon(AbandonChoice.REPLACE) }, Modifier.testTag("abandon-replace"), size = 17, horizontal = 10.dp)
             PaperButton("End the match", { controller.resolveAbandon(AbandonChoice.CLOSE) }, Modifier.testTag("abandon-close"), size = 17, color = Red, horizontal = 10.dp)
         }
@@ -1080,28 +1159,34 @@ private fun MomentBanner(title: String, detail: String, modifier: Modifier) {
 }
 
 private val NOTE_WIDTH = 88.dp
+private val NOTE_HEIGHT = 42.dp
+private val NOTE_GAP = 5.dp
 
-/** A bid is a seal that thumps down by its player. A pass stays quiet. */
+/**
+ * A bid is a seal that thumps down by its player, and a pass stays quiet. Other players' calls sit beside the
+ * ring, on the table's side, as on the web. Nothing else is there during an auction, and on a short phone the
+ * prompt comes up to just below the name.
+ */
 @Composable
 private fun BidNoteAt(text: String, spot: Spot, seat: Int, landscape: Boolean, screenWidth: Dp, screenHeight: Dp, insetLeft: Dp, insetRight: Dp, onLand: () -> Unit) {
-    val pass = text == "Pass"
-    val half = NOTE_WIDTH / 2
     val ring = if (landscape) LANDSCAPE_RING else PORTRAIT_RING
     val centre = seatCentre(spot, ring, screenWidth, insetLeft, insetRight)
-    // Below the name, past the partner tag; a landscape partner has no room below, so it goes beside the ring.
     val (x, y) = when {
-        seat == 0 && landscape -> spot.x.dp to spot.y.dp
+        seat == 0 && landscape -> spot.x.dp - NOTE_WIDTH / 2 to spot.y.dp - 4.dp
         // Just above the fan, where our own bid panel was.
-        seat == 0 -> spot.x.dp to screenHeight * (1 - FAN_TOP_FROM_BOTTOM) - 34.dp
-        landscape && seat == 2 -> centre + ring / 2 + half + 6.dp to spot.y.dp - 12.dp
-        seat == 2 -> centre to spot.y.dp + ring / 2 + 42.dp
-        else -> centre to spot.y.dp + ring / 2 + 25.dp
+        seat == 0 -> spot.x.dp - NOTE_WIDTH / 2 to screenHeight * (1 - FAN_TOP_FROM_BOTTOM) - NOTE_HEIGHT + 4.dp
+        seat == 1 -> centre - ring / 2 - NOTE_GAP - NOTE_WIDTH to spot.y.dp - NOTE_HEIGHT / 2
+        else -> centre + ring / 2 + NOTE_GAP to spot.y.dp - NOTE_HEIGHT / 2
     }
     Box(
-        Modifier.absoluteOffset(x.coerceIn(insetLeft + half, screenWidth - insetRight - half) - half, y).width(NOTE_WIDTH),
-        contentAlignment = Alignment.Center,
+        Modifier.absoluteOffset(x, y).size(NOTE_WIDTH, NOTE_HEIGHT).testTag("bid-note-$seat"),
+        contentAlignment = when (seat) {
+            0 -> Alignment.Center
+            1 -> Alignment.CenterEnd
+            else -> Alignment.CenterStart
+        },
     ) {
-        if (pass) {
+        if (text == "Pass") {
             Txt("Pass", size = 17, weight = FontWeight.W600, color = PassBrown, maxLines = 1)
         } else {
             Seal(text, size = 20, horizontal = 9.dp, vertical = 4.dp, onLand = onLand)

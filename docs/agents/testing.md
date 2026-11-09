@@ -30,6 +30,7 @@ suites, headless — on each push.
    HEADED=1 node scripts/test-multi-tables.mjs   "http://localhost:5179/?port=8082"
    HEADED=1 node scripts/test-mobile.mjs         "http://localhost:5179/?port=8082"
    HEADED=1 node scripts/test-restart.mjs        "http://localhost:5179/?port=8082"  # local only
+   HEADED=1 node scripts/test-layout-matrix.mjs  "http://localhost:5179/?port=8082" "http://localhost:5179/?port=8083"  # local only
    ```
 
    - `play-game.mjs` — one human + 3 bots: lobby → bid → trump → all 8 tricks
@@ -56,6 +57,11 @@ suites, headless — on each push.
    - `test-restart.mjs` — LOCAL ONLY (not in CI: it kills and respawns the
      dev game server): proves a match survives a restart — the page
      auto-rejoins the restored match with its score carried.
+   - `test-layout-matrix.mjs` — LOCAL ONLY (not in CI: it takes about 13
+     minutes): every screen at 14 window sizes against a real server, measured
+     for overlaps, cut-offs and small targets, with stale status lines too. The
+     second URL is a `MATCH-TARGET=0` server, for the match-over panel. `SIZES=`
+     and `ONLY=` narrow a run.
    - All scripts honour `HEADED=1`. Screenshots land in `/tmp/game-shots*`;
      scripts exit non-zero on console errors. Any new test script must follow
      the same pattern (`headless: !process.env.HEADED`).

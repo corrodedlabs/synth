@@ -265,6 +265,33 @@ class GameSessionTest {
     }
 
     @Test
+    fun `joining stops saying so once we are in`() = runTest {
+        val h = harness()
+        h.session.browseTables("Asha")
+        settle(CONNECT_BEAT_MS)
+
+        h.session.join("t")
+        assertEquals("Joining the table…", h.statuses.last())
+        h.socket.receive("(room-members \"t\" (\"$ME\" \"h@x\") 2)")
+        settle()
+        assertEquals("", h.statuses.last())
+    }
+
+    @Test
+    fun `choosing trump takes the turn off the last bidder`() = runTest {
+        val h = harness()
+        seatedAtTwo(h)
+        h.socket.receive("(turn 1)")
+        settle()
+        assertEquals(3, h.state.activePlayer)
+
+        h.socket.receive("(choose-trump)")
+        settle()
+        assertEquals(0, h.state.activePlayer)
+        assertEquals(PendingRequest.Trump, h.state.pendingRequest)
+    }
+
+    @Test
     fun `standings ask over a live session or connect for it`() = runTest {
         val h = harness()
         h.session.showStandings("Asha")
@@ -276,6 +303,69 @@ class GameSessionTest {
         h.session.showStandings("Asha")
         assertEquals(1, h.sockets.size)
         assertEquals(2, h.socket.sent.count { it == "(get-leaderboard)" })
+    }
+
+    // --- emotes ---
+
+    @Test
+    fun `a table-mate's emote doesn't wait behind the table's pacing`() = runTest {
+        val h = harness()
+        seatedAtTwo(h)
+        // The table holds on a bid so it can be read, and the next call queues behind it.
+        h.socket.receive("(bid-placed 3 17)", "(bid-placed 0 pass)")
+        settle()
+        assertEquals(1, h.state.bidsPlaced)
+
+        h.socket.receive("(emote-played 3 laugh)")
+        settle()
+        assertEquals(1 to "laugh", h.emotes.last())
+        assertEquals(1, h.state.bidsPlaced, "the game itself still waits its turn")
+
+        settle(h.profile.bidPauseMs)
+        assertEquals(2, h.state.bidsPlaced)
+    }
+
+    @Test
+    fun `our own emote shows at the tap, and only once`() = runTest {
+        val h = harness()
+        seatedAtTwo(h)
+        assertTrue(h.session.sendEmote("fire"))
+        assertEquals(listOf(0 to "fire"), h.emotes)
+        h.socket.receive("(emote-played 2 fire)")
+        settle()
+        assertEquals(listOf(0 to "fire"), h.emotes)
+    }
+
+    @Test
+    fun `an emote inside the cooldown isn't sent or shown`() = runTest {
+        val h = harness()
+        seatedAtTwo(h)
+        h.session.sendEmote("fire")
+        val sent = h.socket.sent.size
+        settle(EMOTE_COOLDOWN_MS - 1)
+        assertFalse(h.session.sendEmote("wow"))
+        assertEquals(sent, h.socket.sent.size)
+        assertEquals(1, h.emotes.size)
+
+        settle(1)
+        assertTrue(h.session.sendEmote("wow"))
+        assertEquals("(emote \"$ME\" wow)", h.socket.sent.last())
+        assertEquals(0 to "wow", h.emotes.last())
+    }
+
+    @Test
+    fun `frames that arrived before a drop still play out in order, then the disconnect`() = runTest {
+        val h = harness()
+        seatedAtTwo(h)
+        h.socket.receive("(bid-placed 3 17)", "(bid-placed 0 pass)")
+        h.socket.drop()
+        settle()
+        assertEquals(1, h.state.bidsPlaced)
+        assertEquals(0, h.reconnectStates.count { it })
+        settle(h.profile.bidPauseMs)
+        assertEquals(2, h.state.bidsPlaced)
+        settle(h.profile.bidPauseMs)
+        assertEquals(GamePhase.IDLE, h.state.phase)
     }
 
     // --- seat translation ---

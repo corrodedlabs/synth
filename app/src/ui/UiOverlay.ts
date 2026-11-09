@@ -48,6 +48,9 @@ export const SEAT_NAMES = ["You", "Right", "Partner", "Left"] as const;
 
 const MODE_KEY = "game28-match-length";
 const MAX_BID = 28;
+// px between a seat's name and a prompt, and how far a call starts above its ring's middle.
+const PROMPT_CLEARANCE = 4;
+const SEAT_CALL_RISE = 21;
 
 function storedMode(): number {
   try {
@@ -166,6 +169,8 @@ export class UiOverlay {
   private resultTeam = element("result-team");
   private bidChips = element("bid-chips");
   private lobbyControls = element("lobby-controls");
+  private scoreDisplay = element("score-display");
+  private bringRoomsIntoView = false;
   private selectedTarget = storedMode();
   private seatedMembers: ReadonlySet<string> = new Set();
   private statusTimer: number | null = null;
@@ -182,6 +187,8 @@ export class UiOverlay {
     document.addEventListener("pointerdown", () => {
       if (this.tableMoment.classList.contains("dismissible")) this.hideTableMoment();
     });
+    // Next frame: the seats move to their new places in a listener of their own.
+    window.addEventListener("resize", () => requestAnimationFrame(() => this.makeRoomForPrompt()));
 
     // Play with friends opens a table to invite them to, of the length picked on the cards above it.
     element("create-button").addEventListener("click", () => {
@@ -201,7 +208,7 @@ export class UiOverlay {
     element("browse-button").addEventListener("click", () => {
       this.show(this.roomBrowser);
       this.roomList.innerHTML = `<div id="room-empty">looking for tables…</div>`;
-      this.roomBrowser.scrollIntoView({ block: "nearest" });
+      this.bringRoomsIntoView = true;
       callbacks.onBrowse(this.playerNameInput.value);
     });
     element("refresh-rooms").addEventListener("click", () => callbacks.onRefreshRooms());
@@ -491,6 +498,15 @@ export class UiOverlay {
   }
 
   showRooms(rooms: readonly RoomInfo[]) {
+    this.fillRoomList(rooms);
+    // Only the first answer scrolls: the list is pushed live, and may be mid-swipe.
+    if (this.bringRoomsIntoView) {
+      this.bringRoomsIntoView = false;
+      this.roomBrowser.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  private fillRoomList(rooms: readonly RoomInfo[]) {
     this.roomList.innerHTML = "";
     const open = rooms.filter((room) => room.members.length < 4);
     if (open.length === 0) {
@@ -646,6 +662,13 @@ export class UiOverlay {
     if (messages.includes(this.statusLine.textContent ?? "")) this.status("");
   }
 
+  // A send inside this time wouldn't go, so the buttons say so rather than eat the tap.
+  coolEmotes(ms: number) {
+    const buttons = [...this.emoteStrip.querySelectorAll("button")];
+    buttons.forEach((button) => (button.disabled = true));
+    window.setTimeout(() => buttons.forEach((button) => (button.disabled = false)), ms);
+  }
+
   // This sits over the table rather than in the busy HUD, so the player can
   // connect the winning card, seat, and point total in one glance.
   showTrickOutcome(taker: string, points: number, ours: boolean) {
@@ -771,18 +794,57 @@ export class UiOverlay {
     }
     this.bidPass.classList.toggle("hidden", isOpening);
     this.show(this.bidPanel);
+    this.makeRoomForPrompt();
   }
 
   hideBidPanel() {
     this.hide(this.bidPanel);
+    this.makeRoomForPrompt();
   }
 
   showTrumpPanel() {
     this.show(this.trumpPanel);
+    this.makeRoomForPrompt();
   }
 
   hideTrumpPanel() {
     this.hide(this.trumpPanel);
+    this.makeRoomForPrompt();
+  }
+
+  // On a short phone a prompt takes the whole gap over the hand, the side seats
+  // with it. They rise until the prompt closes, and the partner rises too if
+  // their calls would land on its name. Offsets ignore the lift already applied.
+  private makeRoomForPrompt() {
+    const prompt = [this.bidPanel, this.trumpPanel].find((panel) => !panel.classList.contains("hidden"));
+    let sideLift = 0;
+    let partnerLift = 0;
+    if (prompt) {
+      const span = prompt.getBoundingClientRect();
+      const sides = [1, 3].flatMap((seat) => {
+        const label = document.getElementById(`seat-label-${seat}`);
+        const name = label?.querySelector<HTMLElement>(".player-copy");
+        return label && name ? [{ label, name }] : [];
+      });
+      for (const { label, name } of sides) {
+        const across = name.getBoundingClientRect();
+        if (across.right <= span.left || across.left >= span.right) continue;
+        const nameBottom = label.offsetTop - label.offsetHeight / 2 + name.offsetTop + name.offsetHeight;
+        sideLift = Math.max(sideLift, Math.ceil(nameBottom + PROMPT_CLEARANCE - prompt.offsetTop));
+      }
+      const partner = document.getElementById("seat-label-2");
+      const tag = partner?.querySelector<HTMLElement>(".partner-tag");
+      const marker = partner?.querySelector<HTMLElement>(".seat-marker");
+      if (sideLift > 0 && sides[0] && partner && tag && marker) {
+        const callTop = sides[0].label.offsetTop - sideLift - SEAT_CALL_RISE;
+        const partnerBottom = partner.offsetTop - partner.offsetHeight / 2 + tag.offsetTop + tag.offsetHeight;
+        const markerTop = partner.offsetTop - marker.offsetHeight / 2;
+        const score = this.scoreDisplay.getBoundingClientRect().bottom;
+        partnerLift = Math.ceil(Math.max(0, Math.min(partnerBottom - callTop, markerTop - score - 4)));
+      }
+    }
+    this.uiLayer.style.setProperty("--seat-lift", `${Math.max(0, sideLift)}px`);
+    this.uiLayer.style.setProperty("--partner-lift", `${partnerLift}px`);
   }
 
   setExposeVisible(visible: boolean) {

@@ -13,6 +13,7 @@ import android.window.OnBackInvokedDispatcher
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -69,6 +70,11 @@ class GameActivity : SDLActivity(), LifecycleOwner, SavedStateRegistryOwner {
             // This replaces SDL's view before the window first draws. SDL starts its native thread, and
             // with it the GPU, only once its surface exists, so neither ever starts.
             setContentView(composeView { UnsupportedScreen(problem) { openWebGame(this@GameActivity, inviteRoom) } })
+            // The status icons have to read against the paper.
+            WindowCompat.getInsetsController(window, window.decorView).run {
+                isAppearanceLightStatusBars = true
+                isAppearanceLightNavigationBars = true
+            }
             return
         }
 

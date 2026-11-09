@@ -17,7 +17,8 @@ const browser = await chromium.launch({
     ? { executablePath: "/usr/bin/chromium" }
     : { channel: "chrome" }),
   headless: !process.env.HEADED,
-  args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader"],
+  // SwiftShader yields no WebGL context on macOS; Chrome's default GL works there.
+  args: process.platform === "darwin" ? [] : ["--enable-unsafe-swiftshader", "--use-angle=swiftshader"],
 });
 const context = await browser.newContext({
   viewport: VIEW,

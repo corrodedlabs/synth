@@ -7,6 +7,7 @@ package dev.synth.core
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -30,7 +31,7 @@ interface GameSocket {
      * Incoming text frames, in order. Closing this channel (with or without a
      * cause) is the failure signal: frames already buffered are still read
      * first, then the session sees the disconnect. Use an unbounded channel,
-     * because the session stops reading during pacing delays.
+     * so that a burst of frames is never dropped.
      */
     val incoming: ReceiveChannel<String>
     val isOpen: Boolean
@@ -99,6 +100,10 @@ const val CONNECT_BEAT_MS = 300L
 
 const val REJOIN_RETRY_MS = 3_000L
 
+// A little over the server's cooldown on emotes. Two taps this far apart can still reach it closer
+// together on a bad connection, and it would drop the second after we had already shown it.
+const val EMOTE_COOLDOWN_MS = 1_800L
+
 private const val MAX_PLAYERS = 4
 
 private fun randomPlayerId(): String {
@@ -124,6 +129,7 @@ class GameSession(
     private var socket: GameSocket? = null
     private var sessionJob: Job? = null
     private var retryJob: Job? = null
+    private var emoteCooldown: Job? = null
     // The web's `session !== null`: true from start until the session dies.
     private var live = false
     private var reconnecting = false
@@ -442,15 +448,28 @@ class GameSession(
         if (socket?.isOpen == true) send(ClientCommand.Ping)
     }
 
-    // A quick table emote; the server validates and rate-limits, we just
-    // need to be in a running match for it to mean anything.
-    fun sendEmote(emote: String) {
+    // A quick table emote. The server validates it, and we only need to be in a running match for it to
+    // mean anything. It shows here at once, so the tap answers without waiting on the network. Returns
+    // whether it went.
+    fun sendEmote(emote: String): Boolean {
         val inMatch = when (callbacks.getModel().phase) {
             GamePhase.BIDDING, GamePhase.CHOOSING_TRUMP, GamePhase.PLAYING, GamePhase.HAND_FINISHED -> true
             else -> false
         }
-        if (socket == null || !inMatch) return
+        if (socket == null || !inMatch || emoteCooldown?.isActive == true) return false
         send(ClientCommand.SendEmote(email, emote))
+        callbacks.emote(0, emote)
+        emoteCooldown = scope.launch { delay(EMOTE_COOLDOWN_MS) }
+        return true
+    }
+
+    private fun showEmote(event: ServerEvent.EmotePlayed) {
+        // until we are seated (rejoin still restoring), myServerIndex is
+        // a default and the bubble would land at the wrong seat
+        if (!inRoom) return
+        val seat = toView(event.seat)
+        // Our own showed when we sent it.
+        if (seat != 0) callbacks.emote(seat, event.emote)
     }
 
     private fun send(command: ClientCommand) {
@@ -567,13 +586,32 @@ class GameSession(
             issueIntent(intent, joinRoom)
         }
 
+        // Frames are read as they come, apart from the loop below, which holds each event for the table's
+        // pacing. An emote is a live reaction rather than part of the game, so it never waits in that line.
+        val events = Channel<ServerEvent>(Channel.UNLIMITED)
+        val reader = launch {
+            while (true) {
+                val frame = connected.incoming.receiveCatching()
+                if (frame.isClosed) {
+                    events.trySend(ServerEvent.Disconnected)
+                    break
+                }
+                when (val event = decodeServerEvent(frame.getOrThrow())) {
+                    null -> Unit
+                    is ServerEvent.EmotePlayed -> showEmote(event)
+                    else -> events.trySend(event)
+                }
+            }
+        }
+
         try {
             while (true) {
-                val event = early.removeFirstOrNull() ?: nextEvent(connected)
+                val event = early.removeFirstOrNull() ?: events.receive()
                 if (handleEvent(event)) break
             }
         } finally {
             heartbeat.cancel()
+            reader.cancel()
         }
     }
 
@@ -591,14 +629,6 @@ class GameSession(
             requestLeaderboard()
         } else {
             refreshRooms()
-        }
-    }
-
-    private suspend fun nextEvent(connected: GameSocket): ServerEvent {
-        while (true) {
-            val frame = connected.incoming.receiveCatching()
-            if (frame.isClosed) return ServerEvent.Disconnected
-            decodeServerEvent(frame.getOrThrow())?.let { return it }
         }
     }
 
@@ -649,6 +679,7 @@ class GameSession(
                         GameAction.RoomEntered(joinedRoomName ?: "table", event.members, isHost = false, target = event.target)
                     )
                     if (event.seats != null) dispatch(GameAction.MembersChanged(event.members, seats = event.seats))
+                    callbacks.status("") // we're in, and only the host hears "game started" to replace it
                 }
             }
 
@@ -708,7 +739,11 @@ class GameSession(
 
             is ServerEvent.BidResult -> dispatch(GameAction.BidWon(toView(event.playerIndex), event.bid))
 
-            ServerEvent.ChooseTrumpRequested -> dispatch(GameAction.RequestReceived(PendingRequest.Trump))
+            ServerEvent.ChooseTrumpRequested -> {
+                // No turn comes with this, and the last bidder would stay lit as "bidding…".
+                dispatch(GameAction.ActivePlayerChanged(0))
+                dispatch(GameAction.RequestReceived(PendingRequest.Trump))
+            }
 
             ServerEvent.TrumpSelected -> dispatch(GameAction.TrumpSet(chosenTrump, exposed = false))
 
@@ -791,10 +826,8 @@ class GameSession(
                     callbacks.status("${memberDisplayName(event.email, callbacks.getModel().members)} is back.")
                 }
 
-            is ServerEvent.EmotePlayed ->
-                // until we are seated (rejoin still restoring), myServerIndex is
-                // a default and the bubble would land at the wrong seat
-                if (inRoom) callbacks.emote(toView(event.seat), event.emote)
+            // Only one that came in during the connect beat gets here: see the reader in program.
+            is ServerEvent.EmotePlayed -> showEmote(event)
 
             is ServerEvent.SeatAbandoned -> {
                 val name = memberDisplayName(event.email)

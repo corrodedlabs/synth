@@ -27,7 +27,7 @@ import {
   initialGameModel,
   isLegalPlay,
 } from "./GameModel";
-import { forgetActiveMatch, GameSession, storedActiveMatch } from "./GameSession";
+import { EMOTE_COOLDOWN_MS, forgetActiveMatch, GameSession, storedActiveMatch } from "./GameSession";
 import { Hand } from "./Hand";
 import { mockGameProgram } from "./MockGameProgram";
 import { GamePacing } from "./GamePacing";
@@ -80,7 +80,7 @@ export class GameState {
   // How the deciding hand went, for the match-over panel.
   private finalHandLine = "";
   // Play with bots, in progress: the number of members we last added a bot for.
-  private playNow: { botAskedAt: number; watchdog: number } | null = null;
+  private playNow: { botAskedAt: number; started: boolean; watchdog: number } | null = null;
   private hudValues = { score: 0, theirScore: 0, tricks: 0, theirTricks: 0, matchUs: 0, matchThem: 0 };
   private scoreTween: TWEEN.Tween<typeof this.hudValues> | null = null;
 
@@ -120,7 +120,9 @@ export class GameState {
       onBrowse: (name) => this.browseTables(name),
       onJoin: (roomName) => this.session?.join(roomName),
       onJoinLink: (name, roomName) => this.joinTable(name, roomName),
-      onEmote: (emote) => this.session?.sendEmote(emote),
+      onEmote: (emote) => {
+        if (this.session?.sendEmote(emote)) this.ui.coolEmotes(EMOTE_COOLDOWN_MS);
+      },
       onStandings: (name) => this.showStandings(name),
       onRefreshRooms: () => this.session?.refreshRooms(),
       onAddBot: (seat) => this.session?.addBot(seat),
@@ -376,7 +378,7 @@ export class GameState {
         this.ui.status("That took too long. Check your connection and try again.");
       }
     }, PLAY_NOW_LIMIT_MS);
-    this.playNow = { botAskedAt: 0, watchdog };
+    this.playNow = { botAskedAt: 0, started: false, watchdog };
     this.createTable(playerName, target);
   }
 
@@ -390,7 +392,9 @@ export class GameState {
     if (!this.playNow || this.model.phase !== "lobby") return;
     const seated = this.model.members.length;
     if (seated >= 4) {
-      this.session?.startGame();
+      // The server sends the seats again as the match starts, before the first deal ends this.
+      if (!this.playNow.started) this.session?.startGame();
+      this.playNow.started = true;
     } else if (this.playNow.botAskedAt !== seated) {
       this.playNow.botAskedAt = seated;
       this.session?.addBot();
@@ -1054,6 +1058,7 @@ export class GameState {
         this.sound.yourTurn();
         switch (action.request.kind) {
           case "bid":
+            this.ui.clearStatus("Reconnected — back at the table."); // the panel says so now
             this.ui.showBidPanel(action.request.minBid, this.model.bidsPlaced === 0);
             break;
           case "trump":
