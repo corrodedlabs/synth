@@ -29,6 +29,9 @@ const GpuDesc synth_gpu_desc = {
     .shader_dir = SYNTH_SHADERS,
     .paced = true,
     .allow_vulkan_1_1 = true,
+    /* The table holds the card atlas and the font. A small table fits phones without descriptor
+     * indexing, such as Mali-G76 ones, which hold 128 textures, and Apple's GPUs. */
+    .textures = SIMPLE_TEXTURES,
 };
 
 #define CARD_W 0.6f

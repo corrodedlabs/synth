@@ -46,11 +46,12 @@ validation on.
 
 ## Phones without Vulkan 1.3
 
-The table runs on Vulkan 1.3, and on 1.1 and 1.2 phones that have bindless textures, buffer addresses and
-scalar layouts, through Apsis's fallback (`allow_vulkan_1_1` in `native/src/main.c`; the shaders build for
-`vulkan1.1`). The fallback swaps dynamic rendering and synchronization2 for the original render passes and
-barriers. The manifest asks for Vulkan 1.1, and Play can't tell which of those phones have the three
-features, so the app checks at launch:
+The table runs on Vulkan 1.3, and on 1.1 and 1.2 phones that have buffer addresses and scalar layouts,
+through Apsis's fallback (`allow_vulkan_1_1` in `native/src/main.c`; the shaders build for `vulkan1.1`). The
+fallback swaps dynamic rendering and synchronization2 for the original render passes and barriers. Bindless
+textures (descriptor indexing) are optional: many Adreno 6xx and Mali-G76 phones lack them, and there Apsis
+keeps a plain 32-slot texture table (`textures` in `native/src/main.c`). The manifest asks for Vulkan 1.1,
+and Play can't tell which of those phones have the two features, so the app checks at launch:
 
 - `GameActivity.onCreate` calls `TableBridge.gpuProblem()` before SDL starts. It runs Apsis's
   `gpu_check_support` with the table's own GPU settings (`native/src/gpu_desc.h`).
@@ -63,8 +64,9 @@ To test either way:
 | Switch | What it does |
 |---|---|
 | `adb shell setprop debug.apsis.force_legacy 1` | A 1.3 phone takes the fallback, as if it were 1.1. A driver that has the features only as 1.2 ones, as the emulator's does, runs it at 1.2. |
+| `adb shell setprop debug.apsis.force_no_indexing 1` | The phone is treated as lacking descriptor indexing, and the table uses the plain texture table. With `force_legacy` too, this is how an Adreno 620 or Mali-G76 phone runs. |
 | `adb shell setprop debug.synth.force_unsupported 1` | In debug builds, any phone gets the "can't run the table" screen |
-| `APSIS_FORCE_LEGACY=1 build/native/synth_table --demo` | The fallback on desktop |
+| `APSIS_FORCE_LEGACY=1 build/native/synth_table --demo` | The fallback on desktop. Add `APSIS_FORCE_NO_INDEXING=1` for the plain texture table. |
 
 Set them back to 0 afterwards. The emulator images for Android 13 and older can't run the table on either
 path: their GPU claims Vulkan 1.3 without its features, so the check sends them to the browser. Use Android
