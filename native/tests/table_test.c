@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "table.h"
+#include "touches.h"
 
 static int failures;
 #define CHECK(cond)                                                   \
@@ -147,6 +148,53 @@ static void test_deal_and_trick(void)
 
     table_command(&t, "reset");
     CHECK(t.hand_count == 0);
+}
+
+/* Every touch is logged, with why it didn't count as a tap. The rule here: 12 px, 0.45 s. */
+static void test_touch_log(void)
+{
+    static TouchLog log;
+    char json[4096];
+
+    touch_log_event(&log, TOUCH_DOWN, 0, 100, 200, true, 1.0);
+    touch_log_event(&log, TOUCH_UP, 0, 101, 201, true, 1.1);
+    touch_log_event(&log, TOUCH_TAP, 0, 101, 201, true, 1.1);
+    CHECK(log.total == 1 && log.log[0].tap);
+
+    touch_log_event(&log, TOUCH_DOWN, 1, 300, 900, true, 2.0);
+    touch_log_event(&log, TOUCH_MOVE, 1, 330, 900, true, 2.05);  /* a drag, even though it comes back */
+    touch_log_event(&log, TOUCH_UP, 1, 301, 900, true, 2.1);
+    CHECK(log.total == 2 && !log.log[1].tap && log.log[1].travel > 29);
+
+    touch_log_event(&log, TOUCH_DOWN, 0, 50, 60, true, 3.0);
+    touch_log_event(&log, TOUCH_UP, 0, 50, 60, true, 3.6);
+    touch_log_event(&log, TOUCH_DOWN, 2, 10, 10, true, 4.0);
+    touch_log_event(&log, TOUCH_CANCEL, 2, 10, 10, true, 4.1);
+    touch_log_event(&log, TOUCH_UP, 3, 10, 10, true, 4.2);  /* no down: not a touch */
+    CHECK(log.total == 4);
+
+    touch_log_json(&log, 12, 0.45f, json, sizeof json);
+    CHECK(strstr(json, "\"tap\":true,\"why\":\"\"") != NULL);
+    CHECK(strstr(json, "\"why\":\"moved\"") != NULL);
+    CHECK(strstr(json, "\"why\":\"held\"") != NULL);
+    CHECK(strstr(json, "\"why\":\"cancelled\"") != NULL);
+    CHECK(json[0] == '[' && json[strlen(json) - 1] == ']');
+
+    /* The ring keeps the newest, oldest first; a tap marks only the touch that just lifted. */
+    for (int i = 0; i < 20; i++) {
+        touch_log_event(&log, TOUCH_DOWN, 0, (float)i, 0, false, 10.0 + i);
+        touch_log_event(&log, TOUCH_UP, 0, (float)i, 0, false, 10.05 + i);
+    }
+    touch_log_event(&log, TOUCH_TAP, 0, 19, 0, false, 29.05);
+    CHECK(log.total == 24);
+    CHECK(log.log[23 % TOUCH_LOG_SIZE].tap && !log.log[22 % TOUCH_LOG_SIZE].tap);
+    touch_log_json(&log, 12, 0.45f, json, sizeof json);
+    const char *oldest = "[{\"t\":14.00,";  /* touches 8 to 23 of 24 */
+    CHECK(strncmp(json, oldest, strlen(oldest)) == 0);
+
+    /* Too small a buffer gives an empty array, not half a one. */
+    char tiny[64];
+    CHECK(touch_log_json(&log, 12, 0.45f, tiny, sizeof tiny) == 2 && !strcmp(tiny, "[]"));
 }
 
 static void test_tap(void)
@@ -379,6 +427,7 @@ int main(void)
     test_projection();
     test_deal_and_trick();
     test_tap();
+    test_touch_log();
     test_order_and_snapshot();
     printf(failures ? "%d failed\n" : "all passed\n", failures);
     return failures ? 1 : 0;

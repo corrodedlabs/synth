@@ -19,6 +19,7 @@
 #include "simple/simple.h"
 #include "sound.h"
 #include "table.h"
+#include "touches.h"
 
 #ifdef __ANDROID__
 #include <sys/system_properties.h>
@@ -58,6 +59,8 @@ typedef struct {
     Platform *platform;
     TableTap taps[DIAGNOSTIC_TAPS];
     unsigned tap_total;
+    TouchLog touches;      /* every touch, including those that never became taps */
+    Uint64 start_ns;       /* the table's clock starts here */
     double fps, fps_min, worst_frame_ms, gpu_ms;  /* while drawing: naps between frames don't count */
     int frames;
 } App;
@@ -132,7 +135,11 @@ static void diagnostics_update(App *app)
             i ? "," : "", tap->at, tap->x, tap->y, results[tap->result], card, tap->fan[0], tap->fan[1],
             tap->fan[2], tap->fan[3]);
     }
-    put(json, sizeof json, &n, "]}");
+    char touches[4096];
+    touch_log_json(&app->touches, PLATFORM_TAP_SLOP * app->platform->density, PLATFORM_TAP_SECONDS, touches,
+                   sizeof touches);
+    put(json, sizeof json, &n, "],\"tap_rule\":{\"slop_px\":%.1f,\"seconds\":%.2f},\"touches\":%s}",
+        PLATFORM_TAP_SLOP * app->platform->density, PLATFORM_TAP_SECONDS, touches);
     if (n >= sizeof json - 1)
         snprintf(json, sizeof json, "{\"error\":\"diagnostics too long\"}");
 
@@ -144,11 +151,18 @@ static void diagnostics_update(App *app)
 static void on_pointer(void *user, const PointerEvent *e)
 {
     App *app = user;
-    if (e->action != POINTER_TAP)
-        return;
-    table_tap(&app->table, e->x, e->y, e->touch);
-    app->taps[app->tap_total++ % DIAGNOSTIC_TAPS] = app->table.last_tap;
-    diagnostics_update(app);
+    static const TouchAction actions[] = {
+        [POINTER_DOWN] = TOUCH_DOWN, [POINTER_MOVE] = TOUCH_MOVE, [POINTER_UP] = TOUCH_UP,
+        [POINTER_TAP] = TOUCH_TAP, [POINTER_CANCEL] = TOUCH_CANCEL,
+    };
+    double now = (SDL_GetTicksNS() - app->start_ns) / 1e9;
+    touch_log_event(&app->touches, actions[e->action], e->id, e->x, e->y, e->touch, now);
+    if (e->action == POINTER_TAP) {
+        table_tap(&app->table, e->x, e->y, e->touch);
+        app->taps[app->tap_total++ % DIAGNOSTIC_TAPS] = app->table.last_tap;
+    }
+    if (e->action == POINTER_UP || e->action == POINTER_TAP || e->action == POINTER_CANCEL)
+        diagnostics_update(app);
 }
 
 static void on_play(void *user, const char *card)
@@ -361,6 +375,7 @@ int main(int argc, char **argv)
         nm_fatal("missing the table's font");
 
     Uint64 start = SDL_GetTicksNS();
+    app.start_ns = start;
     size_t demo_step = 0;
     int frames = 0;
     uint32_t last_w = 0, last_h = 0;

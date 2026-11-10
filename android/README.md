@@ -77,7 +77,8 @@ path: their GPU claims Vulkan 1.3 without its features, so the check sends them 
 The app sends a short JSON report to the game server, so problems on phones we don't have can be fixed. A
 report holds the phone, its display, window and insets, the app's settings, and the table's own snapshot
 from `native/src/diagnostics.h`: the GPU and its path, the swapchain, window and view sizes, the frame
-rate, and the last 12 taps with what each one hit. `Diagnostics.kt` sends one 20 seconds after the table
+rate, the last 12 taps with what each one hit, and the last 16 touches, including those the platform didn't
+count as taps and why (moved too far, or held too long). `Diagnostics.kt` sends one 20 seconds after the table
 starts, after each hand, and when the app goes to the background, at most once a minute. The "can't run
 the table" screen sends one with the reason. No player ID or name goes in, and each report has a random
 ID. Players turn reports off in the in-game menu (Diagnostics). The privacy policy
