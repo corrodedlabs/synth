@@ -58,6 +58,17 @@ typedef struct {
 
 typedef void TableEventFn(void *user, const char *line);
 
+/* What the last tap did, for diagnostics: a phone whose touches miss the cards shows here. */
+typedef enum { TABLE_TAP_FELT, TABLE_TAP_LOWERED, TABLE_TAP_UNPLAYABLE, TABLE_TAP_RAISED, TABLE_TAP_PLAYED } TableTapResult;
+
+typedef struct {
+    double at;             /* the table's clock */
+    float x, y;            /* in view pixels */
+    TableTapResult result;
+    int card;              /* the hand card it hit, or -1 */
+    float fan[4];          /* the hand on screen when it landed: left, top, right, bottom; zeros when empty */
+} TableTap;
+
 typedef struct {
     TableCard cards[TABLE_DECK];
     int hand[TABLE_MAX_HAND];
@@ -82,6 +93,9 @@ typedef struct {
     mat4 view_proj;
     vec3 hand_center;
     vec3 played[4];
+
+    TableTap last_tap;
+    unsigned taps;         /* counts them, so a reader can tell a new one */
 
     TableEventFn *on_play; /* "<suit>-<rank>" when a play is committed */
     TableEventFn *on_log;  /* test output */

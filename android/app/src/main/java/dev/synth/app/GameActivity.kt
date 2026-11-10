@@ -24,6 +24,7 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import dev.synth.app.ui.GameScreens
 import dev.synth.app.ui.UnsupportedScreen
+import org.json.JSONObject
 import org.libsdl.app.SDLActivity
 
 /**
@@ -48,6 +49,25 @@ class GameActivity : SDLActivity(), LifecycleOwner, SavedStateRegistryOwner {
 
     /** The table an invite link asked for, for "Play in browser" on a phone that can't run it. */
     private var inviteRoom: String? = null
+
+    private val diagnostics by lazy {
+        Diagnostics(this) {
+            when {
+                gpuProblem == null -> controller.serverUrl
+                // The controller never starts on this screen, so a debug build's test server is read here.
+                BuildConfig.DEBUG -> intent.getStringExtra("server") ?: BuildConfig.SERVER_URL
+                else -> BuildConfig.SERVER_URL
+            }
+        }
+    }
+
+    /** The surface SDL draws the table to, for diagnostics. */
+    fun surfaceSize(): Pair<Int, Int>? = SDLActivity.mSurface?.let { Pair(it.width, it.height) }
+
+    private fun settings() = JSONObject()
+        .put("reduce_motion", controller.reduceMotion)
+        .put("muted", controller.muted)
+        .put("card_travel_ms", controller.cardTravelMs)
 
     override fun getLibraries(): Array<String> = arrayOf("SDL3", "main")
 
@@ -75,6 +95,8 @@ class GameActivity : SDLActivity(), LifecycleOwner, SavedStateRegistryOwner {
                 isAppearanceLightStatusBars = true
                 isAppearanceLightNavigationBars = true
             }
+            // Once laid out, so the report has the window's size.
+            window.decorView.postDelayed({ diagnostics.send("unsupported", reason = problem) }, 2_000)
             return
         }
 
@@ -88,6 +110,9 @@ class GameActivity : SDLActivity(), LifecycleOwner, SavedStateRegistryOwner {
         controller.resync()
         handleJoin(intent)
         controller.start()
+        // By then the table has drawn and measured its frame rate.
+        window.decorView.postDelayed({ diagnostics.send("start", settings = settings()) }, 20_000)
+        controller.onHandFinished = { diagnostics.send("hand", settings = settings()) }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -108,6 +133,7 @@ class GameActivity : SDLActivity(), LifecycleOwner, SavedStateRegistryOwner {
     }
 
     override fun onPause() {
+        if (gpuProblem == null) diagnostics.send("background", settings = settings())
         registry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         super.onPause()
     }
@@ -122,6 +148,7 @@ class GameActivity : SDLActivity(), LifecycleOwner, SavedStateRegistryOwner {
             backCallback?.let(onBackInvokedDispatcher::unregisterOnBackInvokedCallback)
         }
         registry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+        if (gpuProblem == null) controller.onHandFinished = null
         super.onDestroy()
     }
 

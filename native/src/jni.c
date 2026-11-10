@@ -7,6 +7,7 @@
 
 #include "commands.h"
 #include "core/log.h"
+#include "diagnostics.h"
 #include "gpu_desc.h"
 
 static jclass bridge_class;
@@ -34,6 +35,14 @@ JNIEXPORT jstring JNICALL Java_dev_synth_app_TableBridge_nativeGpuSupported(JNIE
         snprintf(why, sizeof why, "forced for testing (debug.synth.force_unsupported)");
     }
     return ok ? NULL : (*env)->NewStringUTF(env, why);
+}
+
+/* The table's diagnostics snapshot (diagnostics.h), "{}" until the table has started. */
+JNIEXPORT jstring JNICALL Java_dev_synth_app_TableBridge_nativeDiagnostics(JNIEnv *env, jclass cls)
+{
+    char json[8192];
+    synth_diagnostics(json, sizeof json);
+    return (*env)->NewStringUTF(env, json);
 }
 
 JNIEXPORT void JNICALL Java_dev_synth_app_TableBridge_nativeCommand(JNIEnv *env, jclass cls, jstring line)

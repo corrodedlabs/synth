@@ -1,9 +1,11 @@
 /* The native half of the Android app, and a desktop runner for the same table. On desktop, --demo plays a
  * scripted hand so the table can be seen and tested without a server. */
+#include <SDL3/SDL_atomic.h>
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_main.h>
 #include <SDL3/SDL_timer.h>
 #include <stb_image.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,6 +13,7 @@
 #include "commands.h"
 #include "core/file.h"
 #include "core/log.h"
+#include "diagnostics.h"
 #include "gpu_desc.h"
 #include "platform/platform.h"
 #include "simple/simple.h"
@@ -38,6 +41,8 @@ const GpuDesc synth_gpu_desc = {
 #define CARD_H 0.9f
 #define IDLE_NAP_MS 8        /* about one frame, so a touch on a still table feels no later */
 #define IDLE_REDRAW_MS 1000
+#define DIAGNOSTIC_TAPS 12
+#define DRAWN_GAP_S 0.25     /* frames further apart than this had a nap between them */
 
 typedef struct {
     Table table;
@@ -47,13 +52,103 @@ typedef struct {
     SimpleFont font;
     uint32_t atlas_slot;
     float density;
+
+    /* For diagnostics (diagnostics.h). */
+    Gpu *gpu;
+    Platform *platform;
+    TableTap taps[DIAGNOSTIC_TAPS];
+    unsigned tap_total;
+    double fps, fps_min, worst_frame_ms, gpu_ms;  /* while drawing: naps between frames don't count */
+    int frames;
 } App;
+
+static SDL_SpinLock diagnostics_lock;
+static char diagnostics[8192] = "{}";
+
+void synth_diagnostics(char *out, size_t size)
+{
+    SDL_LockSpinlock(&diagnostics_lock);
+    snprintf(out, size, "%s", diagnostics);
+    SDL_UnlockSpinlock(&diagnostics_lock);
+}
+
+static void put(char *buffer, size_t size, size_t *used, const char *format, ...)
+{
+    if (*used >= size - 1)
+        return;
+    va_list args;
+    va_start(args, format);
+    int n = vsnprintf(buffer + *used, size - *used, format, args);
+    va_end(args);
+    if (n > 0)
+        *used = *used + (size_t)n < size - 1 ? *used + (size_t)n : size - 1;
+}
+
+/* JSON-safe and plain ASCII, which Java's modified UTF-8 takes as it is. */
+static void plain(const char *in, char *out, size_t size)
+{
+    size_t i = 0;
+    for (; in[i] && i < size - 1; i++)
+        out[i] = (in[i] < 32 || in[i] > 126 || in[i] == '"' || in[i] == '\\') ? '?' : in[i];
+    out[i] = 0;
+}
+
+static void diagnostics_update(App *app)
+{
+    static const char *results[] = {"felt", "lowered", "unplayable", "raised", "played"};
+    static const char *modes[] = {"IMMEDIATE", "MAILBOX", "FIFO", "FIFO_RELAXED"};
+    const Gpu *gpu = app->gpu;
+    char name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
+    plain(gpu->props.deviceName, name, sizeof name);
+    int window_w = 0, window_h = 0;
+    SDL_GetWindowSizeInPixels(app->platform->window, &window_w, &window_h);
+    uint32_t view_w = 0, view_h = 0;
+    gpu_view_size(gpu, &view_w, &view_h);
+    uint32_t driver = gpu->props.driverVersion;
+
+    char json[sizeof diagnostics];
+    size_t n = 0;
+    put(json, sizeof json, &n,
+        "{\"gpu\":\"%s\",\"vendor\":%u,\"driver\":\"%u.%u.%u\",\"driver_raw\":%u,\"vulkan\":\"%u.%u\","
+        "\"path\":\"%s\",\"indexing\":%s,\"swapchain\":[%u,%u],\"transform\":%u,\"present\":\"%s\","
+        "\"window\":[%d,%d],\"view\":[%u,%u],\"table_view\":[%.0f,%.0f],\"density\":%.3f,"
+        "\"fps\":%.1f,\"fps_min\":%.1f,\"worst_frame_ms\":%.1f,\"gpu_ms\":%.2f,\"frames\":%d,\"taps\":[",
+        name, gpu->props.vendorID, VK_API_VERSION_MAJOR(driver), VK_API_VERSION_MINOR(driver),
+        VK_API_VERSION_PATCH(driver), driver, VK_API_VERSION_MAJOR(gpu->api_version),
+        VK_API_VERSION_MINOR(gpu->api_version), gpu->legacy ? "1.1 fallback" : "1.3",
+        (gpu->features & GPU_FEATURE_DESCRIPTOR_INDEXING) ? "true" : "false", gpu->extent.width,
+        gpu->extent.height, (unsigned)gpu->surface_transform,
+        gpu->present_mode <= VK_PRESENT_MODE_FIFO_RELAXED_KHR ? modes[gpu->present_mode] : "other", window_w,
+        window_h, view_w, view_h, app->table.view_w, app->table.view_h, app->density, app->fps, app->fps_min,
+        app->worst_frame_ms, app->gpu_ms, app->frames);
+    unsigned count = app->tap_total < DIAGNOSTIC_TAPS ? app->tap_total : DIAGNOSTIC_TAPS;
+    for (unsigned i = 0; i < count; i++) {
+        const TableTap *tap = &app->taps[(app->tap_total - count + i) % DIAGNOSTIC_TAPS];
+        char card[16] = "";
+        if (tap->card >= 0)
+            table_card_name(tap->card, card);
+        put(json, sizeof json, &n,
+            "%s{\"t\":%.2f,\"x\":%.0f,\"y\":%.0f,\"result\":\"%s\",\"card\":\"%s\",\"fan\":[%.0f,%.0f,%.0f,%.0f]}",
+            i ? "," : "", tap->at, tap->x, tap->y, results[tap->result], card, tap->fan[0], tap->fan[1],
+            tap->fan[2], tap->fan[3]);
+    }
+    put(json, sizeof json, &n, "]}");
+    if (n >= sizeof json - 1)
+        snprintf(json, sizeof json, "{\"error\":\"diagnostics too long\"}");
+
+    SDL_LockSpinlock(&diagnostics_lock);
+    memcpy(diagnostics, json, sizeof json);
+    SDL_UnlockSpinlock(&diagnostics_lock);
+}
 
 static void on_pointer(void *user, const PointerEvent *e)
 {
     App *app = user;
-    if (e->action == POINTER_TAP)
-        table_tap(&app->table, e->x, e->y, e->touch);
+    if (e->action != POINTER_TAP)
+        return;
+    table_tap(&app->table, e->x, e->y, e->touch);
+    app->taps[app->tap_total++ % DIAGNOSTIC_TAPS] = app->table.last_tap;
+    diagnostics_update(app);
 }
 
 static void on_play(void *user, const char *card)
@@ -202,7 +297,7 @@ static const struct {
 
 int main(int argc, char **argv)
 {
-    bool headless = false, no_validation = false, demo = false;
+    bool headless = false, no_validation = false, demo = false, print_diagnostics = false;
     int max_frames = 0;
     const char *screenshot = NULL;
     int width = 412, height = 892;
@@ -213,6 +308,8 @@ int main(int argc, char **argv)
             no_validation = true;
         else if (!strcmp(argv[i], "--demo"))
             demo = true;
+        else if (!strcmp(argv[i], "--diagnostics"))
+            print_diagnostics = true;  /* the snapshot the Android app sends, printed at exit */
         else if (!strcmp(argv[i], "--frames") && i + 1 < argc)
             max_frames = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--screenshot") && i + 1 < argc)
@@ -252,6 +349,9 @@ int main(int argc, char **argv)
     audio_init(&app.audio);
     table_sounds_init(&app.sounds, &app.audio);
     platform_attach(&platform, &gpu, &app.audio);
+    app.gpu = &gpu;
+    app.platform = &platform;
+    diagnostics_update(&app);
     simple_init(&app.simple, &gpu);
 
     GpuImage atlas = load_atlas(&gpu, SYNTH_ASSETS "/cards.png");
@@ -267,6 +367,9 @@ int main(int argc, char **argv)
     Uint64 report_start = start;
     int report_frames = 0;
     double report_gpu = 0;
+    Uint64 last_drawn = 0;
+    int drawn_frames = 0;
+    double drawn_seconds = 0, drawn_worst = 0;
     /* A still table draws nothing. Scripted and headless runs step by frames, so they always draw. */
     bool always_draw = demo || headless || max_frames;
     bool dirty = true, was_busy = false;
@@ -331,17 +434,43 @@ int main(int argc, char **argv)
         report_frames++;
         report_gpu += gpu.gpu_ms;
         Uint64 clock = SDL_GetTicksNS();
+        double gap = last_drawn ? (clock - last_drawn) / 1e9 : DRAWN_GAP_S;
+        last_drawn = clock;
+        if (gap < DRAWN_GAP_S) {
+            drawn_frames++;
+            drawn_seconds += gap;
+            if (gap > drawn_worst)
+                drawn_worst = gap;
+        }
         if ((clock - report_start) / 1e9 >= 5) {
             nm_log("table: %.1f fps, GPU %.2f ms", report_frames / ((clock - report_start) / 1e9),
                    report_gpu / report_frames);
+            if (drawn_frames >= 10) {
+                app.fps = drawn_frames / drawn_seconds;
+                if (app.fps_min == 0 || app.fps < app.fps_min)
+                    app.fps_min = app.fps;
+                app.worst_frame_ms = drawn_worst * 1000;
+            }
+            app.gpu_ms = report_gpu / report_frames;
+            app.frames = frames;
+            diagnostics_update(&app);
             report_start = clock;
             report_frames = 0;
             report_gpu = 0;
+            drawn_frames = 0;
+            drawn_seconds = drawn_worst = 0;
         }
         if (max_frames && frames >= max_frames)
             break;
     }
 
+    if (print_diagnostics) {
+        app.frames = frames;
+        diagnostics_update(&app);
+        char json[8192];
+        synth_diagnostics(json, sizeof json);
+        printf("diagnostics: %s\n", json);
+    }
     vkDeviceWaitIdle(gpu.device);
     simple_font_free(&app.simple, &app.font);
     gpu_image_free(&gpu, &atlas);

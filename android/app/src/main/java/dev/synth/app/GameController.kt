@@ -95,6 +95,10 @@ class GameController(context: Context) : SessionCallbacks {
         private set
     var reduceMotion by mutableStateOf(store.reduceMotion)
         private set
+    var diagnostics by mutableStateOf(store.diagnostics)
+        private set
+    // Each finished hand, for diagnostics (GameActivity).
+    var onHandFinished: (() -> Unit)? = null
     // A short vibration each time this ticks.
     var thumps by mutableStateOf(0)
         private set
@@ -186,6 +190,14 @@ class GameController(context: Context) : SessionCallbacks {
         reduceMotion = !reduceMotion
         store.reduceMotion = reduceMotion
     }
+
+    fun toggleDiagnostics() {
+        diagnostics = !diagnostics
+        store.diagnostics = diagnostics
+    }
+
+    /** How fast cards move, which a report notes beside the frame rate. */
+    val cardTravelMs: Long get() = gamePacing.profile().cardTravelMs
 
     fun toggleMute() {
         muted = !muted
@@ -347,6 +359,7 @@ class GameController(context: Context) : SessionCallbacks {
                 command("trick ${winner ?: -1}")
             }
             is GameAction.HandResult -> {
+                onHandFinished?.invoke()
                 handResult = action
                 command(if (action.made == (action.bidder % 2 == 0)) "sound win" else "sound lose")
             }

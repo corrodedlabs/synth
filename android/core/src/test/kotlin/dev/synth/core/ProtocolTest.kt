@@ -260,6 +260,11 @@ class ProtocolTest {
     @Test
     fun `encodes lobby commands`() {
         assertEquals("(join-room \"a's table\" \"b@x\")", encodeCommand(ClientCommand.JoinRoom("a's table", "b@x")))
+        // A report is JSON: its quotes and backslashes survive the trip to Racket's reader.
+        assertEquals(
+            "(diagnostics \"{\\\"gpu\\\":\\\"Mali\\\\G76\\\"}\")",
+            encodeCommand(ClientCommand.Diagnostics("{\"gpu\":\"Mali\\G76\"}")),
+        )
         assertEquals("(leave-room \"a's table\" \"b@x\")", encodeCommand(ClientCommand.LeaveRoom("a's table", "b@x")))
         assertEquals(
             "(kick-from-room \"a's table\" \"a@x\" \"bot-1\")",

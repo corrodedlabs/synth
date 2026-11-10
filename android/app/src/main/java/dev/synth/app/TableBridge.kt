@@ -38,6 +38,9 @@ object TableBridge {
         if (loaded) nativeCommand(line)
     }
 
+    /** The table's diagnostics snapshot as JSON (native/src/diagnostics.h), "{}" before it starts. */
+    fun diagnostics(): String = if (loaded) nativeDiagnostics() else "{}"
+
     /** From the native game thread: hop to the thread the session lives on. */
     @JvmStatic
     fun onCardPlayed(card: String) {
@@ -49,6 +52,9 @@ object TableBridge {
 
     @JvmStatic
     private external fun nativeCommand(line: String)
+
+    @JvmStatic
+    private external fun nativeDiagnostics(): String
 
     /** Null when supported, else the reason. [debug] lets debug.synth.force_unsupported force a failure. */
     @JvmStatic

@@ -165,14 +165,22 @@ static void test_tap(void)
     CHECK(!played[0]);  /* nothing is legal yet */
     CHECK(!t.cards[table_card_index("spades-9")].armed);
 
+    CHECK(t.last_tap.result == TABLE_TAP_UNPLAYABLE);
+    CHECK(t.last_tap.card == table_card_index("spades-9"));
+    CHECK(t.taps == 1);
+    /* The record holds the hand's bounds, which hold the tap. */
+    CHECK(t.last_tap.fan[0] < c.x && c.x < t.last_tap.fan[2] && t.last_tap.fan[1] < c.y && c.y < t.last_tap.fan[3]);
+
     table_command(&t, "legal spades-9 hearts-J");
     table_tap(&t, c.x, c.y, true);
     CHECK(t.cards[table_card_index("spades-9")].armed);  /* first tap raises */
+    CHECK(t.last_tap.result == TABLE_TAP_RAISED);
     CHECK(!played[0]);
     table_update(&t, 3);
     c = centre_of(&t, "spades-9");
     table_tap(&t, c.x, c.y, true);
     CHECK(!strcmp(played, "spades-9"));                  /* second commits */
+    CHECK(t.last_tap.result == TABLE_TAP_PLAYED);
 
     /* A tap on an illegal card leaves things alone. */
     played[0] = 0;
@@ -187,6 +195,10 @@ static void test_tap(void)
     CHECK(t.cards[table_card_index("hearts-J")].armed);
     table_tap(&t, 540, 200, true);
     CHECK(!t.cards[table_card_index("hearts-J")].armed);
+    CHECK(t.last_tap.result == TABLE_TAP_LOWERED);
+    CHECK(t.last_tap.card == -1);
+    table_tap(&t, 540, 200, true);
+    CHECK(t.last_tap.result == TABLE_TAP_FELT);
 
     /* If the turn passes while raised, it comes back down. */
     table_update(&t, 5);
