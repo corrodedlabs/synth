@@ -24,6 +24,15 @@ jobs:
           distribution: full
           variant: CS
           version: "8.11"
+      # .dockerignore lets in only the files it names, and CI never builds the image, so a file the
+      # Dockerfile copies but the list leaves out would only fail the deploy.
+      - name: Dockerfile copies only files .dockerignore lets in
+        run: |
+          missing=0
+          for f in $(grep '^COPY ' Dockerfile | sed 's/^COPY //' | awk '{$NF=""; print}'); do
+            grep -qx "!$f" .dockerignore || { echo "::error::.dockerignore leaves out $f, which the Dockerfile copies"; missing=1; }
+          done
+          exit $missing
       - name: Install server dependencies
         run: raco pkg install --auto --batch --no-docs rfc6455
       - name: Game logic unit tests
