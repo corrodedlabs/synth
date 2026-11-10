@@ -684,8 +684,34 @@ static bool inside(const TablePoint q[4], float x, float y)
     return true;
 }
 
+/* The hand's bounds on screen, for the tap record: left, top, right, bottom. */
+static void hand_bounds(const Table *t, float out[4])
+{
+    float b[4] = {0, 0, 0, 0};
+    bool any = false;
+    for (int i = 0; i < t->hand_count; i++) {
+        TablePose pose;
+        if (!table_pose(t, t->hand[i], &pose))
+            continue;
+        TablePoint q[4];
+        table_card_corners(t, &pose, q);
+        for (int k = 0; k < 4; k++) {
+            if (!any || q[k].x < b[0]) b[0] = q[k].x;
+            if (!any || q[k].y < b[1]) b[1] = q[k].y;
+            if (!any || q[k].x > b[2]) b[2] = q[k].x;
+            if (!any || q[k].y > b[3]) b[3] = q[k].y;
+            any = true;
+        }
+    }
+    memcpy(out, b, sizeof b);
+}
+
 void table_tap(Table *t, float x, float y, bool touch)
 {
+    TableTap *tap = &t->last_tap;
+    *tap = (TableTap){.at = t->now, .x = x, .y = y, .result = TABLE_TAP_FELT, .card = -1};
+    hand_bounds(t, tap->fan);
+    t->taps++;
     /* Later cards in the fan lie on top, so they take the tap first. */
     for (int i = t->hand_count - 1; i >= 0; i--) {
         int card = t->hand[i];
@@ -697,8 +723,10 @@ void table_tap(Table *t, float x, float y, bool touch)
         if (!inside(q, x, y))
             continue;
         TableCard *c = &t->cards[card];
+        tap->card = card;
         if (!t->legal[card]) {
             /* An unplayable card under the finger shouldn't leave another raised. */
+            tap->result = TABLE_TAP_UNPLAYABLE;
             return;
         }
         if (touch && !c->armed) {
@@ -706,11 +734,13 @@ void table_tap(Table *t, float x, float y, bool touch)
                 t->cards[t->hand[j]].armed = false;
             c->armed = true;
             arrange_hand(t, 0.15f);
+            tap->result = TABLE_TAP_RAISED;
             return;
         }
         char name[16];
         table_card_name(card, name);
         c->armed = false;
+        tap->result = TABLE_TAP_PLAYED;
         if (t->on_play)
             t->on_play(t->user, name);
         return;
@@ -721,6 +751,8 @@ void table_tap(Table *t, float x, float y, bool touch)
         moved = moved || t->cards[t->hand[j]].armed;
         t->cards[t->hand[j]].armed = false;
     }
-    if (moved)
+    if (moved) {
+        tap->result = TABLE_TAP_LOWERED;
         arrange_hand(t, 0.15f);
+    }
 }

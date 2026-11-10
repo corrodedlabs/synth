@@ -13,8 +13,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends libsqlite3-0 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY game.rkt client.rkt server.rkt storage.rkt ./
-RUN raco make server.rkt
+COPY game.rkt client.rkt server.rkt storage.rkt reports.rkt ./
+RUN raco make server.rkt reports.rkt
 
 EXPOSE 8080
 

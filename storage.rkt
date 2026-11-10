@@ -18,7 +18,9 @@
          record-match!
          leaderboard
          email->player-id
-         email->player-name)
+         email->player-name
+         save-report!
+         recent-reports)
 
 (require db)
 (require racket/async-channel)
@@ -132,7 +134,11 @@
       name TEXT NOT NULL,
       played INTEGER NOT NULL DEFAULT 0,
       won INTEGER NOT NULL DEFAULT 0,
-      updated_at INTEGER NOT NULL)"))
+      updated_at INTEGER NOT NULL)"
+   "CREATE TABLE IF NOT EXISTS reports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      received_at INTEGER NOT NULL,
+      body TEXT NOT NULL)"))
 
 ;; ---------------------------------------------------------------------
 ;; live matches: one row per running match, replaced wholesale at match
@@ -216,6 +222,46 @@
                            LIMIT $1"
                           limit)))))
 
+;; ---------------------------------------------------------------------
+;; diagnostics: what the Android app sends so problems on phones we don't
+;; have can be fixed (the privacy policy lists what's in one). A report is
+;; JSON text, linked to no player. Reports are kept 30 days, and a day holds
+;; at most +report-daily-limit+, so a flood can't fill the volume.
+
+(define +report-max-length+ 16384)
+(define +report-days+ 30)
+(define +report-daily-limit+ 500)
+
+;; #t when queued for storage; #f for something that isn't a report
+(define (save-report! body)
+  (cond
+    ((not (and (string? body)
+               (positive? (string-length body))
+               (<= (string-length body) +report-max-length+)))
+     #f)
+    (else
+     (let ((now (current-seconds)))
+       (post! (λ (c)
+                (query-exec c "DELETE FROM reports WHERE received_at < $1"
+                            (- now (* +report-days+ 86400)))
+                (when (< (query-value c "SELECT COUNT(*) FROM reports
+                                         WHERE received_at >= $1"
+                                      (- now 86400))
+                         +report-daily-limit+)
+                  (query-exec c "INSERT INTO reports (received_at, body)
+                                 VALUES ($1, $2)"
+                              now body))))
+       #t))))
+
+;; ((id received-at body) ...), newest first
+(define (recent-reports limit)
+  (ask '()
+       (λ (c)
+         (map vector->list
+              (query-rows c "SELECT id, received_at, body FROM reports
+                             ORDER BY id DESC LIMIT $1"
+                          limit)))))
+
 (module+ test
   (require rackunit)
 
@@ -236,7 +282,8 @@
     (clear-live-match! 'a-room)
     (record-match! 'a-room 0 1 'evens 6 0 '(a b c d))
     (check-equal? (load-live-matches) '())
-    (check-equal? (leaderboard 10) '()))
+    (check-equal? (leaderboard 10) '())
+    (check-equal? (recent-reports 10) '()))
 
   (storage-start! test-db)
 
@@ -278,6 +325,15 @@
                    '("ashes-aaa111@game.local" "bot-9" "bot-10" "bot-11"))
     (let ((top (first (leaderboard 1))))
       (check-equal? top (list "ashes" 4 3))))
+
+  (test-case "diagnostics reports: stored newest first, size-checked"
+    (check-true (save-report! "{\"report\":1,\"n\":1}"))
+    (check-true (save-report! "{\"report\":1,\"n\":2}"))
+    (check-false (save-report! ""))
+    (check-false (save-report! 42))
+    (check-false (save-report! (make-string 16385 #\x)))
+    (check-equal? (map caddr (recent-reports 10))
+                  '("{\"report\":1,\"n\":2}" "{\"report\":1,\"n\":1}")))
 
   (storage-stop!)
   (delete-file test-db))

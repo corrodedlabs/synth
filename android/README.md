@@ -72,6 +72,29 @@ Set them back to 0 afterwards. The emulator images for Android 13 and older can'
 path: their GPU claims Vulkan 1.3 without its features, so the check sends them to the browser. Use Android
 14 or later. `logcat -s apsis` shows which path a run took, on the `GPU path:` line.
 
+## Diagnostics
+
+The app sends a short JSON report to the game server, so problems on phones we don't have can be fixed. A
+report holds the phone, its display, window and insets, the app's settings, and the table's own snapshot
+from `native/src/diagnostics.h`: the GPU and its path, the swapchain, window and view sizes, the frame
+rate, the last 12 taps with what each one hit, and the last 16 touches, including those the platform didn't
+count as taps and why (moved too far, or held too long). `Diagnostics.kt` sends one 20 seconds after the table
+starts, after each hand, and when the app goes to the background, at most once a minute. The "can't run
+the table" screen sends one with the reason. No player ID or name goes in, and each report has a random
+ID. Players turn reports off in the in-game menu (Diagnostics). The privacy policy
+(`app/public/privacy/index.html`) lists what a report holds, so change the two together.
+
+Reports go as `(diagnostics "<json>")` on a connection of their own. The server keeps them in SQLite for 30
+days (`save-report!` in `storage.rkt`) and never logs one whole. To read the newest 20:
+
+```sh
+fly ssh console -a twenty-eight-game -C "racket /app/reports.rkt 20"
+```
+
+`synth_table --diagnostics` prints the table's snapshot on desktop. To see the app's reports without the
+real server, run any WebSocket listener and start a debug build with
+`adb shell am start -n com.respawnfi.twentyeight/dev.synth.app.GameActivity --es server ws://10.0.2.2:<port>`.
+
 ## The protocol version
 
 The app sends `(client-hello "android" <version>)` when it connects, using `PROTOCOL_VERSION` in

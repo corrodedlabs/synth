@@ -52,3 +52,5 @@ All communication uses s-expressions over WebSocket text frames:
 - Responses: symbols or lists — e.g., `'room-created`, `(room-members ...)`
 - Dispatch in `server.rkt` uses `case` on the leading symbol
 - User-scoped messages include email as first argument
+- `(diagnostics "<json>")` from the Android app goes to the `reports` table, kept 30 days, and is never
+  logged whole. It needs no user. See `android/README.md`, "Diagnostics".

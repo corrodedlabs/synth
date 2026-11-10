@@ -22,6 +22,13 @@
                         ;; bots in client.rkt dial back into this server
                         (putenv "GAME-PORT" PORT)])
 
+;; A diagnostics report is long, and it belongs in the reports table, not the
+;; logs, which get its size instead.
+(define (loggable text)
+  (if (and (string? text) (regexp-match? #rx"^\\(diagnostics " text))
+      (format "(diagnostics … ~a chars)" (string-length text))
+      text))
+
 (define (connection-handler c state)
   (displayln  (format "handler called ~a" c))
   (let loop ()
@@ -37,7 +44,7 @@
           (else
            (thread
             (λ ()
-              (displayln (format "m is ~a" m))
+              (displayln (format "m is ~a" (loggable m)))
               (let ((data (dispatch c m)))
                 (with-handlers ((exn:fail? void)) ; peer may be gone by now
                   (ws-send! c
@@ -1130,6 +1137,7 @@
 ;; else is unseated (closing their tables if they were hosting) and
 ;; forgotten.
 (define (handle-disconnect connection)
+  (define users (users-with-connection connection))
   (for-each
    (λ (u)
      (let ((email (user-email u)))
@@ -1142,8 +1150,10 @@
           (for-each (λ (room) (depart-room! room email))
                     (rooms-with-member email))
           (remove-user email)))))
-   (users-with-connection connection))
-  (broadcast-room-list!))
+   users)
+  ;; a connection with no user (a diagnostics report) changed no table
+  (unless (null? users)
+    (broadcast-room-list!)))
 
 (define (join-room message)
   (match message
@@ -1250,11 +1260,20 @@
   (with-handlers ((exn:fail? (λ (e)
                                (displayln (format "dispatch error: ~a" (exn-message e)))
                                `(error ,(exn-message e)))))
-    (let ((message (read (open-input-string message))))
-      (displayln (format "message is ~a" message))
+    (let ((text message)
+          (message (read (open-input-string message))))
+      (displayln (format "message is ~a"
+                         (if (and (pair? message) (eq? (car message) 'diagnostics)) (loggable text) message)))
       (case (car message)
       ;; liveness probe (keeps proxies from culling idle sockets)
       ((ping) 'pong)
+
+      ;; the Android app's diagnostics, for fixing problems on phones we don't
+      ;; have: stored in the reports table (see storage.rkt), linked to no user
+      ((diagnostics)
+       (if (and (pair? (cdr message)) (save-report! (cadr message)))
+           '(done)
+           '(error report-refused)))
 
       ;; an installed app says who it is; see client-hello-reply
       ((client-hello) (client-hello-reply (caddr message)))

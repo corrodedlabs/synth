@@ -542,6 +542,14 @@ private fun MenuPanel(controller: GameController, modifier: Modifier) {
         ) {
             Txt(if (controller.reduceMotion) "Reduced motion: on" else "Reduced motion: off", size = 16, maxLines = 1)
         }
+        Spacer(Modifier.size(6.dp))
+        Pressable(
+            { controller.toggleDiagnostics() },
+            Modifier.fillMaxWidth().heightIn(min = 44.dp).testTag("diagnostics"),
+            border = Ink.copy(alpha = 0.3f),
+        ) {
+            Txt(if (controller.diagnostics) "Diagnostics: on" else "Diagnostics: off", size = 16, maxLines = 1)
+        }
         if (model.phase != GamePhase.FINISHED) {
             Spacer(Modifier.size(6.dp))
             LeaveMatchChip(controller)

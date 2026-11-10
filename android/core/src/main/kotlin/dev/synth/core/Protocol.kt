@@ -524,6 +524,8 @@ sealed interface ClientCommand {
     data class ReplaceWithBot(val email: String) : ClientCommand
     data class CloseGame(val email: String) : ClientCommand
     data object GetLeaderboard : ClientCommand
+    /** The Android app's diagnostics: a JSON report the server keeps for fixing problems (privacy policy). */
+    data class Diagnostics(val report: String) : ClientCommand
 }
 
 private fun message(head: String, vararg args: SExpr): String =
@@ -565,4 +567,5 @@ fun encodeCommand(command: ClientCommand): String = when (command) {
     is ClientCommand.ReplaceWithBot -> message("replace-with-bot", SStr(command.email))
     is ClientCommand.CloseGame -> message("close-game", SStr(command.email))
     ClientCommand.GetLeaderboard -> message("get-leaderboard")
+    is ClientCommand.Diagnostics -> message("diagnostics", SStr(command.report))
 }

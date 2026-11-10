@@ -223,6 +223,20 @@
        (check-equal? (recv-msg connection) 'pong)
        (ws-close! connection)))
 
+   ;; the Android app's diagnostics are stored, and anything else is refused
+   (test-begin
+     (let ((connection (connect-to-ws)))
+       (send-msg connection '(diagnostics "{\"report\":1,\"kind\":\"test\"}"))
+       (check-equal? (recv-msg connection) '(done))
+       (send-msg connection `(diagnostics ,(make-string 20000 #\x)))
+       (check-equal? (recv-msg connection) '(error report-refused))
+       (send-msg connection '(diagnostics 42))
+       (check-equal? (recv-msg connection) '(error report-refused))
+       (send-msg connection '(diagnostics))
+       (check-equal? (recv-msg connection) '(error report-refused))
+       (ws-close! connection)
+       (check-equal? (map caddr (recent-reports 5)) '("{\"report\":1,\"kind\":\"test\"}"))))
+
    (test-begin
      (let ((connection (connect-to-ws))
            (watcher (connect-to-ws)))

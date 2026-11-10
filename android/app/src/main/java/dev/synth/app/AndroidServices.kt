@@ -39,6 +39,11 @@ class PrefsStore(context: Context) : SessionStore {
     var muted: Boolean
         get() = prefs.getBoolean("muted", false)
         set(value) = prefs.edit().putBoolean("muted", value).apply()
+
+    /** Send diagnostics reports (Diagnostics.kt). On unless the player turns it off in the menu. */
+    var diagnostics: Boolean
+        get() = prefs.getBoolean("diagnostics", true)
+        set(value) = prefs.edit().putBoolean("diagnostics", value).apply()
 }
 
 private const val HANDSHAKE_MS = 12_000L

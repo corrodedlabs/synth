@@ -12,7 +12,7 @@ FetchContent_GetProperties(stb)
 set(warnings -Wall -Wextra -Wno-unused-parameter -Wshadow)
 
 # The table's logic needs no GPU, so its tests need neither one nor a window.
-add_library(synth_table STATIC src/table.c)
+add_library(synth_table STATIC src/table.c src/touches.c)
 target_include_directories(synth_table PUBLIC src)
 target_link_libraries(synth_table PUBLIC apsis_anim apsis_core PRIVATE m)
 target_compile_options(synth_table PRIVATE ${warnings})

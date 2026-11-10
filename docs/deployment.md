@@ -134,6 +134,9 @@ cd app && VITE_SERVER_URL=ws://localhost:8080/test npm run build && npm run prev
   host) or end the match (`close-game` → `game-aborted`). When the last
   human leaves, the match closes by itself. The leaver's page resets to a
   working start screen either way.
+- The Android app's diagnostics reports are kept for 30 days in the `reports`
+  table of `/data/game.db`. Read the newest with
+  `fly ssh console -a twenty-eight-game -C "racket /app/reports.rkt 20"`.
 - The "open tables" list is live: every room change is pushed
   (`active-rooms`) to all connected players who are not seated anywhere, so
   browsers never show stale tables.
