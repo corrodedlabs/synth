@@ -37,3 +37,26 @@ These files hold the full detail. Read the matching one before starting that kin
 The Android app is in `android/` (Kotlin) and `native/` (the table, C17, on the shared Apsis engine in the
 `apsis` submodule). Read `android/README.md` before changing them. It still follows the rule above: the
 server holds every rule, and the app only presents them.
+
+## Logs, diagnostics and crashes
+
+These read production. Reading is fine. Don't change anything on the fly.io machine without asking. The
+`fly` CLI on this machine is already logged in to the app's account (`fly auth whoami`).
+
+| What | How |
+|---|---|
+| Diagnostics reports from the Android app, newest first: id, time (UTC), JSON | `fly ssh console -a twenty-eight-game -C "racket /app/reports.rkt 20"` |
+| The same, as JSON only, for `jq` | add `\| cut -d' ' -f3- \| jq .` |
+| Game server logs, live | `fly logs -a twenty-eight-game` |
+| Game server logs, recent only, without following | `fly logs -a twenty-eight-game --no-tail` |
+| Android crashes and ANRs, across players | Play Console → Monitor and improve → Android vitals → Crashes and ANRs |
+| One tester's crash | Their bug report (Developer options → Take bug report): `logcat` and `tombstones/` in the zip |
+
+- **The app sends no crash reports.** A diagnostics report goes 20 s after the table starts, after each hand
+  and on going to the background. A crash shows up only in Android vitals or in a bug report.
+- **Reading a report:** `table` holds the GPU path and the swapchain, window and view sizes. `taps` and
+  `touches` show where touches landed, and why a touch didn't count as a tap. `android/README.md`
+  ("Diagnostics") lists everything in one.
+- **Where they live:** the `reports` table of `/data/game.db`, for 30 days.
+- **Keep them anonymous:** reports hold no player ID or name. Keep it that way, and change the privacy
+  policy (`app/public/privacy/index.html`) along with anything a report holds.
