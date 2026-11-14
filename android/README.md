@@ -65,6 +65,7 @@ To test either way:
 |---|---|
 | `adb shell setprop debug.apsis.force_legacy 1` | A 1.3 phone takes the fallback, as if it were 1.1. A driver that has the features only as 1.2 ones, as the emulator's does, runs it at 1.2. |
 | `adb shell setprop debug.apsis.force_no_indexing 1` | The phone is treated as lacking descriptor indexing, and the table uses the plain texture table. With `force_legacy` too, this is how an Adreno 620 or Mali-G76 phone runs. |
+| `adb shell setprop debug.apsis.force_stale_size 1` | For the first 3 seconds the engine hears the surface's size turned sideways, as an older Android can report it. Before the fix this left the table drawn for a landscape screen in portrait, as on a Redmi Note 8 Pro; now the table follows the window and logs `drawing for the window`. |
 | `adb shell setprop debug.synth.force_unsupported 1` | In debug builds, any phone gets the "can't run the table" screen |
 | `APSIS_FORCE_LEGACY=1 build/native/synth_table --demo` | The fallback on desktop. Add `APSIS_FORCE_NO_INDEXING=1` for the plain texture table. |
 
